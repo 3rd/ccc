@@ -120,9 +120,13 @@ Project ┘
 Some settings will still be read from your global `~/.claude.json`:
 
 ```bash
-# things like these
-claude config set --global parallelTasksCount 5
+# things like these:
+claude config set -g autocheckpointingEnabled true
+claude config set -g diffTool delta
+claude config set -g supervisorMode true
+claude config set -g autoCompactEnabled true
 claude config set --global preferredNotifChannel terminal_bell
+claude config set -g verbose true
 ```
 
 ---

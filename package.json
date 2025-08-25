@@ -16,7 +16,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^1.0.89",
+    "@anthropic-ai/claude-code": "^1.0.90",
     "@types/node": "^24.3.0",
     "fast-glob": "^3.3.3",
     "fastmcp": "^3.15.1",
