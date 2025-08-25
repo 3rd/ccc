@@ -1,0 +1,29 @@
+{
+  "name": "ccc",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ccc": "./src/cli/launcher-wrapper.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "tsx": "^4.20.5"
+  },
+  "peerDependencies": {
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.89",
+    "@types/node": "^24.3.0",
+    "fast-glob": "^3.3.3",
+    "fastmcp": "^3.15.1",
+    "memfs": "^4.38.1",
+    "picocolors": "^1.1.1",
+    "unionfs": "^4.6.0",
+    "zod": "^4.1.1",
+    "zx": "^8.8.1"
+  }
+}
