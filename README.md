@@ -548,3 +548,8 @@ All dynamic configurations receive a context object with a few utilities:
 
 - ?
 
+---
+
+## License
+
+MIT License. See `LICENSE` for details.
