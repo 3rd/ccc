@@ -72,7 +72,8 @@ Your configuration lives in the `./config` directory, which includes some exampl
 ccc # wrap and launch claude
 ccc --continue # all the arguments you pass will be passed through to claude
 
-# except these special cases used for debugging
+# except these special cases used for debugging (they don't launch claude)
+ccc --doctor
 ccc --print-config
 ccc --print-system-prompt
 ccc --print-user-prompt
@@ -501,6 +502,22 @@ export default createConfigSettings({
 ```
 
 **Note:** Unlike other configuration types, statuslines do NOT support layering or merging. Only the global configuration or settings are used.
+
+## Doctor (Config Inspector)
+
+Use `ccc --doctor` to print a diagnostic report of your merged configuration without launching Claude:
+
+```
+ccc --doctor
+ccc --doctor --json
+```
+
+The report shows:
+- Presets detected and project configuration in use
+- Layering traces (override/append) for system/user prompts
+- Per-command and per-agent layering traces across global/presets/project
+- MCP servers and their transport type
+
 
 ## Project Configuration
 

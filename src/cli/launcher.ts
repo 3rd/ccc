@@ -5,6 +5,7 @@ import p from "picocolors";
 import { fileURLToPath } from "url";
 import { $, which } from "zx";
 import { setInstanceId } from "@/hooks/hook-generator";
+import { runDoctor } from "@/cli/doctor";
 import { buildAgents } from "@/config/builders/build-agents";
 import { buildCommands } from "@/config/builders/build-commands";
 import { buildMCPs } from "@/config/builders/build-mcps";
@@ -31,6 +32,23 @@ const run = async () => {
     buildCommands(context),
     buildAgents(context),
   ]);
+
+  // --doctor
+  if (process.argv.includes("--doctor")) {
+    await runDoctor(
+      context,
+      {
+        settings: settings as Record<string, unknown>,
+        systemPrompt,
+        userPrompt,
+        commands,
+        agents,
+        mcps,
+      },
+      { json: process.argv.includes("--json") },
+    );
+    process.exit(0);
+  }
 
   // --print-config
   if (process.argv.includes("--print-config")) {
