@@ -19,14 +19,17 @@ const run = async () => {
   await context.init();
   setInstanceId(context.instanceId, context.configDirectory);
 
-  // build configuration
-  const [settings, systemPrompt, userPrompt, commands, agents, mcps] = await Promise.all([
+  // build MCPs first so Context.hasMCP() is available during prompt building
+  const mcps = await buildMCPs(context);
+  context.mcpServers = mcps;
+
+  // build remaining configuration in parallel
+  const [settings, systemPrompt, userPrompt, commands, agents] = await Promise.all([
     buildSettings(context),
     buildSystemPrompt(context),
     buildUserPrompt(context),
     buildCommands(context),
     buildAgents(context),
-    buildMCPs(context),
   ]);
 
   // --print-config

@@ -4,6 +4,7 @@ import { platform, release } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { $, cd } from "zx";
+import type { ClaudeMCPConfig } from "@/types/mcps";
 import { Project } from "./Project";
 
 const buildDirectoryTree = (dir: string, prefix = "", depth = 0, maxDepth = 5): string => {
@@ -40,6 +41,7 @@ export class Context {
   project: Project;
   instanceId: string;
   configDirectory: string;
+  mcpServers?: Record<string, ClaudeMCPConfig>;
 
   constructor(workingDirectory: string) {
     this.workingDirectory = workingDirectory;
@@ -139,5 +141,9 @@ export class Context {
 
   getCurrentDateTime(): string {
     return new Date().toISOString();
+  }
+
+  hasMCP(name: string): boolean {
+    return Boolean(this.mcpServers?.[name]);
   }
 }

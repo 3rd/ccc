@@ -537,6 +537,7 @@ All dynamic configurations receive a context object with a few utilities:
   launcherDirectory: string;         // Path to launcher installation
   instanceId: string;                // Unique instance identifier
   project: Project;                  // Project instance with config
+  mcpServers?: Record<string, ClaudeMCPConfig>; // Processed MCP configs for this run
   isGitRepo(): boolean;              // Check if in git repository
   getGitBranch(): string;            // Current git branch
   getGitStatus(): string;            // Git status (porcelain)
@@ -545,6 +546,7 @@ All dynamic configurations receive a context object with a few utilities:
   getPlatform(): string;             // OS platform
   getOsVersion(): string;            // OS version info
   getCurrentDateTime(): string;      // ISO timestamp
+  hasMCP(name: string): boolean;     // True if MCP with name is configured
 }
 ```
 
