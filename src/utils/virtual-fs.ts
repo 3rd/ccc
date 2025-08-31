@@ -35,6 +35,41 @@ type ReadDirOptions =
   | { encoding: BufferEncoding | null; withFileTypes?: false | undefined; recursive?: boolean | undefined }
   | null;
 
+const VIRTUAL_PATHS = [
+  path.join(os.homedir(), ".claude", "settings.json"),
+  path.join(os.homedir(), ".claude", "CLAUDE.md"),
+  path.join(os.homedir(), ".claude", "output-styles", "custom.md"),
+];
+
+const virtualToResolved = new Map<string, string>();
+const resolvedToVirtual = new Map<string, string>();
+let mappingsInitialized = false;
+
+const initializePathMappings = () => {
+  if (mappingsInitialized) return;
+
+  const origRealpathSync = fsDefault.realpathSync?.native || fsDefault.realpathSync;
+  for (const vPath of VIRTUAL_PATHS) {
+    try {
+      const resolved = origRealpathSync(vPath);
+      virtualToResolved.set(vPath, resolved);
+      resolvedToVirtual.set(resolved, vPath);
+    } catch {
+      virtualToResolved.set(vPath, vPath);
+    }
+  }
+  mappingsInitialized = true;
+};
+
+const mapToVirtualPath = (filePath: string): string | undefined => {
+  initializePathMappings();
+
+  const normalized = path.normalize(path.resolve(filePath));
+  if (virtualToResolved.has(normalized)) return normalized;
+
+  return resolvedToVirtual.get(normalized);
+};
+
 const monkeyPatchFS = ({
   vol,
   commandsPath,
@@ -54,6 +89,16 @@ const monkeyPatchFS = ({
 }) => {
   const normalizedCommandsPath = commandsPath ? path.normalize(path.resolve(commandsPath)) : undefined;
   const normalizedAgentsPath = agentsPath ? path.normalize(path.resolve(agentsPath)) : undefined;
+
+  const virtualFileDescriptors = new Map<
+    number,
+    {
+      path: string;
+      content: Buffer | string;
+      position: number;
+    }
+  >();
+  let nextVirtualFd = 10_000;
 
   const isCommandsPath = (filePath: unknown): boolean => {
     if (!normalizedCommandsPath || typeof filePath !== "string") return false;
@@ -194,6 +239,16 @@ const monkeyPatchFS = ({
       log.vfs(`readFileSync("${filePath}") => throwing ENOENT (not in virtual fs)`);
       throw error;
     }
+
+    if (typeof filePath === "string") {
+      const virtualPath = mapToVirtualPath(filePath);
+      if (virtualPath && vol.existsSync(virtualPath)) {
+        const result = vol.readFileSync(virtualPath, options as Parameters<typeof vol.readFileSync>[1]);
+        log.vfs(`readFileSync("${filePath}") => mapped to virtual "${virtualPath}"`);
+        return result;
+      }
+    }
+
     try {
       if ((typeof filePath === "string" || Buffer.isBuffer(filePath)) && vol.existsSync(filePath)) {
         return vol.readFileSync(filePath, options as Parameters<typeof vol.readFileSync>[1]);
@@ -934,11 +989,82 @@ const monkeyPatchFS = ({
     ) {
       if (typeof filePath === "string") {
         log.vfs(`openSync("${filePath}", flags=${flags}) called`);
+        const virtualPath = mapToVirtualPath(filePath);
+
+        if (virtualPath && vol.existsSync(virtualPath)) {
+          try {
+            const content = vol.readFileSync(virtualPath);
+            const fd = nextVirtualFd++;
+            virtualFileDescriptors.set(fd, {
+              path: virtualPath,
+              content,
+              position: 0,
+            });
+            log.vfs(`Created virtual file descriptor ${fd} for "${filePath}" -> virtual "${virtualPath}"`);
+            log.vfs(
+              `  Virtual content size: ${Buffer.isBuffer(content) ? content.length : content.toString().length} bytes`,
+            );
+            return fd;
+          } catch (error) {
+            log.vfs(`Failed to create virtual FD for "${filePath}": ${error}`);
+          }
+        }
+
         if (filePath.includes(".claude/commands")) {
           log.vfs(`Commands dir open as file descriptor`);
         }
       }
+
+      log.vfs(`Opening real file: "${filePath}"`);
       return Reflect.apply(origOpenSync, this, [filePath, flags, mode]);
+    };
+  }
+
+  if (fsDefault.readSync) {
+    const origReadSync = fsDefault.readSync;
+    (fsDefault as any).readSync = function (
+      fd: number,
+      buffer: NodeJS.ArrayBufferView,
+      offset?: number | null,
+      length?: number | null,
+      position?: number | null,
+    ) {
+      if (virtualFileDescriptors.has(fd)) {
+        const virtualFile = virtualFileDescriptors.get(fd)!;
+        log.vfs(`Intercepting readSync for virtual FD ${fd} (${virtualFile.path})`);
+
+        const contentBuffer =
+          Buffer.isBuffer(virtualFile.content) ? virtualFile.content : Buffer.from(virtualFile.content);
+
+        const readOffset = offset ?? 0;
+        const readLength = length ?? buffer.byteLength - readOffset;
+        const readPosition = position !== null && position !== undefined ? position : virtualFile.position;
+
+        const bytesToRead = Math.min(readLength, contentBuffer.length - readPosition);
+        if (bytesToRead > 0) {
+          contentBuffer.copy(buffer as Buffer, readOffset, readPosition, readPosition + bytesToRead);
+        }
+
+        if (position === null || position === undefined) {
+          virtualFile.position += bytesToRead;
+        }
+
+        log.vfs(`Read ${bytesToRead} bytes from virtual FD ${fd} at position ${readPosition}`);
+        return bytesToRead;
+      }
+
+      return Reflect.apply(origReadSync, this, [fd, buffer, offset, length, position]);
+    };
+  }
+
+  if (fsDefault.closeSync) {
+    const origCloseSync = fsDefault.closeSync;
+    (fsDefault as any).closeSync = function (fd: number) {
+      if (virtualFileDescriptors.has(fd)) {
+        log.vfs(`Closing virtual FD ${fd}`);
+        virtualFileDescriptors.delete(fd);
+      }
+      return Reflect.apply(origCloseSync, this, [fd]);
     };
   }
 
