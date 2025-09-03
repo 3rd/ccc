@@ -2,6 +2,11 @@
 import { existsSync, readdirSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
+import { getHook } from "@/hooks/hook-generator";
+import type { MCPServers } from "@/types/mcps";
+import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
+import { Context } from "@/context/Context";
+import { createMCPProxy } from "@/mcps/mcp-generator";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -63,8 +68,6 @@ const main = async () => {
       // import all hooks configs to register handlers
       for (const href of discover("hooks")) await import(href);
 
-      const hookGenUrl = pathToFileURL(join(launcherRoot, "src", "hooks", "hook-generator.ts")).href;
-      const { getHook } = await import(hookGenUrl);
       const fn = getHook(id);
       if (!fn) {
         console.error("Hook not found:", id);
@@ -81,24 +84,39 @@ const main = async () => {
       if (result) process.stdout.write(JSON.stringify(result));
       process.exit(0);
     } else {
-      // mcps
-      for (const href of discover("mcps")) await import(href);
+      // mcps - ID = MCP name
+      const mcpName = id;
 
-      const mcpGenUrl = pathToFileURL(join(launcherRoot, "src", "mcps", "mcp-generator.ts")).href;
-      const contextUrl = pathToFileURL(join(launcherRoot, "src", "context", "Context.ts")).href;
+      const context = new Context(process.cwd());
 
-      const { getMCP } = await import(mcpGenUrl);
-      const { Context } = await import(contextUrl);
-
-      const factory = getMCP(id);
-      if (!factory) {
-        console.error("MCP not found:", id);
+      // find MCP
+      const layers = await loadConfigFromLayers<MCPServers>(context, "mcps.ts");
+      const merged = mergeMCPs(layers.global, ...layers.presets, layers.project);
+      const mcpConfig = merged[mcpName];
+      if (!mcpConfig) {
+        console.error(`MCP not found: ${mcpName}`);
         process.exit(2);
       }
 
-      const context = new Context(process.cwd());
-      const server = await factory(context);
-      await server.start({ transportType: "stdio" });
+      if (mcpConfig.type === "inline") {
+        const factory = mcpConfig.config;
+        const server = await factory(context);
+        await server.start({ transportType: "stdio" });
+      } else if (mcpConfig.type === "traditional" || mcpConfig.type === "http" || mcpConfig.type === "sse") {
+        // external MCP - check for filter
+        const config = mcpConfig.config;
+        if ("filter" in config && typeof config.filter === "function") {
+          // proxy for filtering
+          const proxyData = createMCPProxy(config, config.filter);
+          if (proxyData.type === "inline") {
+            const server = await proxyData.config(context);
+            await server.start({ transportType: "stdio" });
+          }
+        } else {
+          console.error(`Cannot run external MCP '${mcpName}' without filter`);
+          process.exit(2);
+        }
+      }
     }
   } catch (error) {
     console.error(`${mode.toUpperCase()} runner failed:`, error);
@@ -107,4 +125,3 @@ const main = async () => {
 };
 
 main();
-

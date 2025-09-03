@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import p from "picocolors";
 import { fileURLToPath } from "url";
-import { $, which } from "zx";
+import { which } from "zx";
 import { setInstanceId } from "@/hooks/hook-generator";
 import { runDoctor } from "@/cli/doctor";
 import { buildAgents } from "@/config/builders/build-agents";
@@ -20,7 +20,7 @@ const run = async () => {
   await context.init();
   setInstanceId(context.instanceId, context.configDirectory);
 
-  // build MCPs first so Context.hasMCP() is available during prompt building
+  // build MCPs first so context.hasMCP() is available during prompt building
   const mcps = await buildMCPs(context);
   context.mcpServers = mcps;
 
@@ -32,6 +32,55 @@ const run = async () => {
     buildCommands(context),
     buildAgents(context),
   ]);
+
+  // --debug-mcp-run <name> (internal handler for debugging inline MCPs)
+  const debugMcpRunIndex = process.argv.indexOf("--debug-mcp-run");
+  if (debugMcpRunIndex !== -1) {
+    const mcpName = process.argv[debugMcpRunIndex + 1];
+    if (!mcpName) {
+      console.error(p.red("Error: --debug-mcp-run requires an MCP name"));
+      process.exit(1);
+    }
+
+    // load MCP
+    const { loadConfigFromLayers, mergeMCPs } = await import("@/config/layers");
+    const layers = await loadConfigFromLayers<import("@/types/mcps").MCPServers>(context, "mcps.ts");
+    const mergedMcpServers = mergeMCPs(layers.global, ...layers.presets, layers.project);
+    const mcpData = mergedMcpServers[mcpName];
+    if (!mcpData || mcpData.type !== "inline") {
+      console.error(p.red(`Error: MCP "${mcpName}" not found or not an inline MCP`));
+      process.exit(1);
+    }
+
+    // start server
+    console.error(`Debug mode: Starting inline MCP server "${mcpName}"...`);
+    const server = await mcpData.config(context);
+    await server.start({
+      transportType: "stdio",
+    });
+
+    return;
+  }
+
+  // --debug-mcp <name>
+  const debugMcpIndex = process.argv.indexOf("--debug-mcp");
+  if (debugMcpIndex !== -1) {
+    const mcpName = process.argv[debugMcpIndex + 1];
+    if (!mcpName) {
+      console.error(p.red("Error: --debug-mcp requires an MCP name"));
+      console.error(p.gray("Usage: ccc --debug-mcp <mcp-name>"));
+      process.exit(1);
+    }
+    const { debugMCP } = await import("@/cli/debug-mcp");
+
+    const processedMcps = await buildMCPs(context);
+    const { loadConfigFromLayers, mergeMCPs } = await import("@/config/layers");
+    const layers = await loadConfigFromLayers<import("@/types/mcps").MCPServers>(context, "mcps.ts");
+    const mergedMcpServers = mergeMCPs(layers.global, ...layers.presets, layers.project);
+
+    await debugMCP(context, mergedMcpServers, mcpName, processedMcps);
+    process.exit(0);
+  }
 
   // --doctor
   if (process.argv.includes("--doctor")) {

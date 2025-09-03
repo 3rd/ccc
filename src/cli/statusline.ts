@@ -21,7 +21,7 @@ const readStdin = async () => {
   const data: StatusLineInput = JSON.parse(input);
 
   const launcherRoot = join(__dirname, "../..");
-  
+
   // check for dev-config first, fall back to config
   const configDir = existsSync(join(launcherRoot, "dev-config")) ? "dev-config" : "config";
   const statuslineConfigPath = join(launcherRoot, configDir, "global/statusline.ts");

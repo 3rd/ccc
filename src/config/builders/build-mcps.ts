@@ -1,7 +1,37 @@
+import { join } from "path";
 import type { Context } from "@/context/Context";
 import type { ClaudeMCPConfig, MCPServers } from "@/types/mcps";
 import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
-import { generateMCPServer, setInstanceId } from "@/mcps/mcp-generator";
+import { setInstanceId } from "@/mcps/mcp-generator";
+
+const processExternalMCP = (
+  config: ClaudeMCPConfig & { filter?: unknown },
+  name: string,
+  context: Context,
+): ClaudeMCPConfig | null => {
+  // external MCP with filter -> use runner
+  if (config.filter && typeof config.filter === "function") {
+    const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
+    const env: Record<string, string> = {
+      CCC_INSTANCE_ID: context.instanceId,
+    };
+
+    if ("env" in config && config.env) {
+      Object.assign(env, config.env);
+    }
+
+    return {
+      type: "stdio" as const,
+      command: "tsx",
+      args: [runnerPath, "mcp", name],
+      env,
+    };
+  }
+
+  // external MCP without filter
+  const { filter, ...configWithoutFilter } = config;
+  return configWithoutFilter;
+};
 
 export const buildMCPs = async (context: Context): Promise<Record<string, ClaudeMCPConfig>> => {
   setInstanceId(context.instanceId, context.configDirectory);
@@ -13,26 +43,21 @@ export const buildMCPs = async (context: Context): Promise<Record<string, Claude
 
   for (const [name, layerData] of Object.entries(merged)) {
     if (layerData.type === "inline") {
-      const factory = layerData.config;
-      const serverCommand = generateMCPServer(factory);
-      const parts = serverCommand.split(" ");
-      const command = parts[0] || "tsx";
-      const args = parts.slice(1);
-
+      const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
       processed[name] = {
         type: "stdio",
-        command,
-        args,
+        command: "tsx",
+        args: [runnerPath, "mcp", name],
         env: {
           CCC_INSTANCE_ID: context.instanceId,
         },
       };
-    } else if (layerData.type === "http") {
-      processed[name] = layerData.config;
-    } else if (layerData.type === "sse") {
-      processed[name] = layerData.config;
-    } else {
-      processed[name] = layerData.config;
+    } else if (layerData.type === "http" || layerData.type === "sse" || layerData.type === "traditional") {
+      const config = layerData.config;
+      const result = processExternalMCP(config, name, context);
+      if (result) {
+        processed[name] = result;
+      }
     }
   }
 

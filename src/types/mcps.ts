@@ -1,23 +1,28 @@
 import type { FastMCP } from "fastmcp";
 import type { Context } from "@/context/Context";
 
+export type MCPToolFilter = (tool: { name: string; description?: string;[key: string]: unknown }) => boolean;
+
 export interface StdioMCPConfig {
   type?: "stdio";
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  filter?: MCPToolFilter;
 }
 
 export interface HttpMCPConfig {
   type: "http";
   url: string;
   headers?: Record<string, string>;
+  filter?: MCPToolFilter;
 }
 
 export interface SseMCPConfig {
   type: "sse";
   url: string;
   headers?: Record<string, string>;
+  filter?: MCPToolFilter;
 }
 
 export type ClaudeMCPConfig = HttpMCPConfig | SseMCPConfig | StdioMCPConfig;

@@ -89,7 +89,7 @@ const collectLayeredItems = async (context: Context, kind: "agents" | "commands"
   const projectDir =
     context.project.projectConfig ?
       join(launcherRoot, context.configDirectory, "projects", context.project.projectConfig.name, kind)
-    : undefined;
+      : undefined;
   const projectNames = listItemNames(projectDir);
 
   const allNames = new Set<string>([...globalNames, ...projectNames]);
@@ -116,7 +116,11 @@ const printPretty = (report: DoctorReport) => {
   const fmtTrace = (t: TraceEntry[]) => {
     if (t.length === 0) return "(none)";
     return t
-      .map((e) => `${e.layer}${e.name ? `:${e.name}` : ""}${e.mode === "append" ? " [append]" : ""}`)
+      .map((e) => {
+        const nameStr = e.name ? `:${e.name}` : "";
+        const modeStr = e.mode === "append" ? " [append]" : "";
+        return `${e.layer}${nameStr}${modeStr}`;
+      })
       .join(" -> ");
   };
 
