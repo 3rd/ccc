@@ -77,6 +77,7 @@ ccc --doctor
 ccc --print-config
 ccc --print-system-prompt
 ccc --print-user-prompt
+ccc --debug-mcp <mcp-name>
 ```
 
 ## Configuration Layers
@@ -378,6 +379,27 @@ export default createConfigMCPs({
 });
 ```
 
+### Filtering MCP Tools
+
+You can filter which tools are exposed from an external MCP:
+
+```typescript
+import { createConfigMCPs } from "@/config/helpers";
+
+export default createConfigMCPs({
+  nixos: {
+    command: "nix",
+    args: ["run", "github:utensils/mcp-nixos", "--"],
+    filter: (tool) => {
+      // Exclude specific tools
+      return tool.name !== "nixos_search";
+    },
+  },
+});
+```
+
+The filter function receives a tool object with `name` and `description` properties. Return `true` to include the tool, `false` to exclude it.
+
 ### Custom MCPs
 
 You can easily define custom MCPs in your config using FastMCP.
@@ -518,6 +540,25 @@ The report shows:
 - Per-command and per-agent layering traces across global/presets/project
 - MCP servers and their transport type
 
+## Debug MCPs
+
+Use `ccc --debug-mcp <mcp-name>` to launch the MCP Inspector for debugging MCP servers:
+
+```bash
+ccc --debug-mcp filesystem
+ccc --debug-mcp custom-tools
+```
+
+This launches the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) with your MCP server, allowing you to:
+- View all available tools, resources, and prompts
+- Test tool invocations interactively
+- Inspect request/response payloads
+- Debug filtered MCPs (shows tools after filtering)
+
+**Note**: 
+- Only works with stdio transport MCPs (not HTTP/SSE)
+- Filtered MCPs will show the filtered tools, not the original ones
+- Inline MCPs (created with FastMCP) are supported
 
 ## Project Configuration
 
