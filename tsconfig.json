@@ -23,5 +23,5 @@
       "@/*": ["src/*"]
     }
   },
-  "exclude": [".cache", "node_modules"]
+  "include": ["src", "config", "dev-config"]
 }

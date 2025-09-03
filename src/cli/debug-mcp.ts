@@ -130,7 +130,7 @@ export const debugMCP = async (
     if (!isWindows && inspector.pid) {
       try {
         process.kill(-inspector.pid, "SIGTERM");
-      } catch { }
+      } catch {}
     } else {
       inspector.kill("SIGTERM");
     }
@@ -139,7 +139,7 @@ export const debugMCP = async (
       if (!isWindows && inspector.pid) {
         try {
           process.kill(-inspector.pid, "SIGKILL");
-        } catch { }
+        } catch {}
       }
       process.exit(typeof signal === "number" ? signal : 0);
     }, 500);
@@ -178,7 +178,7 @@ export const debugMCP = async (
     if (!cleanedUp && !isWindows && inspector.pid) {
       try {
         process.kill(-inspector.pid, "SIGKILL");
-      } catch { }
+      } catch {}
     }
   });
 

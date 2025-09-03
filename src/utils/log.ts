@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/class-methods-use-this */
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -131,6 +132,7 @@ class Logger {
   }
 
   error(category: string, message: string, data?: unknown) {
+    console.error(`${category}: ${message}`, data);
     this.log("error", category, message, data);
   }
 

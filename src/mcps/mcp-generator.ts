@@ -54,7 +54,7 @@ export const createMCPProxy = (originalConfig: ClaudeMCPConfig, filter: MCPToolF
         let registeredTools = 0;
 
         for (const tool of tools) {
-          const filterableTool: { name: string; description?: string;[key: string]: unknown } = {
+          const filterableTool: { name: string; description?: string; [key: string]: unknown } = {
             ...tool,
             name: tool.name,
             description: tool.description,

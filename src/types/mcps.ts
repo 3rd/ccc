@@ -1,7 +1,7 @@
 import type { FastMCP } from "fastmcp";
 import type { Context } from "@/context/Context";
 
-export type MCPToolFilter = (tool: { name: string; description?: string;[key: string]: unknown }) => boolean;
+export type MCPToolFilter = (tool: { name: string; description?: string; [key: string]: unknown }) => boolean;
 
 export interface StdioMCPConfig {
   type?: "stdio";

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/class-methods-use-this */
 import glob from "fast-glob";
 import { existsSync, statSync } from "fs";
 import { dirname, join } from "path";

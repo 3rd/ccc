@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/class-methods-use-this */
 import { randomUUID } from "crypto";
 import { existsSync, readdirSync, statSync } from "fs";
 import { platform, release } from "os";

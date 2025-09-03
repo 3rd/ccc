@@ -3,8 +3,9 @@ import { join } from "path";
 import p from "picoprint";
 import type { PromptLayerData } from "@/config/helpers";
 import type { Context } from "@/context/Context";
+import type { HookCommand } from "@/types/hooks";
 import type { ClaudeMCPConfig } from "@/types/mcps";
-import { loadConfigLayer, loadPromptFile } from "@/config/layers";
+import { loadConfigFromLayers, loadConfigLayer, loadPromptFile } from "@/config/layers";
 import { isHttpMCP, isSseMCP } from "@/types/mcps";
 
 type LayerKind = "global" | "preset" | "project";
@@ -32,7 +33,8 @@ export interface DoctorReport {
   prompts: PromptTraces;
   commands: ItemTraces;
   agents: ItemTraces;
-  mcps: { name: string; type: "http" | "sse" | "stdio" }[];
+  mcps: Record<string, { type: "http" | "sse" | "stdio"; trace: TraceEntry[] }>;
+  hooks: ItemTraces;
 }
 
 const listItemNames = (dirPath: string | undefined): string[] => {
@@ -89,7 +91,7 @@ const collectLayeredItems = async (context: Context, kind: "agents" | "commands"
   const projectDir =
     context.project.projectConfig ?
       join(launcherRoot, context.configDirectory, "projects", context.project.projectConfig.name, kind)
-      : undefined;
+    : undefined;
   const projectNames = listItemNames(projectDir);
 
   const allNames = new Set<string>([...globalNames, ...projectNames]);
@@ -112,6 +114,115 @@ const collectLayeredItems = async (context: Context, kind: "agents" | "commands"
   return items;
 };
 
+const collectLayeredMCPs = async (
+  context: Context,
+  finalMCPs: Record<string, ClaudeMCPConfig>,
+): Promise<Record<string, { type: "http" | "sse" | "stdio"; trace: TraceEntry[] }>> => {
+  const items: Record<string, { type: "http" | "sse" | "stdio"; trace: TraceEntry[] }> = {};
+
+  // load MCPs from all layers
+  const layers = await loadConfigFromLayers<Record<string, ClaudeMCPConfig>>(context, "mcps.ts");
+
+  // process global MCPs
+  if (layers.global) {
+    for (const mcpName of Object.keys(layers.global)) {
+      const mcp = finalMCPs[mcpName];
+      if (mcp) {
+        const type =
+          isHttpMCP(mcp) ? "http"
+          : isSseMCP(mcp) ? "sse"
+          : "stdio";
+        items[mcpName] = { type, trace: [{ layer: "global", mode: "override" }] };
+      }
+    }
+  }
+
+  // process preset MCPs
+  for (let i = 0; i < layers.presets.length; i++) {
+    const preset = context.project.presets[i];
+    const presetMCPs = layers.presets[i];
+    if (presetMCPs && preset) {
+      for (const mcpName of Object.keys(presetMCPs)) {
+        const mcp = finalMCPs[mcpName];
+        if (mcp) {
+          const type =
+            isHttpMCP(mcp) ? "http"
+            : isSseMCP(mcp) ? "sse"
+            : "stdio";
+          items[mcpName] = { type, trace: [{ layer: "preset", name: preset.name, mode: "override" }] };
+        }
+      }
+    }
+  }
+
+  // process project MCPs
+  if (layers.project && context.project.projectConfig) {
+    for (const mcpName of Object.keys(layers.project)) {
+      const mcp = finalMCPs[mcpName];
+      if (mcp) {
+        const type =
+          isHttpMCP(mcp) ? "http"
+          : isSseMCP(mcp) ? "sse"
+          : "stdio";
+        items[mcpName] = {
+          type,
+          trace: [{ layer: "project", name: context.project.projectConfig.name, mode: "override" }],
+        };
+      }
+    }
+  }
+
+  return items;
+};
+
+const collectLayeredHooks = async (context: Context): Promise<ItemTraces> => {
+  const items: ItemTraces = {};
+
+  // load hooks from all layers
+  const hookLayers = await loadConfigFromLayers<Record<string, HookCommand[]>>(context, "hooks.ts");
+
+  // process global hooks
+  if (hookLayers.global) {
+    for (const [eventType, hooks] of Object.entries(hookLayers.global)) {
+      if (Array.isArray(hooks) && hooks.length > 0) {
+        items[eventType] = [{ layer: "global", mode: "override" }];
+      }
+    }
+  }
+
+  // process preset hooks
+  for (let i = 0; i < hookLayers.presets.length; i++) {
+    const preset = context.project.presets[i];
+    const presetHooks = hookLayers.presets[i];
+    if (presetHooks && preset) {
+      for (const [eventType, hooks] of Object.entries(presetHooks)) {
+        if (Array.isArray(hooks) && hooks.length > 0) {
+          if (!items[eventType]) {
+            items[eventType] = [];
+          }
+          // hooks are merged (appended) from presets
+          items[eventType].push({ layer: "preset", name: preset.name, mode: "append" });
+        }
+      }
+    }
+  }
+
+  // process project hooks
+  if (hookLayers.project && context.project.projectConfig) {
+    for (const [eventType, hooks] of Object.entries(hookLayers.project)) {
+      if (Array.isArray(hooks) && hooks.length > 0) {
+        if (!items[eventType]) {
+          items[eventType] = [];
+        }
+        // hooks are merged (appended) from project
+        items[eventType].push({ layer: "project", name: context.project.projectConfig.name, mode: "append" });
+      }
+    }
+  }
+
+  return items;
+};
+
 const printPretty = (report: DoctorReport) => {
   const fmtTrace = (t: TraceEntry[]) => {
     if (t.length === 0) return "(none)";
@@ -124,14 +235,6 @@ const printPretty = (report: DoctorReport) => {
       .join(" -> ");
   };
 
-  const section = (title: string, render: () => void) =>
-    p.box(
-      () => {
-        render();
-      },
-      { title, style: "rounded", color: p.cyan },
-    );
-
   // header
   p.bold.blue.log("\nGeneral:");
   p({
@@ -142,7 +245,7 @@ const printPretty = (report: DoctorReport) => {
   // project
   p.bold.blue.log("\nProject:");
   p({
-    presets: report.presets.length > 0 ? report.presets.join(", ") : "(none)",
+    presets: report.presets.length > 0 ? report.presets : "(none)",
     project: report.project ?? "(none)",
   });
 
@@ -173,11 +276,29 @@ const printPretty = (report: DoctorReport) => {
 
   // MCPs
   p.bold.blue.log("\nMCPs:");
-  const mcps = report.mcps;
-  if (mcps.length === 0) {
+  const mcpNames = Object.keys(report.mcps).sort();
+  if (mcpNames.length === 0) {
     p.dim.log("(none)");
   } else {
-    p(mcps.map((m) => ({ name: m.name, type: m.type })));
+    p(
+      mcpNames.map((name) => {
+        const mcp = report.mcps[name];
+        return {
+          name,
+          type: mcp?.type || "stdio",
+          trace: fmtTrace(mcp?.trace || []),
+        };
+      }),
+    );
+  }
+
+  // hooks
+  p.bold.blue.log("\nHooks:");
+  const hookNames = Object.keys(report.hooks).sort();
+  if (hookNames.length === 0) {
+    p.dim.log("(none)");
+  } else {
+    p(hookNames.map((name) => ({ name, trace: fmtTrace(report.hooks[name] || []) })));
   }
 };
 
@@ -197,17 +318,8 @@ export const runDoctor = async (
   const userTrace = await collectPromptTrace(context, "prompts/user");
   const commands = await collectLayeredItems(context, "commands");
   const agents = await collectLayeredItems(context, "agents");
-  const mcps = Object.entries(artifacts.mcps || {})
-    .map(([name, cfg]) => {
-      if (isHttpMCP(cfg)) {
-        return { name, type: "http" as const };
-      }
-      if (isSseMCP(cfg)) {
-        return { name, type: "sse" as const };
-      }
-      return { name, type: "stdio" as const };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const hooks = await collectLayeredHooks(context);
+  const mcps = await collectLayeredMCPs(context, artifacts.mcps);
 
   const report: DoctorReport = {
     meta: {
@@ -220,6 +332,7 @@ export const runDoctor = async (
     commands,
     agents,
     mcps,
+    hooks,
   };
 
   if (opts.json) {
