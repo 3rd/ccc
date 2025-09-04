@@ -28,7 +28,6 @@ export const settingsSchema = z.object({
   // hooks: z.record(z.string(), z.array(z.any())).optional(),
 
   // config
-  // autoUpdates: z.boolean().optional(),
   // preferredNotifChannel: z.string().optional(),
   // theme: z.string().optional(),
   // verbose: z.boolean().optional(),
