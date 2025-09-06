@@ -4,7 +4,7 @@
     "": {
       "name": "ccc",
       "dependencies": {
-        "@anthropic-ai/claude-code": "^1.0.103",
+        "@anthropic-ai/claude-code": "^1.0.108",
         "eventsource": "^4.0.0",
         "fast-glob": "^3.3.3",
         "fastmcp": "^3.15.2",
@@ -21,7 +21,7 @@
         "@types/bun": "latest",
         "@types/eventsource": "^3.0.0",
         "@types/json-schema": "^7.0.15",
-        "@types/node": "^24.3.0",
+        "@types/node": "^24.3.1",
         "knip": "^5.63.1",
         "tsx": "^4.20.5",
         "typescript": "^5.9.2",

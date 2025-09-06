@@ -117,6 +117,51 @@ Preset  ├─► merge ─► "virtual overlay" ─► Claude Code
 Project ┘
 ```
 
+## Using Models from Other Vendors
+
+You can configure CCC to use models from other vendors by setting environment variables in your `settings.ts`. This allows you to use models like GLM, Kimi K2, or Deepseek through their Anthropic-compatible APIs.
+
+### Configuration Examples
+
+Add these environment variables to your `config/global/settings.ts`:
+
+```typescript
+import { createConfigSettings } from "@/config/helpers";
+
+export default createConfigSettings({
+  env: {
+    // GLM 4.5
+    ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
+    ANTHROPIC_AUTH_TOKEN: "Z_API_KEY",
+    ANTHROPIC_MODEL: "glm-4.5",
+    ANTHROPIC_FAST_MODEL: "glm-4.5-air",
+
+    // Kimi K2
+    // ANTHROPIC_BASE_URL: "https://api.moonshot.ai/anthropic",
+    // ANTHROPIC_AUTH_TOKEN: "KIMI_API_KEY",
+
+    // Deepseek
+    // ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
+    // ANTHROPIC_AUTH_TOKEN: "DEEPSEEK_API_KEY",
+    // ANTHROPIC_MODEL: "deepseek-chat",
+    // ANTHROPIC_FAST_MODEL: "deepseek-chat"
+  }
+});
+```
+
+### Environment Variables
+
+- `ANTHROPIC_BASE_URL` - The base URL for the vendor's API endpoint
+- `ANTHROPIC_AUTH_TOKEN` - Your API key for the vendor
+- `ANTHROPIC_MODEL` - The main model to use (e.g., "glm-4.5", "deepseek-chat")
+- `ANTHROPIC_FAST_MODEL` - The model to use for quick operations (optional)
+
+### Usage
+
+Once configured, CCC will automatically use the specified vendor's models instead of Anthropic's models. All CCC features like prompts, commands, agents, hooks, and MCPs will continue to work with the alternative models.
+
+**Note**: Make sure you have the required API keys and that the vendor's API is compatible with Anthropic's API format.
+
 ## Extra Configuration
 
 Some settings will still be read from your global `~/.claude.json`:
@@ -555,7 +600,7 @@ This launches the [MCP Inspector](https://github.com/modelcontextprotocol/inspec
 - Inspect request/response payloads
 - Debug filtered MCPs (shows tools after filtering)
 
-**Note**: 
+**Note**:
 - Only works with stdio transport MCPs (not HTTP/SSE)
 - Filtered MCPs will show the filtered tools, not the original ones
 - Inline MCPs (created with FastMCP) are supported
