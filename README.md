@@ -77,6 +77,7 @@ ccc --doctor
 ccc --print-config
 ccc --print-system-prompt
 ccc --print-user-prompt
+ccc --dump-config
 ccc --debug-mcp <mcp-name>
 ```
 
@@ -584,6 +585,26 @@ The report shows:
 - Layering traces (override/append) for system/user prompts
 - Per-command and per-agent layering traces across global/presets/project
 - MCP servers and their transport type
+
+## Dump Configuration
+
+Use `ccc --dump-config` to create a complete dump of the computed configuration that Claude sees:
+
+```bash
+ccc --dump-config
+```
+
+This creates a `.config-dump/{timestamp}/` directory containing:
+
+- `system.md` - The actual computed system prompt
+- `user.md` - The actual computed user prompt  
+- `commands/` - All command files as Claude sees them
+- `agents/` - All agent files as Claude sees them
+- `settings.json` - The merged settings
+- `mcps.json` - The computed MCP configurations
+- `metadata.json` - Context and dump information
+
+This is useful for debugging configuration issues and understanding exactly what Claude sees.
 
 ## Debug MCPs
 

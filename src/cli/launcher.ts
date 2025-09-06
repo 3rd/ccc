@@ -10,6 +10,7 @@ import { buildAgents } from "@/config/builders/build-agents";
 import { buildCommands } from "@/config/builders/build-commands";
 import { buildMCPs } from "@/config/builders/build-mcps";
 import { buildSettings, buildSystemPrompt, buildUserPrompt } from "@/config/builders/build-settings";
+import { dumpConfig } from "@/config/dump-config";
 import { Context } from "@/context/Context";
 import { log } from "@/utils/log";
 import { setupVirtualFileSystem } from "@/utils/virtual-fs";
@@ -127,6 +128,19 @@ const run = async () => {
   // --print-user-prompt
   if (process.argv.includes("--print-user-prompt")) {
     console.log(userPrompt);
+    process.exit(0);
+  }
+
+  // --dump-config
+  if (process.argv.includes("--dump-config")) {
+    await dumpConfig(context, {
+      settings: settings as Record<string, unknown>,
+      systemPrompt,
+      userPrompt,
+      commands,
+      agents,
+      mcps,
+    });
     process.exit(0);
   }
 

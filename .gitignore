@@ -24,7 +24,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # caches
 .eslintcache
-.cache
 *.tsbuildinfo
 
 # IntelliJ based IDEs
@@ -33,5 +32,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Finder (MacOS) folder config
 .DS_Store
 
+/.cache
+/.config-dump
 /config
 /dev-config
