@@ -38,7 +38,8 @@ export type Settings = z.infer<typeof settingsSchema>;
 export const validateSettings = (settings: unknown) => {
   const parsed = settingsSchema.safeParse(settings);
   if (!parsed.success) {
-    throw new Error(`Settings validation failed: ${z.treeifyError(parsed.error)}`);
+    console.error("Settings validation failed:", z.flattenError(parsed.error));
+    throw new Error("Settings validation failed");
   }
   return parsed.data;
 };
