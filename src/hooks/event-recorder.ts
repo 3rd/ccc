@@ -34,6 +34,7 @@ class EventRecorder {
 
     this._events.push(event);
 
+    // write ./cache/{instanceId}/events.jsonl
     if (process.env.DEBUG) {
       try {
         const instanceId = process.env.CCC_INSTANCE_ID;
@@ -50,6 +51,14 @@ class EventRecorder {
         fs.appendFileSync(filePath, `${JSON.stringify(event)}\n`);
       } catch {}
     }
+
+    // write to CCC_EVENTS_FILE
+    try {
+      const eventsFile = process.env.CCC_EVENTS_FILE;
+      if (eventsFile) {
+        fs.appendFileSync(eventsFile, `${JSON.stringify(event)}\n`);
+      }
+    } catch {}
   };
 }
 

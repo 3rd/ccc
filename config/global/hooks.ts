@@ -1,6 +1,7 @@
 import p from "picocolors";
 import { createHook } from "@/hooks/hook-generator";
 import { createConfigHooks } from "@/config/helpers";
+// import { getSessionContext } from "@/hooks/session-context";
 
 const sessionStartHook = createHook("SessionStart", (input) => {
   const timestamp = new Date().toISOString();
@@ -11,6 +12,17 @@ const sessionStartHook = createHook("SessionStart", (input) => {
   console.log(p.dim("🞄"));
 });
 
+// Example: context-aware hook that tracks tool usage
+// const contextAwareHook = createHook("PreToolUse", (input) => {
+//   const context = getSessionContext();
+//   const events: PreToolUseHookInput[] = [];
+//   for (const e of context.events) {
+//     if (e.input.hook_event_name === "PreToolUse") {
+//       events.push(e.input);
+//     }
+//   }
+// });
+
 export default createConfigHooks({
   SessionStart: [
     {
@@ -18,7 +30,9 @@ export default createConfigHooks({
     },
   ],
   UserPromptSubmit: [],
-  PreToolUse: [],
+  // PreToolUse: [
+  //   { hooks: [ contextAwareHook ] },
+  // ],
   PostToolUse: [],
   Notification: [],
   PreCompact: [],

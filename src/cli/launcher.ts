@@ -44,6 +44,32 @@ const run = async () => {
   await context.init();
   setInstanceId(context.instanceId, context.configDirectory);
   process.env.CCC_INSTANCE_ID = context.instanceId;
+
+  // create temp file for events
+  const os = await import("os");
+  const crypto = await import("crypto");
+  const tmpDir = os.tmpdir();
+  const randomId = crypto.randomBytes(6).toString("hex");
+  const eventsFile = path.join(tmpDir, `ccc-events-${randomId}.jsonl`);
+  fs.writeFileSync(eventsFile, "");
+  process.env.CCC_EVENTS_FILE = eventsFile;
+
+  // clean up events file on exit
+  const cleanupEventsFile = () => {
+    try {
+      if (fs.existsSync(eventsFile)) fs.unlinkSync(eventsFile);
+    } catch {}
+  };
+  process.on("exit", cleanupEventsFile);
+  process.on("SIGINT", () => {
+    cleanupEventsFile();
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    cleanupEventsFile();
+    process.exit(0);
+  });
+
   ctxTask.done();
 
   // build MCPs first so context.hasMCP() is available during prompt building
