@@ -11,8 +11,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const hooksMap = new Map<string, RuntimeHookHandler>();
-let currentInstanceId: string | null = null;
-let currentConfigDirectory = "config";
 
 export const getHook = (id: string) => hooksMap.get(id);
 
@@ -28,8 +26,6 @@ const getRunnerPath = () => {
 };
 
 export const setInstanceId = (instanceId: string, configDirectory = "config") => {
-  currentInstanceId = instanceId;
-  currentConfigDirectory = configDirectory;
   log.debug("HOOKS", `Set instance ID: ${instanceId}, configDir=${configDirectory}`);
 };
 

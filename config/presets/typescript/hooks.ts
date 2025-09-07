@@ -1,5 +1,5 @@
-import { $ } from "zx";
-import { createHook } from "@/hooks/hook-generator";
+// import { $ } from "zx";
+// import { createHook } from "@/hooks/hook-generator";
 import { createConfigHooks } from "@/config/helpers";
 
 export default createConfigHooks({

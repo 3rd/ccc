@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import type { PromptLayerData } from "@/config/helpers";
 import type { Context } from "@/context/Context";
-import type { HookCommand } from "@/types/hooks";
+import type { HookDefinition, HooksConfiguration } from "@/types/hooks";
 import type { MCPServers } from "@/types/mcps";
 import { log } from "@/utils/log";
 
@@ -31,15 +31,15 @@ export const mergeSettings = (
 };
 
 export const mergeHooks = (
-  ...layers: (Record<string, HookCommand[]> | undefined)[]
-): Record<string, HookCommand[]> => {
-  const result: Record<string, HookCommand[]> = {};
+  ...layers: (HooksConfiguration | undefined)[]
+): Record<string, HookDefinition[]> => {
+  const result: Record<string, HookDefinition[]> = {};
   for (const layer of layers) {
-    if (layer) {
-      for (const [event, hooks] of Object.entries(layer)) {
-        if (!result[event]) result[event] = [];
-        result[event].push(...hooks);
-      }
+    if (!layer) continue;
+    for (const [event, defs] of Object.entries(layer)) {
+      if (!defs) continue;
+      if (!result[event]) result[event] = [];
+      result[event].push(...defs);
     }
   }
   return result;

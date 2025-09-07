@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "^1.0.108",
+    "dotenv": "^17.2.2",
     "eventsource": "^4.0.0",
     "fast-glob": "^3.3.3",
     "fastmcp": "^3.15.2",

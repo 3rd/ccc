@@ -1,22 +1,16 @@
 import { FastMCP } from "fastmcp";
 import { type JsonSchema, jsonSchemaToZod } from "json-schema-to-zod";
-import { z } from "zod";
 import type { ZodTypeAny } from "zod";
 import type { MCPInitializeResponse } from "@/types/mcp-protocol";
 import type { ClaudeMCPConfig, FastMCPFactory, MCPLayerData, MCPToolFilter } from "@/types/mcps";
 import { log } from "@/utils/log";
 import { MCPClient } from "./mcp-client";
 
-let currentInstanceId: string | null = null;
-let currentConfigDirectory = "config";
-
 export const createMCP = (factory: FastMCPFactory): MCPLayerData => {
   return { type: "inline", config: factory };
 };
 
 export const setInstanceId = (instanceId: string, configDirectory = "config") => {
-  currentInstanceId = instanceId;
-  currentConfigDirectory = configDirectory;
   log.debug("MCPS", `Set instance ID: ${instanceId}, configDir=${configDirectory}`);
 };
 

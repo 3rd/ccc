@@ -1,9 +1,9 @@
-/* eslint-disable @typescript-eslint/no-invalid-void-type */
 export type HookEventName =
   | "Notification"
   | "PostToolUse"
   | "PreCompact"
   | "PreToolUse"
+  | "SessionEnd"
   | "SessionStart"
   | "Stop"
   | "SubagentStop"
@@ -70,6 +70,10 @@ export interface SessionStartHookInput extends BaseHookInput {
   source: "clear" | "resume" | "startup";
 }
 
+export interface SessionEndHookInput extends BaseHookInput {
+  hook_event_name: "SessionEnd";
+}
+
 export interface StopHookInput extends BaseHookInput {
   hook_event_name: "Stop";
   stop_hook_active: boolean;
@@ -93,6 +97,7 @@ export type ClaudeHookInput =
   | PostToolUseHookInput
   | PreCompactHookInput
   | PreToolUseHookInput
+  | SessionEndHookInput
   | SessionStartHookInput
   | StopHookInput
   | SubagentStopHookInput
@@ -173,6 +178,10 @@ export interface HookEventMap {
   SessionStart: {
     input: SessionStartHookInput;
     response: SessionStartHookResponse | void;
+  };
+  SessionEnd: {
+    input: SessionEndHookInput;
+    response: StopHookResponse | void;
   };
   Stop: {
     input: StopHookInput;

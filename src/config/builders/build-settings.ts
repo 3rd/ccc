@@ -1,8 +1,9 @@
 import { existsSync } from "fs";
 import { join } from "path";
+import { getBuiltinHookCommands } from "@/hooks/builtin";
 import type { PromptLayerData } from "@/config/helpers";
 import type { Context } from "@/context/Context";
-import type { HookCommand } from "@/types/hooks";
+import type { HookDefinition, HooksConfiguration } from "@/types/hooks";
 import { loadConfigFromLayers, mergeHooks, mergePrompts, mergeSettings } from "@/config/layers";
 import { validateSettings } from "@/config/schema";
 
@@ -32,13 +33,29 @@ export const buildSettings = async (context: Context) => {
     statusLine = transformedValidated.statusLine;
   }
 
-  // hooks
-  const hookLayers = await loadConfigFromLayers<Record<string, HookCommand[]>>(context, "hooks.ts");
-  const hooks = mergeHooks(hookLayers.global, ...hookLayers.presets, hookLayers.project);
+  // hooks: merge config hooks by definitions and prepend built-in recorder hooks reliably
+  const hookLayers = await loadConfigFromLayers<HooksConfiguration>(context, "hooks.ts");
+  const configHooks = mergeHooks(hookLayers.global, ...hookLayers.presets, hookLayers.project);
+  const builtinHooks = getBuiltinHookCommands();
+
+  const finalHooks: Record<string, HookDefinition[]> = {};
+
+  // builtin hooks
+  for (const [eventName, command] of Object.entries(builtinHooks)) {
+    const defs = configHooks[eventName] || [];
+    finalHooks[eventName] = [{ hooks: [command] }, ...defs];
+  }
+
+  // config hooks
+  for (const [eventName, defs] of Object.entries(configHooks)) {
+    if (!finalHooks[eventName]) {
+      finalHooks[eventName] = defs;
+    }
+  }
 
   const result = {
     ...transformedValidated,
-    hooks,
+    hooks: finalHooks,
     outputStyle: "custom" as const,
     ...(statusLine && { statusLine }),
   };

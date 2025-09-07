@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 import * as fs from "fs";
+import { createRequire } from "node:module";
 import * as path from "path";
 import p from "picocolors";
-import { fileURLToPath } from "url";
 import { which } from "zx";
 import { setInstanceId } from "@/hooks/hook-generator";
 import { runDoctor } from "@/cli/doctor";
@@ -13,25 +13,55 @@ import { buildSettings, buildSystemPrompt, buildUserPrompt } from "@/config/buil
 import { dumpConfig } from "@/config/dump-config";
 import { Context } from "@/context/Context";
 import { log } from "@/utils/log";
+import { createStartupLogger } from "@/utils/startup";
 import { setupVirtualFileSystem } from "@/utils/virtual-fs";
 
+// eslint-disable-next-line sonarjs/cognitive-complexity
 const run = async () => {
+  const shouldEnableLogger = (): boolean => {
+    const interactive = Boolean(process.stdout.isTTY);
+    const debug = Boolean(process.env.DEBUG);
+    const args = process.argv;
+    const quietFlags = [
+      "--print-config",
+      "--print-system-prompt",
+      "--print-user-prompt",
+      "--dump-config",
+      "--doctor",
+      "--json",
+      "--debug-mcp",
+      "--debug-mcp-run",
+    ];
+    const hasQuiet = quietFlags.some((f) => args.includes(f));
+    return interactive && !debug && !hasQuiet;
+  };
+
+  const startup = createStartupLogger({ enabled: shouldEnableLogger() });
+
   // init context
+  const ctxTask = startup.start("Resolve project context");
   const context = new Context(process.cwd());
   await context.init();
   setInstanceId(context.instanceId, context.configDirectory);
+  process.env.CCC_INSTANCE_ID = context.instanceId;
+  ctxTask.done();
 
   // build MCPs first so context.hasMCP() is available during prompt building
-  const mcps = await buildMCPs(context);
+  const mcps = await startup.run("Build MCPs", () => buildMCPs(context));
   context.mcpServers = mcps;
 
   // build remaining configuration in parallel
+  const settingsPromise = startup.run("Build settings", () => buildSettings(context));
+  const systemPromptPromise = startup.run("Build system prompt", () => buildSystemPrompt(context));
+  const userPromptPromise = startup.run("Build user prompt", () => buildUserPrompt(context));
+  const commandsPromise = startup.run("Build commands", () => buildCommands(context));
+  const agentsPromise = startup.run("Build agents", () => buildAgents(context));
   const [settings, systemPrompt, userPrompt, commands, agents] = await Promise.all([
-    buildSettings(context),
-    buildSystemPrompt(context),
-    buildUserPrompt(context),
-    buildCommands(context),
-    buildAgents(context),
+    settingsPromise,
+    systemPromptPromise,
+    userPromptPromise,
+    commandsPromise,
+    agentsPromise,
   ]);
 
   // --debug-mcp-run <name> (internal handler for debugging inline MCPs)
@@ -202,14 +232,16 @@ const run = async () => {
   log.debug("BUILD-SUMMARY", `  MCPs: ${Object.keys(mcps || {}).join(", ") || "none"}`);
 
   // setup vfs
-  setupVirtualFileSystem({
-    settings: settings as unknown as Record<string, unknown>,
-    systemPrompt,
-    userPrompt,
-    commands,
-    agents,
-    workingDirectory: context.workingDirectory,
-    disableParentClaudeMds: context.project.projectConfig?.disableParentClaudeMds,
+  await startup.run("Mount VFS", async () => {
+    setupVirtualFileSystem({
+      settings: settings as unknown as Record<string, unknown>,
+      systemPrompt,
+      userPrompt,
+      commands,
+      agents,
+      workingDirectory: context.workingDirectory,
+      disableParentClaudeMds: context.project.projectConfig?.disableParentClaudeMds,
+    });
   });
 
   // build args
@@ -220,41 +252,47 @@ const run = async () => {
 
   // find claude binary / use CLAUDE_PATH override
   let claudeModulePath: string;
+  const resolveTask = startup.start("Resolve Claude CLI");
   if (process.env.CLAUDE_PATH) {
     claudeModulePath = process.env.CLAUDE_PATH;
     log.info("LAUNCHER", `Using CLAUDE_PATH override: ${claudeModulePath}`);
+    resolveTask.done("env override");
   } else {
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
+    const launcherRoot = context.launcherDirectory;
 
     // try node_modules/.bin/claude
-    const localBinPath = path.join(__dirname, "node_modules/.bin/claude");
+    const localBinPath = path.join(launcherRoot, "node_modules/.bin/claude");
     if (fs.existsSync(localBinPath)) {
       claudeModulePath = fs.realpathSync(localBinPath);
       log.info("LAUNCHER", `Found local Claude CLI in node_modules/.bin`);
+      resolveTask.done("local bin");
     } else {
       // try resolving the package
       try {
-        const claudePkgPath = require.resolve("@anthropic-ai/claude-code/package.json", {
-          paths: [__dirname],
+        const req = createRequire(import.meta.url);
+        const claudePkgPath = req.resolve("@anthropic-ai/claude-code/package.json", {
+          paths: [launcherRoot],
         });
         const claudeDir = path.dirname(claudePkgPath);
         // try main entry point or cli.js
         const claudePkg = JSON.parse(fs.readFileSync(claudePkgPath, "utf8"));
-        const mainEntry = claudePkg.main || claudePkg.bin?.["claude"] || "cli.js";
+        const mainEntry = claudePkg.bin?.["claude"] || claudePkg.main || "cli.js";
         claudeModulePath = path.join(claudeDir, mainEntry);
 
         if (!fs.existsSync(claudeModulePath)) {
           throw new Error(`Claude CLI entry point not found at ${claudeModulePath}`);
         }
         log.info("LAUNCHER", `Found local Claude CLI via package resolution`);
+        resolveTask.done("local package");
       } catch {
         // fallback to global claude
         try {
           const claudeBinPath = await which("claude");
           claudeModulePath = fs.realpathSync(claudeBinPath);
           log.warn("LAUNCHER", "Using global Claude CLI (local not found)");
+          resolveTask.done("global bin");
         } catch {
+          resolveTask.fail("Claude CLI not found");
           console.error("Error: Could not find Claude Code neither in node_modules nor globally.");
           process.exit(1);
         }
@@ -267,7 +305,9 @@ const run = async () => {
   log.debug("LAUNCHER", `Additional args from CLI: ${process.argv.slice(2).join(" ") || "none"}`);
   log.info("LAUNCHER", `Log file: ${log.getLogPath()}`);
 
+  const launchTask = startup.start("Launching Claude...");
   process.argv = [process.argv[0]!, claudeModulePath, ...args, ...process.argv.slice(2)];
+  launchTask.done();
   await import(claudeModulePath);
 };
 

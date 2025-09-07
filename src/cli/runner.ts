@@ -7,6 +7,7 @@ import type { MCPServers } from "@/types/mcps";
 import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
 import { Context } from "@/context/Context";
 import { createMCPProxy } from "@/mcps/mcp-generator";
+import "@/hooks/builtin";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
