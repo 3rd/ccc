@@ -7,6 +7,7 @@ export interface StdioMCPConfig {
   type?: "stdio";
   command: string;
   args?: string[];
+  cwd?: string;
   env?: Record<string, string>;
   filter?: MCPToolFilter;
 }
@@ -15,6 +16,7 @@ export interface HttpMCPConfig {
   type: "http";
   url: string;
   headers?: Record<string, string>;
+  env?: Record<string, string>;
   filter?: MCPToolFilter;
 }
 
