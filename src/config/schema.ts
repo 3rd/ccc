@@ -11,6 +11,7 @@ export const settingsSchema = z.object({
   forceLoginMethod: z.string().optional(),
   includeCoAuthoredBy: z.boolean().optional(),
   model: z.string().optional(),
+  spinnerTipsEnabled: z.boolean().optional(),
 
   permissions: z.object({
     allow: z.array(z.string()).optional(),

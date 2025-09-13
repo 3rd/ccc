@@ -152,11 +152,16 @@ export interface NotificationHookResponse extends BaseHookResponse {}
 
 export interface PreCompactHookResponse extends BaseHookResponse {}
 
+export interface SessionEndHookResponse extends BaseHookResponse {
+  systemMessage?: string;
+}
+
 export type HookResponse =
   | NotificationHookResponse
   | PostToolUseHookResponse
   | PreCompactHookResponse
   | PreToolUseHookResponse
+  | SessionEndHookResponse
   | SessionStartHookResponse
   | StopHookResponse
   | SubagentStopHookResponse
@@ -181,7 +186,7 @@ export interface HookEventMap {
   };
   SessionEnd: {
     input: SessionEndHookInput;
-    response: StopHookResponse | void;
+    response: SessionEndHookResponse | void;
   };
   Stop: {
     input: StopHookInput;

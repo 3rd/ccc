@@ -38,4 +38,5 @@ export default createConfigFullSettings({
     ],
   },
   includeCoAuthoredBy: false,
+  spinnerTipsEnabled: true,
 });

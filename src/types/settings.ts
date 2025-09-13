@@ -3,6 +3,7 @@ export type ClaudeSettings = {
   env?: Record<string, string>;
   apiKeyHelper?: string;
   includeCoAuthoredBy?: boolean;
+  spinnerTipsEnabled?: boolean;
   statusLine?: {
     type: string;
     command: string;
