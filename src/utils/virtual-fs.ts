@@ -17,13 +17,14 @@ import fsDefault, {
   type PathLike,
   type StatSyncOptions,
 } from "fs";
-import { Volume } from "memfs";
+import { Volume, createFsFromVolume } from "memfs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { basename } from "node:path";
 import * as os from "os";
 import * as path from "path";
 import { ensureFileExists } from "./fs";
 import { log } from "./log";
+import type { FileHandle } from "fs/promises";
 
 type ReadFileSyncOptions = BufferEncoding | { encoding?: BufferEncoding | null; flag?: string } | null;
 type ReaddirSyncOptions =
@@ -44,6 +45,10 @@ const VIRTUAL_PATHS = [
 const virtualToResolved = new Map<string, string>();
 const resolvedToVirtual = new Map<string, string>();
 let mappingsInitialized = false;
+
+const virtualFileHandleSymbol = Symbol("cccVirtualFileHandle");
+type VirtualHandleMeta = { path: string };
+type MaybeVirtualFileHandle = FileHandle & { [virtualFileHandleSymbol]?: VirtualHandleMeta };
 
 const initializePathMappings = () => {
   if (mappingsInitialized) return;
@@ -78,6 +83,8 @@ const monkeyPatchFS = ({
   disableParentClaudeMds,
   agentsPath,
   virtualAgents,
+  virtualRoots,
+  volPromises,
 }: {
   vol: Volume;
   commandsPath?: string;
@@ -86,6 +93,8 @@ const monkeyPatchFS = ({
   disableParentClaudeMds?: boolean;
   agentsPath?: string;
   virtualAgents?: string[];
+  virtualRoots: Set<string>;
+  volPromises: typeof fsDefault.promises;
 }) => {
   const normalizedCommandsPath = commandsPath ? path.normalize(path.resolve(commandsPath)) : undefined;
   const normalizedAgentsPath = agentsPath ? path.normalize(path.resolve(agentsPath)) : undefined;
@@ -99,6 +108,29 @@ const monkeyPatchFS = ({
     }
   >();
   let nextVirtualFd = 10_000;
+
+  const isVirtualFileHandle = (value: unknown): value is MaybeVirtualFileHandle => {
+    return Boolean(value && typeof value === "object" && virtualFileHandleSymbol in (value as MaybeVirtualFileHandle));
+  };
+
+  const markVirtualFileHandle = (handle: FileHandle, virtualPath: string): void => {
+    (handle as MaybeVirtualFileHandle)[virtualFileHandleSymbol] = { path: virtualPath };
+  };
+
+  const getVirtualStats = (virtualPath: string, options?: StatSyncOptions) => {
+    const stats = vol.statSync(virtualPath, options as Parameters<typeof vol.statSync>[1]);
+    if (stats && typeof (fsDefault as unknown as { Stats?: new (...args: unknown[]) => unknown }).Stats === "function") {
+      const StatsCtor = (fsDefault as unknown as { Stats: new (...args: unknown[]) => unknown }).Stats;
+      if (!(stats instanceof StatsCtor)) {
+        Object.setPrototypeOf(stats, StatsCtor.prototype);
+      }
+    }
+    return stats;
+  };
+
+  const readVirtualFileSync = (virtualPath: string, options?: ReadFileSyncOptions) => {
+    return vol.readFileSync(virtualPath, options as Parameters<typeof vol.readFileSync>[1]);
+  };
 
   const isCommandsPath = (filePath: unknown): boolean => {
     if (!normalizedCommandsPath || typeof filePath !== "string") return false;
@@ -136,6 +168,33 @@ const monkeyPatchFS = ({
     const result = normalized.startsWith(normalizedAgentsPath + path.sep);
     if (result) log.vfs(`isAgentsChild: "${filePath}" => true`);
     return result;
+  };
+
+  const isVirtualRoot = (filePath: string): boolean => {
+    const normalized = path.normalize(path.resolve(filePath));
+    for (const root of virtualRoots) {
+      if (normalized === root || normalized.startsWith(root + path.sep)) return true;
+    }
+    return false;
+  };
+
+  const resolveVirtualPath = (filePath: string): string | undefined => {
+    if (isCommandsPath(filePath) || isCommandsChild(filePath) || isAgentsPath(filePath) || isAgentsChild(filePath)) {
+      return path.normalize(path.resolve(filePath));
+    }
+    const mapped = mapToVirtualPath(filePath);
+    if (mapped) return mapped;
+    if (isVirtualRoot(filePath)) return path.normalize(path.resolve(filePath));
+    return undefined;
+  };
+
+  const gatherVirtualCandidates = (filePath: string): string[] => {
+    const candidates = new Set<string>();
+    const resolved = path.normalize(path.resolve(filePath));
+    const direct = resolveVirtualPath(resolved);
+    if (direct) candidates.add(direct);
+    if (vol.existsSync(resolved)) candidates.add(resolved);
+    return Array.from(candidates);
   };
 
   const origSpawn = childProcessDefault.spawn;
@@ -213,39 +272,19 @@ const monkeyPatchFS = ({
       }
     }
 
-    if (
-      (typeof filePath === "string" || Buffer.isBuffer(filePath)) &&
-      (isCommandsPath(filePath) ||
-        isCommandsChild(filePath) ||
-        isAgentsPath(filePath) ||
-        isAgentsChild(filePath))
-    ) {
-      try {
-        if (vol.existsSync(filePath)) {
-          const result = vol.readFileSync(filePath, options as Parameters<typeof vol.readFileSync>[1]);
-          const resultInfo =
-            Buffer.isBuffer(result) ? `${result.length} bytes` : `${result.toString().length} chars`;
-          log.vfs(`readFileSync("${filePath}") => ${resultInfo} (virtual)`);
-          return result;
-        }
-      } catch (error_) {
-        log.vfs(`readFileSync("${filePath}") => ERROR: ${error_} (virtual)`);
-      }
-      const error = new Error(
-        `ENOENT: no such file or directory, open '${filePath}'`,
-      ) as NodeJS.ErrnoException;
-      error.code = "ENOENT";
-      error.path = String(filePath);
-      log.vfs(`readFileSync("${filePath}") => throwing ENOENT (not in virtual fs)`);
-      throw error;
-    }
-
     if (typeof filePath === "string") {
-      const virtualPath = mapToVirtualPath(filePath);
-      if (virtualPath && vol.existsSync(virtualPath)) {
-        const result = vol.readFileSync(virtualPath, options as Parameters<typeof vol.readFileSync>[1]);
-        log.vfs(`readFileSync("${filePath}") => mapped to virtual "${virtualPath}"`);
-        return result;
+      const candidates = gatherVirtualCandidates(filePath);
+      for (const candidate of candidates) {
+        try {
+          if (vol.existsSync(candidate)) {
+            const result = vol.readFileSync(candidate, options as Parameters<typeof vol.readFileSync>[1]);
+            const info = Buffer.isBuffer(result) ? `${result.length} bytes` : `${result.toString().length} chars`;
+            log.vfs(`readFileSync("${filePath}") => ${info} (virtual from ${candidate})`);
+            return result;
+          }
+        } catch (error_) {
+          log.vfs(`readFileSync("${filePath}") => ERROR: ${error_} (virtual)`);
+        }
       }
     }
 
@@ -302,6 +341,46 @@ const monkeyPatchFS = ({
     // @ts-expect-error
     return Reflect.apply(origStatSync, this, [filePath, options]);
   } as typeof fsDefault.statSync;
+
+  if (typeof fsDefault.fstatSync === "function") {
+    const origFstatSync = fsDefault.fstatSync;
+    (fsDefault as any).fstatSync = function (fd: number, options?: StatSyncOptions) {
+      if (typeof fd === "number" && virtualFileDescriptors.has(fd)) {
+        const virtualFile = virtualFileDescriptors.get(fd)!;
+        log.vfs(`fstatSync(${fd}) => virtual (${virtualFile.path})`);
+        return getVirtualStats(virtualFile.path, options);
+      }
+      return Reflect.apply(origFstatSync, this, [fd, options]);
+    };
+  }
+
+  if (typeof fsDefault.fstat === "function") {
+    const origFstat = fsDefault.fstat;
+    (fsDefault as any).fstat = function (
+      fd: number,
+      optionsOrCallback?: any,
+      callback?: (err: NodeJS.ErrnoException | null, stats?: any) => void,
+    ) {
+      let options = optionsOrCallback;
+      let cb = callback;
+      if (typeof optionsOrCallback === "function") {
+        cb = optionsOrCallback;
+        options = undefined;
+      }
+      const finalCallback = cb || (() => {});
+
+      if (typeof fd === "number" && virtualFileDescriptors.has(fd)) {
+        const virtualFile = virtualFileDescriptors.get(fd)!;
+        log.vfs(`fstat(${fd}) => virtual (${virtualFile.path})`);
+        const stats = getVirtualStats(virtualFile.path, options);
+        process.nextTick(() => finalCallback(null, stats));
+        return;
+      }
+
+      return Reflect.apply(origFstat, this, [fd, options, finalCallback]);
+    };
+  }
+
   fsDefault.readdirSync = function (filePath: PathLike, options?: ReaddirSyncOptions) {
     type ReaddirResult = Buffer[] | Dirent[] | string[];
     log.vfs(`readdirSync("${filePath}") called`);
@@ -771,6 +850,141 @@ const monkeyPatchFS = ({
     return Reflect.apply(origCreateWriteStream, this, [filePath, options]);
   } as typeof fsDefault.createWriteStream;
   if (fsDefault.promises) {
+    if (fsDefault.promises.readFile) {
+      const origPromisesReadFile = fsDefault.promises.readFile.bind(fsDefault.promises);
+      Object.defineProperty(fsDefault.promises, "readFile", {
+        async value(filePath: PathLike | FileHandle, options?: any) {
+          if (isVirtualFileHandle(filePath)) {
+            const handle = filePath as MaybeVirtualFileHandle;
+            const meta = handle[virtualFileHandleSymbol]!;
+            log.vfs(`fs.promises.readFile(<FileHandle:${meta.path}>) => virtual handle`);
+            return handle.readFile(options);
+          }
+          if (typeof filePath === "string") {
+            for (const candidate of gatherVirtualCandidates(filePath)) {
+              if (vol.existsSync(candidate)) {
+                log.vfs(`fs.promises.readFile("${filePath}") => virtual (${candidate})`);
+                return readVirtualFileSync(candidate, options);
+              }
+            }
+
+            if (isCommandsPath(filePath) || isCommandsChild(filePath) || isAgentsPath(filePath) || isAgentsChild(filePath) || isVirtualRoot(filePath)) {
+              const error = new Error(`ENOENT: no such file or directory, open '${filePath}'`) as NodeJS.ErrnoException;
+              error.code = "ENOENT";
+              error.path = filePath;
+              throw error;
+            }
+          }
+
+          return origPromisesReadFile(filePath, options);
+        },
+        writable: true,
+        configurable: true,
+      });
+    }
+
+    if (fsDefault.promises.open) {
+      const origPromisesOpen = fsDefault.promises.open.bind(fsDefault.promises);
+      Object.defineProperty(fsDefault.promises, "open", {
+        async value(filePath: PathLike, flags?: string | number, mode?: string | number) {
+          if (typeof filePath === "string") {
+            const virtualPath = resolveVirtualPath(filePath);
+            if (virtualPath) {
+              vol.mkdirSync(path.dirname(virtualPath), { recursive: true });
+              log.vfs(`fs.promises.open("${filePath}") => virtual (${virtualPath})`);
+              const handle = await (volPromises.open as unknown as (
+                path: PathLike,
+                flags?: string | number,
+                mode?: string | number,
+              ) => Promise<FileHandle>)(virtualPath, flags, mode);
+              markVirtualFileHandle(handle, virtualPath);
+              return handle;
+            }
+          }
+          return origPromisesOpen(filePath, flags as any, mode as any);
+        },
+        writable: true,
+        configurable: true,
+      });
+    }
+
+    if (fsDefault.promises.stat) {
+      const origPromisesStat = fsDefault.promises.stat.bind(fsDefault.promises);
+      Object.defineProperty(fsDefault.promises, "stat", {
+        async value(filePath: PathLike | FileHandle, options?: any) {
+          if (isVirtualFileHandle(filePath)) {
+            const handle = filePath as MaybeVirtualFileHandle;
+            const meta = handle[virtualFileHandleSymbol]!;
+            log.vfs(`fs.promises.stat(<FileHandle:${meta.path}>) => virtual handle`);
+            return handle.stat(options);
+          }
+          if (typeof filePath === "string") {
+            for (const candidate of gatherVirtualCandidates(filePath)) {
+              if (vol.existsSync(candidate)) {
+                log.vfs(`fs.promises.stat("${filePath}") => virtual (${candidate})`);
+                return volPromises.stat(candidate as any, options);
+              }
+            }
+
+            if (isCommandsPath(filePath) || isCommandsChild(filePath) || isAgentsPath(filePath) || isAgentsChild(filePath) || isVirtualRoot(filePath)) {
+              const error = new Error(`ENOENT: no such file or directory, stat '${filePath}'`) as NodeJS.ErrnoException;
+              error.code = "ENOENT";
+              error.path = filePath;
+              throw error;
+            }
+          }
+
+          return origPromisesStat(filePath as PathLike, options);
+        },
+        writable: true,
+        configurable: true,
+      });
+    }
+
+    const promisesWithFstat = fsDefault.promises as typeof fsDefault.promises & {
+      fstat?: (fd: number | FileHandle, options?: unknown) => Promise<unknown>;
+    };
+    if (typeof promisesWithFstat.fstat === "function") {
+      const origPromisesFstat = promisesWithFstat.fstat.bind(fsDefault.promises);
+      Object.defineProperty(fsDefault.promises, "fstat", {
+        async value(fd: number | FileHandle, options?: any) {
+          if (typeof fd === "number" && virtualFileDescriptors.has(fd)) {
+            const virtualFile = virtualFileDescriptors.get(fd)!;
+            log.vfs(`fs.promises.fstat(${fd}) => virtual (${virtualFile.path})`);
+            return getVirtualStats(virtualFile.path, options);
+          }
+          if (isVirtualFileHandle(fd)) {
+            const handle = fd as MaybeVirtualFileHandle;
+            const meta = handle[virtualFileHandleSymbol]!;
+            log.vfs(`fs.promises.fstat(<FileHandle:${meta.path}>) => virtual handle`);
+            return handle.stat(options);
+          }
+          return origPromisesFstat(fd as any, options);
+        },
+        writable: true,
+        configurable: true,
+      });
+    }
+
+    if (fsDefault.promises.access) {
+      const origPromisesAccess = fsDefault.promises.access.bind(fsDefault.promises);
+      Object.defineProperty(fsDefault.promises, "access", {
+        async value(filePath: PathLike, mode?: number) {
+          if (typeof filePath === "string") {
+            for (const candidate of gatherVirtualCandidates(filePath)) {
+              if (vol.existsSync(candidate)) {
+                log.vfs(`fs.promises.access("${filePath}") => virtual (${candidate})`);
+                return;
+              }
+            }
+          }
+          return origPromisesAccess(filePath, mode);
+        },
+        writable: true,
+        configurable: true,
+      });
+    }
+
     const origPromisesWriteFile = fsDefault.promises.writeFile;
     Object.defineProperty(fsDefault.promises, "writeFile", {
       async value(filePath: PathLike, data: any, options?: any) {
@@ -849,19 +1063,13 @@ const monkeyPatchFS = ({
         if (typeof filePath === "string" && filePath.includes(".claude")) {
           log.vfs(`fs.promises.readdir("${filePath}") called`);
         }
-        if (isCommandsPath(filePath)) {
-          log.vfs(`fs.promises.readdir intercepted for commands directory`);
-          if (vol.existsSync(filePath)) {
-            return vol.readdirSync(filePath, options as any);
+        if (typeof filePath === "string") {
+          for (const candidate of gatherVirtualCandidates(filePath)) {
+            if (vol.existsSync(candidate)) {
+              log.vfs(`fs.promises.readdir("${filePath}") => virtual (${candidate})`);
+              return volPromises.readdir(candidate as any, options as any);
+            }
           }
-          return [];
-        }
-        if (isAgentsPath(filePath)) {
-          log.vfs(`fs.promises.readdir intercepted for agents directory`);
-          if (vol.existsSync(filePath)) {
-            return vol.readdirSync(filePath, options as any);
-          }
-          return [];
         }
         return origPromisesReaddir.call(this, filePath, options as any);
       },
@@ -1063,8 +1271,28 @@ const monkeyPatchFS = ({
       if (virtualFileDescriptors.has(fd)) {
         log.vfs(`Closing virtual FD ${fd}`);
         virtualFileDescriptors.delete(fd);
+        return 0;
       }
       return Reflect.apply(origCloseSync, this, [fd]);
+    };
+  }
+
+  if (typeof fsDefault.close === "function") {
+    const origClose = fsDefault.close;
+    (fsDefault as any).close = function (
+      fd: number,
+      callback?: (err: NodeJS.ErrnoException | null) => void,
+    ) {
+      const cb = callback || (() => {});
+
+      if (virtualFileDescriptors.has(fd)) {
+        log.vfs(`Closing virtual FD ${fd} (async)`);
+        virtualFileDescriptors.delete(fd);
+        process.nextTick(() => cb(null));
+        return;
+      }
+
+      return Reflect.apply(origClose, this, [fd, cb]);
     };
   }
 
@@ -1319,6 +1547,14 @@ export const setupVirtualFileSystem = (args: {
     [claudeMdPath]: args.userPrompt,
   });
 
+  const memfs = createFsFromVolume(vol);
+  const volPromises = memfs.promises as unknown as typeof fsDefault.promises;
+  const virtualRoots = new Set<string>([
+    path.normalize(path.resolve(os.homedir(), ".claude")),
+    commandsPath,
+    agentsPath,
+  ]);
+
   // add commands to virtual volume if provided
   const virtualCommandFiles: string[] = [];
   if (args.commands) {
@@ -1364,5 +1600,7 @@ export const setupVirtualFileSystem = (args: {
     disableParentClaudeMds: args.disableParentClaudeMds,
     agentsPath: args.agents ? agentsPath : undefined,
     virtualAgents: virtualAgentFiles,
+    virtualRoots,
+    volPromises,
   });
 };

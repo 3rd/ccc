@@ -13,8 +13,8 @@
     "@types/bun": "latest",
     "@types/eventsource": "^3.0.0",
     "@types/json-schema": "^7.0.15",
-    "@types/node": "^24.3.3",
-    "knip": "^5.63.1",
+    "@types/node": "^24.5.2",
+    "knip": "^5.64.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   },
@@ -22,18 +22,18 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^1.0.115",
+    "@anthropic-ai/claude-code": "^1.0.120",
     "dotenv": "^17.2.2",
     "eventsource": "^4.0.0",
     "fast-glob": "^3.3.3",
     "fastmcp": "^3.17.0",
     "json-schema": "^0.4.0",
     "json-schema-to-zod": "^2.6.1",
-    "memfs": "^4.39.0",
+    "memfs": "^4.43.0",
     "picocolors": "^1.1.1",
     "picoprint": "^1.0.6",
     "unionfs": "^4.6.0",
-    "zod": "^4.1.8",
-    "zx": "^8.8.1"
+    "zod": "^4.1.11",
+    "zx": "^8.8.3"
   }
 }
