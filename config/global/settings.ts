@@ -16,6 +16,7 @@ export default createConfigFullSettings({
     CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: "1",
     CLAUDE_CODE_MAX_OUTPUT_TOKENS: "32000",
     DISABLE_COST_WARNINGS: "1",
+    CLAUDE_BASH_NO_LOGIN: "1",
   },
   permissions: {
     defaultMode: "default", // if you're looking for bypassPermissions, it goes here
