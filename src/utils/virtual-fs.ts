@@ -17,14 +17,14 @@ import fsDefault, {
   type PathLike,
   type StatSyncOptions,
 } from "fs";
-import { Volume, createFsFromVolume } from "memfs";
+import { createFsFromVolume, Volume } from "memfs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { basename } from "node:path";
 import * as os from "os";
 import * as path from "path";
+import type { FileHandle } from "fs/promises";
 import { ensureFileExists } from "./fs";
 import { log } from "./log";
-import type { FileHandle } from "fs/promises";
 
 type ReadFileSyncOptions = BufferEncoding | { encoding?: BufferEncoding | null; flag?: string } | null;
 type ReaddirSyncOptions =
@@ -110,7 +110,9 @@ const monkeyPatchFS = ({
   let nextVirtualFd = 10_000;
 
   const isVirtualFileHandle = (value: unknown): value is MaybeVirtualFileHandle => {
-    return Boolean(value && typeof value === "object" && virtualFileHandleSymbol in (value as MaybeVirtualFileHandle));
+    return Boolean(
+      value && typeof value === "object" && virtualFileHandleSymbol in (value as MaybeVirtualFileHandle),
+    );
   };
 
   const markVirtualFileHandle = (handle: FileHandle, virtualPath: string): void => {
@@ -119,7 +121,10 @@ const monkeyPatchFS = ({
 
   const getVirtualStats = (virtualPath: string, options?: StatSyncOptions) => {
     const stats = vol.statSync(virtualPath, options as Parameters<typeof vol.statSync>[1]);
-    if (stats && typeof (fsDefault as unknown as { Stats?: new (...args: unknown[]) => unknown }).Stats === "function") {
+    if (
+      stats &&
+      typeof (fsDefault as unknown as { Stats?: new (...args: unknown[]) => unknown }).Stats === "function"
+    ) {
       const StatsCtor = (fsDefault as unknown as { Stats: new (...args: unknown[]) => unknown }).Stats;
       if (!(stats instanceof StatsCtor)) {
         Object.setPrototypeOf(stats, StatsCtor.prototype);
@@ -179,7 +184,12 @@ const monkeyPatchFS = ({
   };
 
   const resolveVirtualPath = (filePath: string): string | undefined => {
-    if (isCommandsPath(filePath) || isCommandsChild(filePath) || isAgentsPath(filePath) || isAgentsChild(filePath)) {
+    if (
+      isCommandsPath(filePath) ||
+      isCommandsChild(filePath) ||
+      isAgentsPath(filePath) ||
+      isAgentsChild(filePath)
+    ) {
       return path.normalize(path.resolve(filePath));
     }
     const mapped = mapToVirtualPath(filePath);
@@ -278,7 +288,8 @@ const monkeyPatchFS = ({
         try {
           if (vol.existsSync(candidate)) {
             const result = vol.readFileSync(candidate, options as Parameters<typeof vol.readFileSync>[1]);
-            const info = Buffer.isBuffer(result) ? `${result.length} bytes` : `${result.toString().length} chars`;
+            const info =
+              Buffer.isBuffer(result) ? `${result.length} bytes` : `${result.toString().length} chars`;
             log.vfs(`readFileSync("${filePath}") => ${info} (virtual from ${candidate})`);
             return result;
           }
@@ -853,7 +864,7 @@ const monkeyPatchFS = ({
     if (fsDefault.promises.readFile) {
       const origPromisesReadFile = fsDefault.promises.readFile.bind(fsDefault.promises);
       Object.defineProperty(fsDefault.promises, "readFile", {
-        async value(filePath: PathLike | FileHandle, options?: any) {
+        async value(filePath: FileHandle | PathLike, options?: any) {
           if (isVirtualFileHandle(filePath)) {
             const handle = filePath as MaybeVirtualFileHandle;
             const meta = handle[virtualFileHandleSymbol]!;
@@ -868,8 +879,15 @@ const monkeyPatchFS = ({
               }
             }
 
-            if (isCommandsPath(filePath) || isCommandsChild(filePath) || isAgentsPath(filePath) || isAgentsChild(filePath) || isVirtualRoot(filePath)) {
-              const error = new Error(`ENOENT: no such file or directory, open '${filePath}'`) as NodeJS.ErrnoException;
+            if (
+              isCommandsPath(filePath) ||
+              isCommandsChild(filePath) ||
+              isAgentsPath(filePath) ||
+              isAgentsChild(filePath)
+            ) {
+              const error = new Error(
+                `ENOENT: no such file or directory, open '${filePath}'`,
+              ) as NodeJS.ErrnoException;
               error.code = "ENOENT";
               error.path = filePath;
               throw error;
@@ -886,17 +904,27 @@ const monkeyPatchFS = ({
     if (fsDefault.promises.open) {
       const origPromisesOpen = fsDefault.promises.open.bind(fsDefault.promises);
       Object.defineProperty(fsDefault.promises, "open", {
-        async value(filePath: PathLike, flags?: string | number, mode?: string | number) {
+        async value(filePath: PathLike, flags?: number | string, mode?: number | string) {
           if (typeof filePath === "string") {
             const virtualPath = resolveVirtualPath(filePath);
-            if (virtualPath) {
-              vol.mkdirSync(path.dirname(virtualPath), { recursive: true });
+            const mustVirtualize =
+              isCommandsPath(filePath) ||
+              isCommandsChild(filePath) ||
+              isAgentsPath(filePath) ||
+              isAgentsChild(filePath);
+
+            if (virtualPath && (vol.existsSync(virtualPath) || mustVirtualize)) {
+              if (mustVirtualize) {
+                vol.mkdirSync(path.dirname(virtualPath), { recursive: true });
+              }
               log.vfs(`fs.promises.open("${filePath}") => virtual (${virtualPath})`);
-              const handle = await (volPromises.open as unknown as (
-                path: PathLike,
-                flags?: string | number,
-                mode?: string | number,
-              ) => Promise<FileHandle>)(virtualPath, flags, mode);
+              const handle = await (
+                volPromises.open as unknown as (
+                  path: PathLike,
+                  flags?: number | string,
+                  mode?: number | string,
+                ) => Promise<FileHandle>
+              )(virtualPath, flags, mode);
               markVirtualFileHandle(handle, virtualPath);
               return handle;
             }
@@ -911,7 +939,7 @@ const monkeyPatchFS = ({
     if (fsDefault.promises.stat) {
       const origPromisesStat = fsDefault.promises.stat.bind(fsDefault.promises);
       Object.defineProperty(fsDefault.promises, "stat", {
-        async value(filePath: PathLike | FileHandle, options?: any) {
+        async value(filePath: FileHandle | PathLike, options?: any) {
           if (isVirtualFileHandle(filePath)) {
             const handle = filePath as MaybeVirtualFileHandle;
             const meta = handle[virtualFileHandleSymbol]!;
@@ -926,8 +954,15 @@ const monkeyPatchFS = ({
               }
             }
 
-            if (isCommandsPath(filePath) || isCommandsChild(filePath) || isAgentsPath(filePath) || isAgentsChild(filePath) || isVirtualRoot(filePath)) {
-              const error = new Error(`ENOENT: no such file or directory, stat '${filePath}'`) as NodeJS.ErrnoException;
+            if (
+              isCommandsPath(filePath) ||
+              isCommandsChild(filePath) ||
+              isAgentsPath(filePath) ||
+              isAgentsChild(filePath)
+            ) {
+              const error = new Error(
+                `ENOENT: no such file or directory, stat '${filePath}'`,
+              ) as NodeJS.ErrnoException;
               error.code = "ENOENT";
               error.path = filePath;
               throw error;
@@ -941,13 +976,13 @@ const monkeyPatchFS = ({
       });
     }
 
-    const promisesWithFstat = fsDefault.promises as typeof fsDefault.promises & {
-      fstat?: (fd: number | FileHandle, options?: unknown) => Promise<unknown>;
-    };
+    const promisesWithFstat = fsDefault.promises as {
+      fstat?: (fd: FileHandle | number, options?: unknown) => Promise<unknown>;
+    } & typeof fsDefault.promises;
     if (typeof promisesWithFstat.fstat === "function") {
       const origPromisesFstat = promisesWithFstat.fstat.bind(fsDefault.promises);
       Object.defineProperty(fsDefault.promises, "fstat", {
-        async value(fd: number | FileHandle, options?: any) {
+        async value(fd: FileHandle | number, options?: any) {
           if (typeof fd === "number" && virtualFileDescriptors.has(fd)) {
             const virtualFile = virtualFileDescriptors.get(fd)!;
             log.vfs(`fs.promises.fstat(${fd}) => virtual (${virtualFile.path})`);
@@ -1233,7 +1268,7 @@ const monkeyPatchFS = ({
     (fsDefault as any).readSync = function (
       fd: number,
       buffer: NodeJS.ArrayBufferView,
-      offset?: number | null,
+      offsetOrOptions?: { offset?: number; length?: number; position?: number | null } | number | null,
       length?: number | null,
       position?: number | null,
     ) {
@@ -1244,24 +1279,113 @@ const monkeyPatchFS = ({
         const contentBuffer =
           Buffer.isBuffer(virtualFile.content) ? virtualFile.content : Buffer.from(virtualFile.content);
 
-        const readOffset = offset ?? 0;
-        const readLength = length ?? buffer.byteLength - readOffset;
-        const readPosition = position !== null && position !== undefined ? position : virtualFile.position;
+        const targetBuffer =
+          Buffer.isBuffer(buffer) ?
+            (buffer as Buffer)
+          : Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 
-        const bytesToRead = Math.min(readLength, contentBuffer.length - readPosition);
-        if (bytesToRead > 0) {
-          contentBuffer.copy(buffer as Buffer, readOffset, readPosition, readPosition + bytesToRead);
+        if (!Number.isFinite(virtualFile.position)) {
+          virtualFile.position = 0;
         }
 
-        if (position === null || position === undefined) {
-          virtualFile.position += bytesToRead;
+        const toInt = (value: unknown, name: string): number => {
+          if (typeof value !== "number" || !Number.isFinite(value)) {
+            throw new TypeError(`${name} must be a finite number`);
+          }
+          if (!Number.isInteger(value)) {
+            throw new RangeError(`${name} must be an integer`);
+          }
+          return value;
+        };
+
+        const bufferByteLength = targetBuffer.length;
+
+        const decodeArgs = () => {
+          let rawOffset: number | undefined;
+          let rawLength: number | undefined;
+          let rawPosition: number | null | undefined;
+
+          if (offsetOrOptions && typeof offsetOrOptions === "object") {
+            const options = offsetOrOptions as { offset?: number; length?: number; position?: number | null };
+            rawOffset = options.offset;
+            rawLength = options.length;
+            rawPosition = options.position ?? null;
+          } else {
+            rawOffset = offsetOrOptions ?? undefined;
+            rawLength = length ?? undefined;
+            rawPosition = position ?? null;
+          }
+
+          const resolvedOffset =
+            rawOffset === undefined || rawOffset === null ? 0 : toInt(rawOffset, "offset");
+          if (resolvedOffset < 0 || resolvedOffset > bufferByteLength) {
+            throw new RangeError(`offset out of range: ${resolvedOffset}`);
+          }
+
+          const maxLength = bufferByteLength - resolvedOffset;
+          const resolvedLength =
+            rawLength === undefined || rawLength === null ? maxLength : toInt(rawLength, "length");
+          if (resolvedLength < 0 || resolvedLength > maxLength) {
+            throw new RangeError(`length out of range: ${resolvedLength}`);
+          }
+
+          let resolvedPosition: number | null;
+          if (rawPosition === undefined || rawPosition === null) {
+            resolvedPosition = null;
+          } else {
+            const intPosition = toInt(rawPosition, "position");
+            if (intPosition < 0) {
+              throw new RangeError(`position must be >= 0`);
+            }
+            resolvedPosition = intPosition;
+          }
+
+          return { offset: resolvedOffset, length: resolvedLength, position: resolvedPosition };
+        };
+
+        let offset: number;
+        let lengthToRead: number;
+        let readPosition: number | null;
+
+        try {
+          ({ offset, length: lengthToRead, position: readPosition } = decodeArgs());
+        } catch (error) {
+          log.vfs(`readSync argument validation failed: ${error}`);
+          throw error;
         }
 
-        log.vfs(`Read ${bytesToRead} bytes from virtual FD ${fd} at position ${readPosition}`);
+        if (lengthToRead === 0) {
+          log.vfs(`Read 0 bytes from virtual FD ${fd} (requested length 0)`);
+          return 0;
+        }
+
+        const absolutePosition = readPosition ?? virtualFile.position;
+        if (!Number.isFinite(absolutePosition) || absolutePosition < 0) {
+          virtualFile.position = 0;
+          throw new RangeError(`Invalid internal position for virtual FD ${fd}`);
+        }
+
+        const available = Math.max(0, contentBuffer.length - absolutePosition);
+        if (available === 0) {
+          if (readPosition === null) {
+            virtualFile.position = absolutePosition;
+          }
+          log.vfs(`Read 0 bytes from virtual FD ${fd} (EOF)`);
+          return 0;
+        }
+
+        const bytesToRead = Math.min(lengthToRead, available);
+        contentBuffer.copy(targetBuffer, offset, absolutePosition, absolutePosition + bytesToRead);
+
+        if (readPosition === null) {
+          virtualFile.position = absolutePosition + bytesToRead;
+        }
+
+        log.vfs(`Read ${bytesToRead} bytes from virtual FD ${fd} at position ${absolutePosition}`);
         return bytesToRead;
       }
 
-      return Reflect.apply(origReadSync, this, [fd, buffer, offset, length, position]);
+      return Reflect.apply(origReadSync, this, [fd, buffer, offsetOrOptions, length, position]);
     };
   }
 
@@ -1279,10 +1403,7 @@ const monkeyPatchFS = ({
 
   if (typeof fsDefault.close === "function") {
     const origClose = fsDefault.close;
-    (fsDefault as any).close = function (
-      fd: number,
-      callback?: (err: NodeJS.ErrnoException | null) => void,
-    ) {
+    (fsDefault as any).close = function (fd: number, callback?: (err: NodeJS.ErrnoException | null) => void) {
       const cb = callback || (() => {});
 
       if (virtualFileDescriptors.has(fd)) {
@@ -1549,11 +1670,7 @@ export const setupVirtualFileSystem = (args: {
 
   const memfs = createFsFromVolume(vol);
   const volPromises = memfs.promises as unknown as typeof fsDefault.promises;
-  const virtualRoots = new Set<string>([
-    path.normalize(path.resolve(os.homedir(), ".claude")),
-    commandsPath,
-    agentsPath,
-  ]);
+  const virtualRoots = new Set<string>([agentsPath, commandsPath]);
 
   // add commands to virtual volume if provided
   const virtualCommandFiles: string[] = [];
