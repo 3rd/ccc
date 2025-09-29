@@ -7,6 +7,7 @@ export interface StdioMCPConfig {
   type?: "stdio";
   command: string;
   args?: string[];
+  cwd?: string;
   env?: Record<string, string>;
   filter?: MCPToolFilter;
 }
