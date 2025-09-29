@@ -22,7 +22,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^1.0.128",
+    "@anthropic-ai/claude-code": "^2.0.0",
     "dotenv": "^17.2.2",
     "eventsource": "^4.0.0",
     "fast-glob": "^3.3.3",
