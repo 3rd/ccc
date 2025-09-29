@@ -16,7 +16,6 @@ export interface HttpMCPConfig {
   type: "http";
   url: string;
   headers?: Record<string, string>;
-  env?: Record<string, string>;
   filter?: MCPToolFilter;
 }
 
