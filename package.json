@@ -14,7 +14,7 @@
     "@types/eventsource": "^3.0.0",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^24.7.2",
-    "knip": "^5.64.3",
+    "knip": "^5.65.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   },
@@ -22,11 +22,11 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^2.0.14",
+    "@anthropic-ai/claude-code": "^2.0.15",
     "dotenv": "^17.2.3",
     "eventsource": "^4.0.0",
     "fast-glob": "^3.3.3",
-    "fastmcp": "^3.19.1",
+    "fastmcp": "^3.19.2",
     "json-schema": "^0.4.0",
     "json-schema-to-zod": "^2.6.1",
     "memfs": "^4.49.0",
