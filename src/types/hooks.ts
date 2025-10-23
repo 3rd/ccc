@@ -67,11 +67,12 @@ export interface UserPromptSubmitHookInput extends BaseHookInput {
 
 export interface SessionStartHookInput extends BaseHookInput {
   hook_event_name: "SessionStart";
-  source: "clear" | "resume" | "startup";
+  source: "clear" | "resume" | "startup" | "compact";
 }
 
 export interface SessionEndHookInput extends BaseHookInput {
   hook_event_name: "SessionEnd";
+  reason: "clear" | "logout" | "prompt_input_exit" | "other";
 }
 
 export interface StopHookInput extends BaseHookInput {
@@ -81,6 +82,7 @@ export interface StopHookInput extends BaseHookInput {
 
 export interface SubagentStopHookInput extends BaseHookInput {
   hook_event_name: "SubagentStop";
+  stop_hook_active: boolean;
 }
 
 export interface NotificationHookInput extends BaseHookInput {
@@ -90,6 +92,8 @@ export interface NotificationHookInput extends BaseHookInput {
 
 export interface PreCompactHookInput extends BaseHookInput {
   hook_event_name: "PreCompact";
+  trigger: "manual" | "auto";
+  custom_instructions: string;
 }
 
 export type ClaudeHookInput =

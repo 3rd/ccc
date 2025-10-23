@@ -8,22 +8,32 @@ export default createPrompt((context) => {
   const currentDateTime = context.getCurrentDateTime();
   const workingDirectory = context.workingDirectory;
 
-  let gitSection = "";
-  if (isGitRepo) {
-    const branch = context.getGitBranch();
-    const status = context.getGitStatus();
-    const recentCommits = context.getGitRecentCommits();
-    gitSection = `
-Current branch: ${branch}
+  //   const gitSection = (() => {
+  //     if (!isGitRepo) return "";
+  //     const branch = context.getGitBranch();
+  //     const status = context.getGitStatus();
+  //     const recentCommits = context.getGitRecentCommits();
+  //     return `
+  // Current branch: ${branch}
+  //
+  // Status:
+  // ${status}
+  //
+  // Recent commits:
+  // ${recentCommits}`;
+  //   })();
+  //   const directoryStructure = context.getDirectoryTree();
 
-Status:
-${status}
-
-Recent commits:
-${recentCommits}`;
-  }
-
-  const directoryStructure = context.getDirectoryTree();
+  // Ex. could include in prompt:
+  // <directory-structure>
+  // ${directoryStructure}
+  // </directory-structure>
+  //
+  // Below is the Git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation:
+  //
+  // <git-status>
+  // ${gitSection}
+  // </git-status>
 
   return `
 You are a coding agent that helps users with software engineering tasks.
@@ -38,19 +48,6 @@ Is directory a git repo: ${isGitRepo}
 Platform: ${platform}
 OS Version: ${osVersion}
 Session start timestamp: ${currentDateTime}
-
-Below is a snapshot of this project's file structure at the start of the conversation. This snapshot will NOT update during the conversation. It skips over .gitignore patterns:
-
-<directory-structure>
-${directoryStructure}
-</directory-structure>
-
-Below is the Git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation:
-
-<git-status>
-${gitSection}
-</git-status>
-
 </env>
 `.trim();
 });
