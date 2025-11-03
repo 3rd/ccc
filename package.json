@@ -13,8 +13,8 @@
     "@types/bun": "latest",
     "@types/eventsource": "^3.0.0",
     "@types/json-schema": "^7.0.15",
-    "@types/node": "^24.9.2",
-    "knip": "^5.66.4",
+    "@types/node": "^24.10.0",
+    "knip": "^5.67.1",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   },

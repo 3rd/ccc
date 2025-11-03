@@ -261,7 +261,6 @@ const run = async () => {
   await startup.run("Mount VFS", async () => {
     setupVirtualFileSystem({
       settings: settings as unknown as Record<string, unknown>,
-      systemPrompt,
       userPrompt,
       commands,
       agents,
@@ -273,8 +272,7 @@ const run = async () => {
   // build args
   const args: string[] = [];
   args.push("--mcp-config", JSON.stringify({ mcpServers: mcps }));
-  // moved to wider system override via output style
-  // args.push("--append-system-prompt", systemPrompt);
+  args.push("--append-system-prompt", systemPrompt);
 
   // find claude binary / use CLAUDE_PATH override
   let claudeModulePath: string;

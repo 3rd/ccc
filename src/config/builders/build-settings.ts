@@ -56,7 +56,6 @@ export const buildSettings = async (context: Context) => {
   const result = {
     ...transformedValidated,
     hooks: finalHooks,
-    outputStyle: "custom" as const,
     ...(statusLine && { statusLine }),
   };
 

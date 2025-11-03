@@ -39,7 +39,6 @@ type ReadDirOptions =
 const VIRTUAL_PATHS = [
   path.join(os.homedir(), ".claude", "settings.json"),
   path.join(os.homedir(), ".claude", "CLAUDE.md"),
-  path.join(os.homedir(), ".claude", "output-styles", "custom.md"),
 ];
 
 const virtualToResolved = new Map<string, string>();
@@ -640,7 +639,6 @@ const monkeyPatchFS = ({
     const protectedPaths = [
       path.join(homeDir, ".claude", "settings.json"),
       path.join(homeDir, ".claude", "CLAUDE.md"),
-      path.join(homeDir, ".claude", "output-styles", "custom.md"),
     ];
     if (protectedPaths.includes(normalized)) {
       log.vfs(`WRITE BLOCKED: Protected file "${filePath}"`);
@@ -1595,7 +1593,6 @@ const monkeyPatchFS = ({
 
 export const setupVirtualFileSystem = (args: {
   settings: Record<string, unknown>;
-  systemPrompt: string;
   userPrompt: string;
   commands?: Map<string, string>;
   agents?: Map<string, string>;
@@ -1603,7 +1600,6 @@ export const setupVirtualFileSystem = (args: {
   disableParentClaudeMds?: boolean;
 }): void => {
   const settingsJsonPath = path.join(os.homedir(), ".claude", "settings.json");
-  const outputStylePath = path.join(os.homedir(), ".claude", "output-styles", "custom.md");
   const claudeMdPath = path.join(os.homedir(), ".claude", "CLAUDE.md");
   const commandsPath = path.normalize(path.resolve(os.homedir(), ".claude", "commands"));
   const agentsPath = path.normalize(path.resolve(os.homedir(), ".claude", "agents"));
@@ -1623,14 +1619,6 @@ export const setupVirtualFileSystem = (args: {
       log.vfs(`    ${key}: ${value}`);
     }
   }
-
-  // log system prompt
-  const systemPromptFirstLine = args.systemPrompt.split("\n")[0] || "";
-  log.vfs(
-    `Injecting system prompt: "${systemPromptFirstLine.slice(0, 80)}${systemPromptFirstLine.length > 80 ? "..." : ""}"`,
-  );
-  log.vfs(`  Path: ${outputStylePath}`);
-  log.vfs(`  Length: ${args.systemPrompt.length} chars, ${args.systemPrompt.split("\n").length} lines`);
 
   // log user prompt
   const userPromptFirstLine = args.userPrompt.split("\n")[0] || "";
@@ -1664,7 +1652,6 @@ export const setupVirtualFileSystem = (args: {
 
   const vol = Volume.fromJSON({
     [settingsJsonPath]: JSON.stringify(args.settings, null, 2),
-    [outputStylePath]: args.systemPrompt,
     [claudeMdPath]: args.userPrompt,
   });
 
@@ -1706,7 +1693,6 @@ export const setupVirtualFileSystem = (args: {
 
   // ensure files exists - workaround for discovery issues
   // TODO: remove since we can monkey patch now
-  ensureFileExists(outputStylePath);
   ensureFileExists(claudeMdPath);
 
   monkeyPatchFS({

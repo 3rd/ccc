@@ -21,7 +21,6 @@ export const dumpConfig = async (
 
   setupVirtualFileSystem({
     settings: config.settings,
-    systemPrompt: config.systemPrompt,
     userPrompt: config.userPrompt,
     commands: config.commands,
     agents: config.agents,
@@ -31,7 +30,6 @@ export const dumpConfig = async (
 
   // vfs paths
   const settingsJsonPath = path.join(os.homedir(), ".claude", "settings.json");
-  const outputStylePath = path.join(os.homedir(), ".claude", "output-styles", "custom.md");
   const claudeMdPath = path.join(os.homedir(), ".claude", "CLAUDE.md");
   const commandsPath = path.normalize(path.resolve(os.homedir(), ".claude", "commands"));
   const agentsPath = path.normalize(path.resolve(os.homedir(), ".claude", "agents"));
@@ -41,9 +39,7 @@ export const dumpConfig = async (
   await fs.mkdir(path.join(dumpDir, "commands"), { recursive: true });
   await fs.mkdir(path.join(dumpDir, "agents"), { recursive: true });
 
-  // dump output style
-  const systemContent = fsSync.readFileSync(outputStylePath, "utf8");
-  await fs.writeFile(path.join(dumpDir, "system.md"), systemContent, "utf8");
+  await fs.writeFile(path.join(dumpDir, "system.md"), config.systemPrompt, "utf8");
 
   // dump CLAUDE.md
   const userContent = fsSync.readFileSync(claudeMdPath, "utf8");
@@ -88,7 +84,6 @@ export const dumpConfig = async (
         configDirectory: context.configDirectory,
         paths: {
           settingsJsonPath,
-          outputStylePath,
           claudeMdPath,
           commandsPath,
           agentsPath,
