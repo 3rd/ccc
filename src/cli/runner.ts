@@ -120,7 +120,18 @@ const main = async () => {
       }
     }
   } catch (error) {
-    console.error(`${mode.toUpperCase()} runner failed:`, error);
+    if (error && typeof error === 'object' && 'stdout' in error && 'stderr' in error) {
+      const output = error as { stdout?: string; stderr?: string };
+      console.error(`${mode.toUpperCase()} runner failed:`);
+      if (output.stdout) {
+        console.error(output.stdout);
+      }
+      if (output.stderr) {
+        console.error(output.stderr);
+      }
+    } else {
+      console.error(`${mode.toUpperCase()} runner failed:`, error);
+    }
     process.exit(2);
   }
 };
