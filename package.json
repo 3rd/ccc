@@ -6,6 +6,7 @@
     "ccc": "./src/cli/launcher-wrapper.ts"
   },
   "scripts": {
+    "postinstall": "bun run scripts/postinstall.ts",
     "typecheck": "tsc --noEmit",
     "knip": "knip"
   },
