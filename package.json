@@ -15,8 +15,8 @@
     "@types/eventsource": "^3.0.0",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^24.10.1",
-    "knip": "^5.70.2",
-    "tsx": "^4.20.6",
+    "knip": "^5.71.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
@@ -30,7 +30,7 @@
     "fastmcp": "^3.24.0",
     "json-schema": "^0.4.0",
     "json-schema-to-zod": "^2.7.0",
-    "memfs": "^4.51.0",
+    "memfs": "^4.51.1",
     "picocolors": "^1.1.1",
     "picoprint": "^1.0.6",
     "unionfs": "^4.6.0",
