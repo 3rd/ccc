@@ -19,7 +19,10 @@ const FILE_PATCHES: FilePatch[] = [
   {
     file: "node_modules/@anthropic-ai/claude-code/cli.js",
     description: "claude-code cli",
-    patches: [{ search: "pr-comments", replace: "zprcomments" }],
+    patches: [
+      { search: "pr-comments", replace: "zprcomments" },
+      { search: "security-review", replace: "zsecurityreview" },
+    ],
   },
 ];
 
