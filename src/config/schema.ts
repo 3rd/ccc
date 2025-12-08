@@ -12,6 +12,7 @@ export const settingsSchema = z.object({
   includeCoAuthoredBy: z.boolean().optional(),
   model: z.string().optional(),
   spinnerTipsEnabled: z.boolean().optional(),
+  skipWebFetchPreflight: z.boolean().optional(),
 
   permissions: z.object({
     allow: z.array(z.string()).optional(),

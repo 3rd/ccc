@@ -4,6 +4,7 @@ export type ClaudeSettings = {
   apiKeyHelper?: string;
   includeCoAuthoredBy?: boolean;
   spinnerTipsEnabled?: boolean;
+  skipWebFetchPreflight?: boolean;
   statusLine?: {
     type: string;
     command: string;
