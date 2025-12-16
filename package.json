@@ -23,7 +23,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^2.0.69",
+    "@anthropic-ai/claude-code": "^2.0.70",
     "dotenv": "^17.2.3",
     "eventsource": "^4.1.0",
     "fast-glob": "^3.3.3",
@@ -34,7 +34,7 @@
     "picocolors": "^1.1.1",
     "picoprint": "^1.0.6",
     "unionfs": "^4.6.0",
-    "zod": "^4.1.13",
+    "zod": "^4.2.0",
     "zx": "^8.8.5"
   }
 }
