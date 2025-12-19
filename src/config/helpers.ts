@@ -9,7 +9,7 @@ import type {
   StdioMCPConfig,
 } from "@/types/mcps";
 import type { PresetConfig, PromptFunction } from "@/types/presets";
-import type { ClaudeSettings } from "@/types/settings";
+import type { ClaudeSettings } from "@/config/schema";
 import type { StatusLineInput } from "@/types/statusline";
 import { isHttpMCP, isSseMCP } from "@/types/mcps";
 

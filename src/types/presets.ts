@@ -1,7 +1,7 @@
 import type { Context } from "@/context/Context";
 import type { HooksConfiguration } from "./hooks";
 import type { MCPServers } from "./mcps";
-import type { ClaudeSettings } from "./settings";
+import type { ClaudeSettings } from "@/config/schema";
 
 export type PromptFunction = (context: Context) => Promise<string> | string;
 

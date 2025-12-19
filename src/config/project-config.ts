@@ -5,7 +5,7 @@ import type { HooksConfiguration } from "@/types/hooks";
 import type { MCPServers } from "@/types/mcps";
 import type { PromptFunction } from "@/types/presets";
 import type { ProjectConfig, ProjectMetadata } from "@/types/project";
-import type { ClaudeSettings } from "@/types/settings";
+import type { ClaudeSettings } from "@/config/schema";
 import { loadModuleDefault } from "@/utils/module-loader";
 import { expandPath } from "@/utils/path";
 
