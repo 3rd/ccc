@@ -33,6 +33,7 @@ export default createConfigHooks({
   // PreToolUse: [
   //   { hooks: [ contextAwareHook ] },
   // ],
+  PermissionRequest: [],
   PostToolUse: [],
   Notification: [],
   PreCompact: [],

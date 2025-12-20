@@ -1,5 +1,6 @@
 export type HookEventName =
   | "Notification"
+  | "PermissionRequest"
   | "PostToolUse"
   | "PreCompact"
   | "PreToolUse"
@@ -14,6 +15,7 @@ export type HookMatcherType =
   | "auto"
   | "Bash"
   | "clear"
+  | "compact"
   | "Edit"
   | "Glob"
   | "Grep"
@@ -33,23 +35,35 @@ export interface HookCommand {
   timeout?: number;
 }
 
+export interface HookPrompt {
+  type: "prompt";
+  prompt: string;
+  timeout?: number;
+}
+
+export type HookEntry = HookCommand | HookPrompt;
+
 export interface HookDefinition {
   matcher?: HookMatcherType;
-  hooks: HookCommand[];
+  hooks: HookEntry[];
 }
 
 export type HooksConfiguration = Partial<Record<HookEventName, HookDefinition[]>>;
+
+export type PermissionMode = "default" | "plan" | "acceptEdits" | "bypassPermissions";
 
 interface BaseHookInput {
   session_id: string;
   transcript_path: string;
   cwd: string;
+  permission_mode: PermissionMode;
 }
 
 export interface PreToolUseHookInput extends BaseHookInput {
   hook_event_name: "PreToolUse";
   tool_name: string;
   tool_input: Record<string, unknown>;
+  tool_use_id: string;
 }
 
 export interface PostToolUseHookInput extends BaseHookInput {
@@ -57,12 +71,19 @@ export interface PostToolUseHookInput extends BaseHookInput {
   tool_name: string;
   tool_input: Record<string, unknown>;
   tool_response: Record<string, unknown>;
+  tool_use_id: string;
+}
+
+export interface PermissionRequestHookInput extends BaseHookInput {
+  hook_event_name: "PermissionRequest";
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  tool_use_id: string;
 }
 
 export interface UserPromptSubmitHookInput extends BaseHookInput {
   hook_event_name: "UserPromptSubmit";
   prompt: string;
-  trigger: "auto" | "manual";
 }
 
 export interface SessionStartHookInput extends BaseHookInput {
@@ -85,9 +106,12 @@ export interface SubagentStopHookInput extends BaseHookInput {
   stop_hook_active: boolean;
 }
 
+export type NotificationType = "permission_prompt" | "idle_prompt" | "auth_success" | "elicitation_dialog";
+
 export interface NotificationHookInput extends BaseHookInput {
   hook_event_name: "Notification";
   message: string;
+  notification_type: NotificationType;
 }
 
 export interface PreCompactHookInput extends BaseHookInput {
@@ -98,6 +122,7 @@ export interface PreCompactHookInput extends BaseHookInput {
 
 export type ClaudeHookInput =
   | NotificationHookInput
+  | PermissionRequestHookInput
   | PostToolUseHookInput
   | PreCompactHookInput
   | PreToolUseHookInput
@@ -111,19 +136,41 @@ interface BaseHookResponse {
   continue?: boolean;
   stopReason?: string;
   suppressOutput?: boolean;
+  systemMessage?: string;
 }
 
 export interface PreToolUseHookResponse extends BaseHookResponse {
-  permissionDecision?: "allow" | "ask" | "deny";
-  permissionDecisionReason?: string;
-  // deprecated
+  hookSpecificOutput?: {
+    hookEventName: "PreToolUse";
+    permissionDecision?: "allow" | "ask" | "deny";
+    permissionDecisionReason?: string;
+    updatedInput?: Record<string, unknown>;
+  };
+  /** @deprecated use hookSpecificOutput.permissionDecision instead */
   decision?: "approve" | "block";
+  /** @deprecated use hookSpecificOutput.permissionDecisionReason instead */
   reason?: string;
 }
 
 export interface PostToolUseHookResponse extends BaseHookResponse {
   decision?: "block";
   reason?: string;
+  hookSpecificOutput?: {
+    hookEventName: "PostToolUse";
+    additionalContext?: string;
+  };
+}
+
+export interface PermissionRequestHookResponse extends BaseHookResponse {
+  hookSpecificOutput?: {
+    hookEventName: "PermissionRequest";
+    decision?: {
+      behavior: "allow" | "deny";
+      updatedInput?: Record<string, unknown>;
+      message?: string;
+      interrupt?: boolean;
+    };
+  };
 }
 
 export interface UserPromptSubmitHookResponse extends BaseHookResponse {
@@ -156,12 +203,11 @@ export interface NotificationHookResponse extends BaseHookResponse {}
 
 export interface PreCompactHookResponse extends BaseHookResponse {}
 
-export interface SessionEndHookResponse extends BaseHookResponse {
-  systemMessage?: string;
-}
+export interface SessionEndHookResponse extends BaseHookResponse {}
 
 export type HookResponse =
   | NotificationHookResponse
+  | PermissionRequestHookResponse
   | PostToolUseHookResponse
   | PreCompactHookResponse
   | PreToolUseHookResponse
@@ -175,6 +221,10 @@ export interface HookEventMap {
   PreToolUse: {
     input: PreToolUseHookInput;
     response: PreToolUseHookResponse | void;
+  };
+  PermissionRequest: {
+    input: PermissionRequestHookInput;
+    response: PermissionRequestHookResponse | void;
   };
   PostToolUse: {
     input: PostToolUseHookInput;
