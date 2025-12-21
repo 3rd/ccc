@@ -274,6 +274,17 @@ const run = async () => {
   args.push("--mcp-config", JSON.stringify({ mcpServers: mcps }));
   args.push("--append-system-prompt", systemPrompt);
 
+  // pass through --plugin-dir args from CLI or settings.pluginDirs
+  const cliPluginDirs = process.argv
+    .map((arg, i, arr) => (arr[i - 1] === "--plugin-dir" ? arg : null))
+    .filter((dir): dir is string => dir !== null);
+
+  const settingsPluginDirs = (settings as { pluginDirs?: string[] }).pluginDirs || [];
+
+  for (const dir of [...cliPluginDirs, ...settingsPluginDirs]) {
+    args.push("--plugin-dir", dir);
+  }
+
   // find claude binary / use CLAUDE_PATH override
   let claudeModulePath: string;
   const resolveTask = startup.start("Resolve Claude CLI");

@@ -486,6 +486,62 @@ export default createConfigMCPs({
 });
 ```
 
+## Plugins
+
+CCC supports Claude Code plugins through the `enabledPlugins` and `pluginDirs` settings.
+
+### Workflow
+
+1. Install plugins using the `/plugin` command
+2. Find plugin keys in `~/.claude/plugins/installed_plugins.json`
+3. Enable plugins in your CCC settings (plugins won't be active until added to config)
+
+### Enabling Plugins
+
+```typescript
+// config/global/settings.ts
+import { createConfigSettings } from "@/config/helpers";
+
+export default createConfigSettings({
+  enabledPlugins: {
+    // Use keys from ~/.claude/plugins/installed_plugins.json
+    "typescript-lsp@claude-plugins-official": true,
+    "gopls-lsp@claude-plugins-official": true,
+  },
+});
+```
+
+### Local Plugin Directories
+
+```typescript
+export default createConfigSettings({
+  pluginDirs: [
+    "./config/plugins/my-plugin",
+  ],
+});
+```
+
+Or via CLI: `ccc --plugin-dir ./my-plugin`
+
+### LSP Plugin Known Issues
+
+**Problem:** As of Claude Code v2.0.75, LSP plugins don't work. The LSP tool returns "No LSP server available" despite correct configuration. See [GitHub issue #14803](https://github.com/anthropics/claude-code/issues/14803).
+
+**Workaround:** Downgrade to v2.0.67 and force-enable the LSP tool:
+
+```typescript
+export default createConfigSettings({
+  env: {
+    ENABLE_LSP_TOOL: "1",
+  },
+  enabledPlugins: {
+    "typescript-lsp@claude-plugins-official": true,
+  },
+});
+```
+
+**Alternative:** Use an MCP-based language server instead of the plugin system.
+
 ## Statusline
 
 Customize the Claude statusline with a simple configuration-based approach.
@@ -597,7 +653,7 @@ ccc --dump-config
 This creates a `.config-dump/{timestamp}/` directory containing:
 
 - `system.md` - The actual computed system prompt
-- `user.md` - The actual computed user prompt  
+- `user.md` - The actual computed user prompt
 - `commands/` - All command files as Claude sees them
 - `agents/` - All agent files as Claude sees them
 - `settings.json` - The merged settings

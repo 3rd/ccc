@@ -48,6 +48,21 @@ export const settingsSchema = z.object({
     })
     .optional(),
 
+  // plugins
+  enabledPlugins: z
+    .record(
+      z.string(),
+      z.union([
+        z.boolean(),
+        z.object({
+          enabled: z.boolean().optional(),
+          settings: z.record(z.string(), z.unknown()).optional(),
+        }),
+      ]),
+    )
+    .optional(),
+  pluginDirs: z.array(z.string()).optional(),
+
   // overwritten by launcher
   // outputStyle: z.string().optional(),
   // hooks: z.record(z.string(), z.array(z.any())).optional(),

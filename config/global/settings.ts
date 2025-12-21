@@ -42,4 +42,9 @@ export default createConfigFullSettings({
   includeCoAuthoredBy: false,
   spinnerTipsEnabled: true,
   alwaysThinkingEnabled: true,
+
+  // plugins
+  enabledPlugins: {
+    "typescript-lsp@claude-plugins-official": true,
+  },
 });
