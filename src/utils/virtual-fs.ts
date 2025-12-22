@@ -1650,8 +1650,23 @@ export const setupVirtualFileSystem = (args: {
     log.vfs("No agents provided");
   }
 
+  // filter out env vars that already exist in process.env (user env takes precedence)
+  const filteredSettings = { ...args.settings };
+  if (filteredSettings.env && typeof filteredSettings.env === "object") {
+    const envRecord = filteredSettings.env as Record<string, string>;
+    const filteredEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(envRecord)) {
+      if (!(key in process.env)) {
+        filteredEnv[key] = value;
+      } else {
+        log.vfs(`Skipping env var "${key}" - already defined in process.env`);
+      }
+    }
+    filteredSettings.env = Object.keys(filteredEnv).length > 0 ? filteredEnv : undefined;
+  }
+
   const vol = Volume.fromJSON({
-    [settingsJsonPath]: JSON.stringify(args.settings, null, 2),
+    [settingsJsonPath]: JSON.stringify(filteredSettings, null, 2),
     [claudeMdPath]: args.userPrompt,
   });
 
