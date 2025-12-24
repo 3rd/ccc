@@ -50,7 +50,7 @@ export interface HookDefinition {
 
 export type HooksConfiguration = Partial<Record<HookEventName, HookDefinition[]>>;
 
-export type PermissionMode = "default" | "plan" | "acceptEdits" | "bypassPermissions";
+export type PermissionMode = "acceptEdits" | "bypassPermissions" | "default" | "plan";
 
 interface BaseHookInput {
   session_id: string;
@@ -88,12 +88,12 @@ export interface UserPromptSubmitHookInput extends BaseHookInput {
 
 export interface SessionStartHookInput extends BaseHookInput {
   hook_event_name: "SessionStart";
-  source: "clear" | "resume" | "startup" | "compact";
+  source: "clear" | "compact" | "resume" | "startup";
 }
 
 export interface SessionEndHookInput extends BaseHookInput {
   hook_event_name: "SessionEnd";
-  reason: "clear" | "logout" | "prompt_input_exit" | "other";
+  reason: "clear" | "logout" | "other" | "prompt_input_exit";
 }
 
 export interface StopHookInput extends BaseHookInput {
@@ -106,7 +106,7 @@ export interface SubagentStopHookInput extends BaseHookInput {
   stop_hook_active: boolean;
 }
 
-export type NotificationType = "permission_prompt" | "idle_prompt" | "auth_success" | "elicitation_dialog";
+export type NotificationType = "auth_success" | "elicitation_dialog" | "idle_prompt" | "permission_prompt";
 
 export interface NotificationHookInput extends BaseHookInput {
   hook_event_name: "Notification";
@@ -116,7 +116,7 @@ export interface NotificationHookInput extends BaseHookInput {
 
 export interface PreCompactHookInput extends BaseHookInput {
   hook_event_name: "PreCompact";
-  trigger: "manual" | "auto";
+  trigger: "auto" | "manual";
   custom_instructions: string;
 }
 

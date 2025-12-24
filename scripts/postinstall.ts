@@ -2,29 +2,31 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import p from "picoprint";
-
-interface StringPatch {
-  search: string;
-  replace: string;
-}
-
-interface FilePatch {
-  file: string;
-  patches: StringPatch[];
-  description?: string;
-}
+import { cliPatches, isFunctionPatch, isRegexPatch, type FilePatch, type Patch } from "./patches";
 
 const ROOT = join(import.meta.dirname, "..");
+
 const FILE_PATCHES: FilePatch[] = [
   {
     file: "node_modules/@anthropic-ai/claude-code/cli.js",
     description: "claude-code cli",
-    patches: [
-      { search: "pr-comments", replace: "zprcomments" },
-      { search: "security-review", replace: "zsecurityreview" },
-    ],
+    patches: cliPatches,
   },
 ];
+
+const applyPatch = (content: string, patch: Patch): { content: string; count: number } => {
+  if (isFunctionPatch(patch)) {
+    const result = patch.apply(content);
+    return { content: result, count: result !== content ? 1 : 0 };
+  }
+  if (isRegexPatch(patch)) {
+    const matches = content.match(patch.pattern);
+    const count = matches?.length ?? 0;
+    return { content: content.replace(patch.pattern, patch.replace), count };
+  }
+  const occurrences = (content.match(new RegExp(patch.search, "g")) || []).length;
+  return { content: content.replaceAll(patch.search, patch.replace), count: occurrences };
+};
 
 const applyFilePatches = (filePatch: FilePatch): void => {
   const { file, patches, description } = filePatch;
@@ -36,18 +38,17 @@ const applyFilePatches = (filePatch: FilePatch): void => {
     return;
   }
 
-  let content = readFileSync(filePath, "utf8");
+  const original = readFileSync(filePath, "utf8");
+  let content = original;
   let totalPatched = 0;
 
-  for (const { search, replace } of patches) {
-    const occurrences = (content.match(new RegExp(search, "g")) || []).length;
-    if (occurrences > 0) {
-      content = content.replaceAll(search, replace);
-      totalPatched += occurrences;
-    }
+  for (const patch of patches) {
+    const { content: newContent, count } = applyPatch(content, patch);
+    content = newContent;
+    totalPatched += count;
   }
 
-  if (totalPatched === 0) {
+  if (content === original) {
     p.dim.log("·", `${label}: already patched or not needed`);
     return;
   }

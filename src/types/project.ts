@@ -1,6 +1,6 @@
+import type { ClaudeSettings } from "@/config/schema";
 import type { HooksConfiguration, MCPServers } from "@/types";
 import type { PromptFunction } from "@/types/presets";
-import type { ClaudeSettings } from "@/config/schema";
 
 export interface CreateProjectOptions {
   name: string;

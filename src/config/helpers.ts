@@ -1,3 +1,4 @@
+import type { ClaudeSettings } from "@/config/schema";
 import type { Context } from "@/context/Context";
 import type { HooksConfiguration } from "@/types/hooks";
 import type {
@@ -9,7 +10,6 @@ import type {
   StdioMCPConfig,
 } from "@/types/mcps";
 import type { PresetConfig, PromptFunction } from "@/types/presets";
-import type { ClaudeSettings } from "@/config/schema";
 import type { StatusLineInput } from "@/types/statusline";
 import { isHttpMCP, isSseMCP } from "@/types/mcps";
 

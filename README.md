@@ -523,24 +523,24 @@ export default createConfigSettings({
 
 Or via CLI: `ccc --plugin-dir ./my-plugin`
 
-### LSP Plugin Known Issues
+### LSP Plugin Support
 
-**Problem:** As of Claude Code v2.0.75, LSP plugins don't work. The LSP tool returns "No LSP server available" despite correct configuration. See [GitHub issue #14803](https://github.com/anthropics/claude-code/issues/14803).
+CCC automatically patches Claude Code to fix broken LSP plugin support in v2.0.74+. See [GitHub issue #14803](https://github.com/anthropics/claude-code/issues/14803).
 
-**Workaround:** Downgrade to v2.0.67 and force-enable the LSP tool:
+The patches are applied during `bun install` and fix:
+- Race condition where LSP manager initializes before plugins load
+- Empty `initialize()` function that never registers servers
+- Missing `textDocument/didOpen` notifications
+
+Just enable your LSP plugins normally:
 
 ```typescript
 export default createConfigSettings({
-  env: {
-    ENABLE_LSP_TOOL: "1",
-  },
   enabledPlugins: {
     "typescript-lsp@claude-plugins-official": true,
   },
 });
 ```
-
-**Alternative:** Use an MCP-based language server instead of the plugin system.
 
 ## Statusline
 
