@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import type { PromptLayerData } from "@/config/helpers";
 import type { Context } from "@/context/Context";
@@ -102,6 +102,18 @@ export const buildCommands = async (context: Context): Promise<Map<string, strin
   for (const [name, layers] of commandLayers) {
     const merged = mergePrompts(...layers);
     commands.set(name, merged);
+  }
+
+  // load local project commands
+  const localCommandsPath = join(context.workingDirectory, ".claude/commands");
+  if (existsSync(localCommandsPath)) {
+    const files = readdirSync(localCommandsPath);
+    for (const file of files) {
+      if (file.endsWith(".md")) {
+        const content = readFileSync(join(localCommandsPath, file), "utf8");
+        commands.set(file, content);
+      }
+    }
   }
 
   // warn about overrides

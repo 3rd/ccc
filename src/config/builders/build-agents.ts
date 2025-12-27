@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import type { PromptLayerData } from "@/config/helpers";
 import type { Context } from "@/context/Context";
@@ -102,6 +102,18 @@ export const buildAgents = async (context: Context): Promise<Map<string, string>
   for (const [name, layers] of agentLayers) {
     const merged = mergePrompts(...layers);
     agents.set(name, merged);
+  }
+
+  // load local project agents
+  const localAgentsPath = join(context.workingDirectory, ".claude/agents");
+  if (existsSync(localAgentsPath)) {
+    const files = readdirSync(localAgentsPath);
+    for (const file of files) {
+      if (file.endsWith(".md")) {
+        const content = readFileSync(join(localAgentsPath, file), "utf8");
+        agents.set(file, content);
+      }
+    }
   }
 
   // warn about overrides
