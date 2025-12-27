@@ -303,6 +303,7 @@ const monkeyPatchFS = ({
         return vol.readFileSync(filePath, options as Parameters<typeof vol.readFileSync>[1]);
       }
     } catch {}
+
     // @ts-expect-error
     return Reflect.apply(origReadFileSync, this, [filePath, options]);
   } as typeof fsDefault.readFileSync;

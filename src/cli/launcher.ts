@@ -15,6 +15,45 @@ import { Context } from "@/context/Context";
 import { log } from "@/utils/log";
 import { createStartupLogger } from "@/utils/startup";
 import { setupVirtualFileSystem } from "@/utils/virtual-fs";
+import { applyBuiltInPatches, applyUserPatches, type RuntimePatch } from "@/patches/cli-patches";
+
+type ResolveResult = { path: string; source: string };
+
+const resolveClaudeCli = async (launcherRoot: string): Promise<ResolveResult> => {
+  if (process.env.CLAUDE_PATH) {
+    return { path: process.env.CLAUDE_PATH, source: "env override" };
+  }
+
+  // try node_modules/.bin/claude
+  const localBinPath = path.join(launcherRoot, "node_modules/.bin/claude");
+  if (fs.existsSync(localBinPath)) {
+    return { path: fs.realpathSync(localBinPath), source: "local bin" };
+  }
+
+  // try resolving the package
+  try {
+    const req = createRequire(import.meta.url);
+    const claudePkgPath = req.resolve("@anthropic-ai/claude-code/package.json", {
+      paths: [launcherRoot],
+    });
+    const claudeDir = path.dirname(claudePkgPath);
+    const claudePkg = JSON.parse(fs.readFileSync(claudePkgPath, "utf8"));
+    const mainEntry = claudePkg.bin?.["claude"] || claudePkg.main || "cli.js";
+    const claudeModulePath = path.join(claudeDir, mainEntry);
+
+    if (fs.existsSync(claudeModulePath)) {
+      return { path: claudeModulePath, source: "local package" };
+    }
+  } catch {}
+
+  // fallback to global claude
+  try {
+    const claudeBinPath = await which("claude");
+    return { path: fs.realpathSync(claudeBinPath), source: "global bin" };
+  } catch {
+    throw new Error("Could not find Claude Code neither in node_modules nor globally.");
+  }
+};
 
 // eslint-disable-next-line sonarjs/cognitive-complexity
 const run = async () => {
@@ -257,6 +296,23 @@ const run = async () => {
   log.debug("BUILD-SUMMARY", `  Agents: ${agents.size} files (${Array.from(agents.keys()).join(", ")})`);
   log.debug("BUILD-SUMMARY", `  MCPs: ${Object.keys(mcps || {}).join(", ") || "none"}`);
 
+  // resolve claude cli path first (needed for runtime patches in VFS)
+  const resolveTask = startup.start("Resolve Claude CLI");
+  let claudeModulePath: string;
+  try {
+    const resolved = await resolveClaudeCli(context.launcherDirectory);
+    claudeModulePath = resolved.path;
+    log.info("LAUNCHER", `Found Claude CLI: ${claudeModulePath}`);
+    resolveTask.done(resolved.source);
+  } catch (error) {
+    resolveTask.fail("Claude CLI not found");
+    console.error(`Error: ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  }
+
+  // extract runtime patches from settings
+  const patches = (settings as { patches?: RuntimePatch[] }).patches;
+
   // setup vfs
   await startup.run("Mount VFS", async () => {
     setupVirtualFileSystem({
@@ -285,65 +341,48 @@ const run = async () => {
     args.push("--plugin-dir", dir);
   }
 
-  // find claude binary / use CLAUDE_PATH override
-  let claudeModulePath: string;
-  const resolveTask = startup.start("Resolve Claude CLI");
-  if (process.env.CLAUDE_PATH) {
-    claudeModulePath = process.env.CLAUDE_PATH;
-    log.info("LAUNCHER", `Using CLAUDE_PATH override: ${claudeModulePath}`);
-    resolveTask.done("env override");
-  } else {
-    const launcherRoot = context.launcherDirectory;
-
-    // try node_modules/.bin/claude
-    const localBinPath = path.join(launcherRoot, "node_modules/.bin/claude");
-    if (fs.existsSync(localBinPath)) {
-      claudeModulePath = fs.realpathSync(localBinPath);
-      log.info("LAUNCHER", `Found local Claude CLI in node_modules/.bin`);
-      resolveTask.done("local bin");
-    } else {
-      // try resolving the package
-      try {
-        const req = createRequire(import.meta.url);
-        const claudePkgPath = req.resolve("@anthropic-ai/claude-code/package.json", {
-          paths: [launcherRoot],
-        });
-        const claudeDir = path.dirname(claudePkgPath);
-        // try main entry point or cli.js
-        const claudePkg = JSON.parse(fs.readFileSync(claudePkgPath, "utf8"));
-        const mainEntry = claudePkg.bin?.["claude"] || claudePkg.main || "cli.js";
-        claudeModulePath = path.join(claudeDir, mainEntry);
-
-        if (!fs.existsSync(claudeModulePath)) {
-          throw new Error(`Claude CLI entry point not found at ${claudeModulePath}`);
-        }
-        log.info("LAUNCHER", `Found local Claude CLI via package resolution`);
-        resolveTask.done("local package");
-      } catch {
-        // fallback to global claude
-        try {
-          const claudeBinPath = await which("claude");
-          claudeModulePath = fs.realpathSync(claudeBinPath);
-          log.warn("LAUNCHER", "Using global Claude CLI (local not found)");
-          resolveTask.done("global bin");
-        } catch {
-          resolveTask.fail("Claude CLI not found");
-          console.error("Error: Could not find Claude Code neither in node_modules nor globally.");
-          process.exit(1);
-        }
-      }
-    }
-  }
-
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);
   log.debug("LAUNCHER", `Arguments: ${args.join(" ")}`);
   log.debug("LAUNCHER", `Additional args from CLI: ${process.argv.slice(2).join(" ") || "none"}`);
   log.info("LAUNCHER", `Log file: ${log.getLogPath()}`);
 
+  // apply runtime patches to CLI file (ESM imports bypass VFS)
+  let importPath = claudeModulePath;
+  const osModule = await import("os");
+  const cryptoModule = await import("crypto");
+
+  let content = fs.readFileSync(claudeModulePath, "utf8");
+  const allApplied: string[] = [];
+
+  // apply built-in patches (lsp fixes, feature disabling)
+  const builtIn = applyBuiltInPatches(content);
+  content = builtIn.content;
+  allApplied.push(...builtIn.applied);
+
+  // apply user-defined patches from settings
+  if (patches && patches.length > 0) {
+    const user = applyUserPatches(content, patches);
+    content = user.content;
+    allApplied.push(...user.applied);
+  }
+
+  if (allApplied.length > 0) {
+    // write patched CLI to temp file
+    const tmpDir = osModule.tmpdir();
+    const hash = cryptoModule.createHash("md5").update(content).digest("hex").slice(0, 8);
+    const patchedPath = path.join(tmpDir, `claude-cli-patched-${hash}.mjs`);
+    fs.writeFileSync(patchedPath, content);
+    importPath = patchedPath;
+    log.info("LAUNCHER", `Applied ${allApplied.length} runtime patches`);
+    for (const p of allApplied) {
+      log.debug("LAUNCHER", `  - ${p}`);
+    }
+  }
+
   const launchTask = startup.start("Launching Claude...");
   process.argv = [process.argv[0]!, claudeModulePath, ...args, ...process.argv.slice(2)];
   launchTask.done();
-  await import(claudeModulePath);
+  await import(importPath);
 };
 
 run();

@@ -1,33 +1,34 @@
-import type { Patch } from ".";
-
-// disable crap
-const skillPatches: Patch[] = [
-  { search: "pr-comments", replace: "zprcomments" },
-  { search: "security-review", replace: "zsecurityreview" },
-];
-
-// fix lsp support in v2.0.74+ (https://github.com/anthropics/claude-code/issues/14803)
-const lspValidationPatches: Patch[] = [
-  {
-    pattern:
-      /if\([\w$]+\.restartOnCrash!==void 0\)throw Error\(`LSP server '\${[\w$]+}': restartOnCrash is not yet implemented\. Remove this field from the configuration\.`\);/g,
-    replace: "",
-  },
-  {
-    pattern:
-      /if\([\w$]+\.startupTimeout!==void 0\)throw Error\(`LSP server '\${[\w$]+}': startupTimeout is not yet implemented\. Remove this field from the configuration\.`\);/g,
-    replace: "",
-  },
-  {
-    pattern:
-      /if\([\w$]+\.shutdownTimeout!==void 0\)throw Error\(`LSP server '\${[\w$]+}': shutdownTimeout is not yet implemented\. Remove this field from the configuration\.`\);/g,
-    replace: "",
-  },
-];
-
+// runtime patches for claude cli
 // based on https://github.com/Piebald-AI/tweakcc/blob/main/src/patches/fixLspSupport.ts
-const escapeIdent = (ident: string): string => ident.replace(/\$/g, "\\$");
 
+export interface RuntimePatch {
+  find: string;
+  replace: string;
+}
+
+// built-in string replacements
+const builtInStringPatches: RuntimePatch[] = [
+  // disable unwanted features
+  { find: "pr-comments", replace: "zprcomments" },
+  { find: "security-review", replace: "zsecurityreview" },
+];
+
+// lsp validation error patches (regex-based)
+const applyLspValidationPatches = (content: string): string => {
+  const patterns = [
+    /if\([\w$]+\.restartOnCrash!==void 0\)throw Error\(`LSP server '\${[\w$]+}': restartOnCrash is not yet implemented\. Remove this field from the configuration\.`\);/g,
+    /if\([\w$]+\.startupTimeout!==void 0\)throw Error\(`LSP server '\${[\w$]+}': startupTimeout is not yet implemented\. Remove this field from the configuration\.`\);/g,
+    /if\([\w$]+\.shutdownTimeout!==void 0\)throw Error\(`LSP server '\${[\w$]+}': shutdownTimeout is not yet implemented\. Remove this field from the configuration\.`\);/g,
+  ];
+
+  let result = content;
+  for (const pattern of patterns) {
+    result = result.replace(pattern, "");
+  }
+  return result;
+};
+
+// lsp didOpen notification patch
 const LANGUAGE_MAP_CODE = `
   const path = await import('path');
   const ext = path.extname(DOC_PATH_VAR).toLowerCase();
@@ -54,6 +55,8 @@ const LANGUAGE_MAP_CODE = `
     });
   } catch (e) {}
 `;
+
+const escapeIdent = (ident: string): string => ident.replace(/\$/g, "\\$");
 
 const applyLspDidOpenPatch = (content: string): string => {
   // 1. find ensureServerStarted
@@ -101,10 +104,7 @@ const applyLspDidOpenPatch = (content: string): string => {
   return content.slice(0, insertPoint) + injection + content.slice(insertPoint);
 };
 
-const lspDidOpenPatch: Patch = { apply: applyLspDidOpenPatch };
-
-// fix lsp race condition: i52() (initializeLspServerManager) must run AFTER zQ2() (plugin init)
-// see: https://github.com/anthropics/claude-code/issues/14803
+// lsp race condition patch: i52() must run AFTER zQ2() (plugin init)
 const applyLspRaceConditionPatch = (content: string): string => {
   // 1. find the i52() call that appears after Ho() (plugin dir setup)
   const earlyInitPattern = /Ho\(\);i52\(\);/g;
@@ -123,9 +123,7 @@ const applyLspRaceConditionPatch = (content: string): string => {
   return result;
 };
 
-const lspRaceConditionPatch: Patch = { apply: applyLspRaceConditionPatch };
-
-// fix lsp server registration
+// lsp server registration patch
 const applyLspServerRegistrationPatch = (content: string): string => {
   // 1. find the manager return
   const managerReturnPattern =
@@ -173,12 +171,66 @@ const applyLspServerRegistrationPatch = (content: string): string => {
   return content.slice(0, absoluteInitIndex) + initCode + content.slice(initEnd);
 };
 
-const lspServerRegistrationPatch: Patch = { apply: applyLspServerRegistrationPatch };
+// apply all built-in patches to CLI content
+export const applyBuiltInPatches = (content: string): { content: string; applied: string[] } => {
+  const applied: string[] = [];
+  let result = content;
 
-export const cliPatches: Patch[] = [
-  ...skillPatches,
-  ...lspValidationPatches,
-  lspDidOpenPatch,
-  lspRaceConditionPatch,
-  lspServerRegistrationPatch,
-];
+  // 1. apply string replacements
+  for (const patch of builtInStringPatches) {
+    const before = result;
+    result = result.replaceAll(patch.find, patch.replace);
+    if (result !== before) {
+      applied.push(`"${patch.find}" => "${patch.replace}"`);
+    }
+  }
+
+  // 2. apply lsp validation patches
+  const beforeValidation = result;
+  result = applyLspValidationPatches(result);
+  if (result !== beforeValidation) {
+    applied.push("lsp-validation-errors");
+  }
+
+  // 3. apply lsp didOpen patch
+  const beforeDidOpen = result;
+  result = applyLspDidOpenPatch(result);
+  if (result !== beforeDidOpen) {
+    applied.push("lsp-didopen-notification");
+  }
+
+  // 4. apply lsp race condition patch
+  const beforeRace = result;
+  result = applyLspRaceConditionPatch(result);
+  if (result !== beforeRace) {
+    applied.push("lsp-race-condition");
+  }
+
+  // 5. apply lsp server registration patch
+  const beforeReg = result;
+  result = applyLspServerRegistrationPatch(result);
+  if (result !== beforeReg) {
+    applied.push("lsp-server-registration");
+  }
+
+  return { content: result, applied };
+};
+
+// apply user-defined patches
+export const applyUserPatches = (
+  content: string,
+  patches: RuntimePatch[],
+): { content: string; applied: string[] } => {
+  const applied: string[] = [];
+  let result = content;
+
+  for (const patch of patches) {
+    const before = result;
+    result = result.replaceAll(patch.find, patch.replace);
+    if (result !== before) {
+      applied.push(`"${patch.find}" => "${patch.replace}"`);
+    }
+  }
+
+  return { content: result, applied };
+};

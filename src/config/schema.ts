@@ -63,6 +63,16 @@ export const settingsSchema = z.object({
     .optional(),
   pluginDirs: z.array(z.string()).optional(),
 
+  // runtime string patches applied to claude cli
+  patches: z
+    .array(
+      z.object({
+        find: z.string(),
+        replace: z.string(),
+      }),
+    )
+    .optional(),
+
   // overwritten by launcher
   // outputStyle: z.string().optional(),
   // hooks: z.record(z.string(), z.array(z.any())).optional(),

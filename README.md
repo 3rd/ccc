@@ -525,12 +525,13 @@ Or via CLI: `ccc --plugin-dir ./my-plugin`
 
 ### LSP Plugin Support
 
-CCC automatically patches Claude Code to fix broken LSP plugin support in v2.0.74+. See [GitHub issue #14803](https://github.com/anthropics/claude-code/issues/14803).
+CCC automatically patches Claude Code at runtime to fix broken LSP plugin support. See [GitHub issue #14803](https://github.com/anthropics/claude-code/issues/14803).
 
-The patches are applied during `bun install` and fix:
-- Race condition where LSP manager initializes before plugins load
-- Empty `initialize()` function that never registers servers
-- Missing `textDocument/didOpen` notifications
+Built-in patches (applied automatically):
+- Race condition fix: LSP manager now initializes after plugins load
+- Server registration fix: `initialize()` properly registers servers
+- didOpen notification: Injects `textDocument/didOpen` when opening files
+- Validation fix: Removes errors for `restartOnCrash`, `startupTimeout`, `shutdownTimeout`
 
 Just enable your LSP plugins normally:
 
@@ -541,6 +542,30 @@ export default createConfigSettings({
   },
 });
 ```
+
+## Runtime Patches
+
+All CLI patches are applied at runtime - the original `node_modules` files are never modified. The launcher reads the CLI, applies patches, writes to a temp file, and imports that instead.
+
+### Built-in Patches
+
+Applied automatically on every launch:
+- LSP fixes (see above)
+- Disable `pr-comments` and `security-review` features
+
+### User-defined Patches
+
+Add custom string replacements via settings:
+
+```typescript
+export default createConfigSettings({
+  patches: [
+    { find: "ultrathink", replace: "uuu" },  // shorter alias
+  ],
+});
+```
+
+Patches are applied after built-in patches. No reinstall needed when changing configuration.
 
 ## Statusline
 
