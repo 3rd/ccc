@@ -5,6 +5,7 @@ import { platform, release } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { $, cd } from "zx";
+import type { LoadedPlugin } from "@/plugins/types";
 import type { ClaudeMCPConfig } from "@/types/mcps";
 import { Project } from "./Project";
 
@@ -43,6 +44,7 @@ export class Context {
   instanceId: string;
   configDirectory: string;
   mcpServers?: Record<string, ClaudeMCPConfig>;
+  loadedPlugins: LoadedPlugin[] = [];
 
   constructor(workingDirectory: string) {
     this.workingDirectory = workingDirectory;

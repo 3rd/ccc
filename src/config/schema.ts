@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { pluginEnablementConfigSchema } from "@/plugins/schema";
 
 // https://docs.anthropic.com/en/docs/claude-code/settings
 export const settingsSchema = z.object({
@@ -48,7 +49,7 @@ export const settingsSchema = z.object({
     })
     .optional(),
 
-  // plugins
+  // claude plugins
   enabledPlugins: z
     .record(
       z.string(),
@@ -62,6 +63,9 @@ export const settingsSchema = z.object({
     )
     .optional(),
   pluginDirs: z.array(z.string()).optional(),
+
+  // ccc plugins
+  cccPlugins: pluginEnablementConfigSchema.optional(),
 
   // runtime string patches applied to claude cli
   patches: z

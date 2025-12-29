@@ -114,6 +114,12 @@ const collectLayeredItems = async (context: Context, kind: "agents" | "commands"
   return items;
 };
 
+const getMCPType = (mcp: ClaudeMCPConfig): "http" | "sse" | "stdio" => {
+  if (isHttpMCP(mcp)) return "http";
+  if (isSseMCP(mcp)) return "sse";
+  return "stdio";
+};
+
 const collectLayeredMCPs = async (
   context: Context,
   finalMCPs: Record<string, ClaudeMCPConfig>,
@@ -128,11 +134,7 @@ const collectLayeredMCPs = async (
     for (const mcpName of Object.keys(layers.global)) {
       const mcp = finalMCPs[mcpName];
       if (mcp) {
-        const type =
-          isHttpMCP(mcp) ? "http"
-          : isSseMCP(mcp) ? "sse"
-          : "stdio";
-        items[mcpName] = { type, trace: [{ layer: "global", mode: "override" }] };
+        items[mcpName] = { type: getMCPType(mcp), trace: [{ layer: "global", mode: "override" }] };
       }
     }
   }
@@ -145,11 +147,7 @@ const collectLayeredMCPs = async (
       for (const mcpName of Object.keys(presetMCPs)) {
         const mcp = finalMCPs[mcpName];
         if (mcp) {
-          const type =
-            isHttpMCP(mcp) ? "http"
-            : isSseMCP(mcp) ? "sse"
-            : "stdio";
-          items[mcpName] = { type, trace: [{ layer: "preset", name: preset.name, mode: "override" }] };
+          items[mcpName] = { type: getMCPType(mcp), trace: [{ layer: "preset", name: preset.name, mode: "override" }] };
         }
       }
     }
@@ -160,12 +158,8 @@ const collectLayeredMCPs = async (
     for (const mcpName of Object.keys(layers.project)) {
       const mcp = finalMCPs[mcpName];
       if (mcp) {
-        const type =
-          isHttpMCP(mcp) ? "http"
-          : isSseMCP(mcp) ? "sse"
-          : "stdio";
         items[mcpName] = {
-          type,
+          type: getMCPType(mcp),
           trace: [{ layer: "project", name: context.project.projectConfig.name, mode: "override" }],
         };
       }

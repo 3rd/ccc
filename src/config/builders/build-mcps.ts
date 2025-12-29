@@ -3,6 +3,7 @@ import type { Context } from "@/context/Context";
 import type { ClaudeMCPConfig, MCPServers } from "@/types/mcps";
 import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
 import { setInstanceId } from "@/mcps/mcp-generator";
+import { getPluginMCPs } from "@/plugins/registry";
 
 const processExternalMCP = (
   config: ClaudeMCPConfig & { filter?: unknown },
@@ -29,7 +30,7 @@ const processExternalMCP = (
   }
 
   // external MCP without filter
-  const { filter, ...configWithoutFilter } = config;
+  const { filter: _filter, ...configWithoutFilter } = config;
   return configWithoutFilter;
 };
 
@@ -42,6 +43,28 @@ export const buildMCPs = async (context: Context): Promise<Record<string, Claude
   const processed: Record<string, ClaudeMCPConfig> = {};
 
   for (const [name, layerData] of Object.entries(merged)) {
+    if (layerData.type === "inline") {
+      const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
+      processed[name] = {
+        type: "stdio",
+        command: "tsx",
+        args: [runnerPath, "mcp", name],
+        env: {
+          CCC_INSTANCE_ID: context.instanceId,
+        },
+      };
+    } else if (layerData.type === "http" || layerData.type === "sse" || layerData.type === "traditional") {
+      const config = layerData.config;
+      const result = processExternalMCP(config, name, context);
+      if (result) {
+        processed[name] = result;
+      }
+    }
+  }
+
+  // add plugin MCPs
+  const pluginMCPs = getPluginMCPs(context.loadedPlugins);
+  for (const [name, layerData] of Object.entries(pluginMCPs)) {
     if (layerData.type === "inline") {
       const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
       processed[name] = {

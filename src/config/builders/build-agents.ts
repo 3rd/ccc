@@ -3,6 +3,7 @@ import { join } from "path";
 import type { PromptLayerData } from "@/config/helpers";
 import type { Context } from "@/context/Context";
 import { loadPromptFile, mergePrompts } from "@/config/layers";
+import { getPluginAgents } from "@/plugins/registry";
 import { log } from "@/utils/log";
 
 const loadAgentsFromPath = async (
@@ -102,6 +103,12 @@ export const buildAgents = async (context: Context): Promise<Map<string, string>
   for (const [name, layers] of agentLayers) {
     const merged = mergePrompts(...layers);
     agents.set(name, merged);
+  }
+
+  // add plugin agents
+  const pluginAgents = getPluginAgents(context.loadedPlugins);
+  for (const [name, data] of Object.entries(pluginAgents)) {
+    agents.set(`${name}.md`, data.content);
   }
 
   // load local project agents

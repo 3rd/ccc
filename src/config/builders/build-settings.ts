@@ -6,6 +6,7 @@ import type { Context } from "@/context/Context";
 import type { HookDefinition, HooksConfiguration } from "@/types/hooks";
 import { loadConfigFromLayers, mergeHooks, mergePrompts, mergeSettings } from "@/config/layers";
 import { validateSettings } from "@/config/schema";
+import { getPluginHooks, getPluginPrompts } from "@/plugins/registry";
 
 export const buildSettings = async (context: Context) => {
   const layers = await loadConfigFromLayers<Record<string, unknown>>(context, "settings.ts");
@@ -53,6 +54,15 @@ export const buildSettings = async (context: Context) => {
     }
   }
 
+  // plugin hooks
+  const pluginHooks = getPluginHooks(context.loadedPlugins);
+  for (const [eventName, defs] of Object.entries(pluginHooks)) {
+    if (!finalHooks[eventName]) {
+      finalHooks[eventName] = [];
+    }
+    finalHooks[eventName]!.push(...defs);
+  }
+
   const result = {
     ...transformedValidated,
     hooks: finalHooks,
@@ -62,12 +72,33 @@ export const buildSettings = async (context: Context) => {
   return result;
 };
 
+// extract content from PromptConfig (both string and PromptLayerData)
+const getPromptContent = (config: { content: string } | string): string => {
+  return typeof config === "string" ? config : config.content;
+};
+
 export const buildSystemPrompt = async (context: Context) => {
   const layers = await loadConfigFromLayers<PromptLayerData>(context, "prompts/system");
-  return mergePrompts(layers.global, ...layers.presets, layers.project);
+  const basePrompt = mergePrompts(layers.global, ...layers.presets, layers.project);
+
+  const pluginPrompts = getPluginPrompts(context.loadedPlugins);
+  if (pluginPrompts.system.length > 0) {
+    const pluginContent = pluginPrompts.system.map(getPromptContent).join("\n\n");
+    return basePrompt ? `${basePrompt}\n\n${pluginContent}` : pluginContent;
+  }
+
+  return basePrompt;
 };
 
 export const buildUserPrompt = async (context: Context) => {
   const layers = await loadConfigFromLayers<PromptLayerData>(context, "prompts/user");
-  return mergePrompts(layers.global, ...layers.presets, layers.project);
+  const basePrompt = mergePrompts(layers.global, ...layers.presets, layers.project);
+
+  const pluginPrompts = getPluginPrompts(context.loadedPlugins);
+  if (pluginPrompts.user.length > 0) {
+    const pluginContent = pluginPrompts.user.map(getPromptContent).join("\n\n");
+    return basePrompt ? `${basePrompt}\n\n${pluginContent}` : pluginContent;
+  }
+
+  return basePrompt;
 };

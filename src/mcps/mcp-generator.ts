@@ -15,7 +15,7 @@ export const setInstanceId = (instanceId: string, configDirectory = "config") =>
 };
 
 export const createMCPProxy = (originalConfig: ClaudeMCPConfig, filter: MCPToolFilter): MCPLayerData => {
-  const factory: FastMCPFactory = async (_context) => {
+  const factory: FastMCPFactory = async () => {
     const client = new MCPClient(originalConfig);
     let initResponse: MCPInitializeResponse;
 

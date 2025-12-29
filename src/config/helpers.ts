@@ -1,5 +1,7 @@
 import type { ClaudeSettings } from "@/config/schema";
 import type { Context } from "@/context/Context";
+import type { PluginEnablementConfig } from "@/plugins/schema";
+import type { PluginDefinition } from "@/plugins/types";
 import type { HooksConfiguration } from "@/types/hooks";
 import type {
   ClaudeMCPConfig,
@@ -84,11 +86,19 @@ export const createConfigFullSettings = (settingsConfig: ClaudeSettings): Claude
 export interface PresetDefinition {
   name: string;
   matcher: (context: Context) => boolean;
+  cccPlugins?: PluginEnablementConfig;
 }
 
 export const createPreset = (definition: PresetDefinition): PresetConfig => {
   return {
     name: definition.name,
     matcher: definition.matcher,
+    cccPlugins: definition.cccPlugins,
   };
+};
+
+export const createPlugin = <S = Record<string, unknown>>(
+  definition: PluginDefinition<S>,
+): PluginDefinition<S> => {
+  return definition;
 };

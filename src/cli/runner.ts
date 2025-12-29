@@ -3,10 +3,15 @@ import { existsSync, readdirSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { getHook } from "@/hooks/hook-generator";
+import type { PluginEnablementConfig } from "@/plugins/schema";
 import type { MCPServers } from "@/types/mcps";
-import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
+import { loadConfigFromLayers, mergeMCPs, mergeSettings } from "@/config/layers";
 import { Context } from "@/context/Context";
 import { createMCPProxy } from "@/mcps/mcp-generator";
+import { discoverPlugins, getDefaultPluginDirs, sortByDependencies } from "@/plugins/discovery";
+import { loadPlugins } from "@/plugins/loader";
+import { mergePluginConfigs } from "@/plugins/merge";
+import { getPluginMCPs } from "@/plugins/registry";
 import "@/hooks/builtin";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -54,6 +59,108 @@ const readStdin = async (): Promise<string> => {
   return Buffer.concat(chunks).toString();
 };
 
+const loadCCCPlugins = async (context: Context) => {
+  const configDir = resolveConfigDirectory();
+
+  // discover plugins
+  const pluginDirs = getDefaultPluginDirs(launcherRoot, context.project.rootDirectory);
+  pluginDirs.push(join(launcherRoot, configDir, "plugins"));
+
+  const discovered = discoverPlugins(pluginDirs);
+  const sorted = sortByDependencies(discovered.plugins);
+
+  // get plugin enablement from settings
+  const settingsLayers = await loadConfigFromLayers<Record<string, unknown>>(context, "settings.ts");
+  const mergedSettings = mergeSettings(
+    settingsLayers.global,
+    ...settingsLayers.presets,
+    settingsLayers.project,
+  );
+
+  const globalPlugins = (mergedSettings.cccPlugins ?? {}) as PluginEnablementConfig;
+  const presetPlugins = context.project.presets.map((p) => p.cccPlugins).filter(Boolean);
+  const effectivePlugins = mergePluginConfigs(globalPlugins, ...presetPlugins);
+
+  const loadResult = await loadPlugins(sorted, effectivePlugins, context);
+  return loadResult.plugins;
+};
+
+const runHook = async (id: string) => {
+  // import all hooks configs to register handlers
+  for (const href of discover("hooks")) await import(href);
+
+  // also load CCC plugin hooks
+  const context = new Context(process.cwd());
+  const loadedPlugins = await loadCCCPlugins(context);
+  context.loadedPlugins = loadedPlugins;
+
+  // trigger plugin hooks registration
+  for (const plugin of loadedPlugins) {
+    if (plugin.enabled && plugin.definition.hooks) {
+      plugin.definition.hooks(plugin.context);
+    }
+  }
+
+  const fn = getHook(id);
+  if (!fn) {
+    console.error("Hook not found:", id);
+    process.exit(2);
+  }
+
+  const inputJson = await readStdin();
+  if (!inputJson) {
+    console.error("No input received on stdin");
+    process.exit(2);
+  }
+  const input = JSON.parse(inputJson);
+  const result = await Promise.resolve(fn(input));
+  if (result) process.stdout.write(JSON.stringify(result));
+  process.exit(0);
+};
+
+const runMCP = async (mcpName: string) => {
+  const context = new Context(process.cwd());
+
+  // load CCC plugins for their MCPs
+  const loadedPlugins = await loadCCCPlugins(context);
+  context.loadedPlugins = loadedPlugins;
+
+  // find MCP (check both config layers and plugins)
+  const layers = await loadConfigFromLayers<MCPServers>(context, "mcps.ts");
+  const merged = mergeMCPs(layers.global, ...layers.presets, layers.project);
+
+  // add plugin MCPs
+  const pluginMCPs = getPluginMCPs(loadedPlugins);
+  Object.assign(merged, pluginMCPs);
+
+  const mcpConfig = merged[mcpName];
+  if (!mcpConfig) {
+    console.error(`MCP not found: ${mcpName}`);
+    process.exit(2);
+  }
+
+  if (mcpConfig.type === "inline") {
+    const factory = mcpConfig.config;
+    const server = await factory(context);
+    await server.start({ transportType: "stdio" });
+    return;
+  }
+
+  if (mcpConfig.type === "traditional" || mcpConfig.type === "http" || mcpConfig.type === "sse") {
+    const config = mcpConfig.config;
+    if ("filter" in config && typeof config.filter === "function") {
+      const proxyData = createMCPProxy(config, config.filter);
+      if (proxyData.type === "inline") {
+        const server = await proxyData.config(context);
+        await server.start({ transportType: "stdio" });
+      }
+    } else {
+      console.error(`Cannot run external MCP '${mcpName}' without filter`);
+      process.exit(2);
+    }
+  }
+};
+
 const main = async () => {
   const mode = process.argv[2];
   const id = process.argv[3];
@@ -64,71 +171,17 @@ const main = async () => {
   }
 
   try {
-    // hooks
     if (mode === "hook") {
-      // import all hooks configs to register handlers
-      for (const href of discover("hooks")) await import(href);
-
-      const fn = getHook(id);
-      if (!fn) {
-        console.error("Hook not found:", id);
-        process.exit(2);
-      }
-
-      const inputJson = await readStdin();
-      if (!inputJson) {
-        console.error("No input received on stdin");
-        process.exit(2);
-      }
-      const input = JSON.parse(inputJson);
-      const result = await Promise.resolve(fn(input));
-      if (result) process.stdout.write(JSON.stringify(result));
-      process.exit(0);
+      await runHook(id);
     } else {
-      // mcps - ID = MCP name
-      const mcpName = id;
-
-      const context = new Context(process.cwd());
-
-      // find MCP
-      const layers = await loadConfigFromLayers<MCPServers>(context, "mcps.ts");
-      const merged = mergeMCPs(layers.global, ...layers.presets, layers.project);
-      const mcpConfig = merged[mcpName];
-      if (!mcpConfig) {
-        console.error(`MCP not found: ${mcpName}`);
-        process.exit(2);
-      }
-
-      if (mcpConfig.type === "inline") {
-        const factory = mcpConfig.config;
-        const server = await factory(context);
-        await server.start({ transportType: "stdio" });
-      } else if (mcpConfig.type === "traditional" || mcpConfig.type === "http" || mcpConfig.type === "sse") {
-        // external MCP - check for filter
-        const config = mcpConfig.config;
-        if ("filter" in config && typeof config.filter === "function") {
-          // proxy for filtering
-          const proxyData = createMCPProxy(config, config.filter);
-          if (proxyData.type === "inline") {
-            const server = await proxyData.config(context);
-            await server.start({ transportType: "stdio" });
-          }
-        } else {
-          console.error(`Cannot run external MCP '${mcpName}' without filter`);
-          process.exit(2);
-        }
-      }
+      await runMCP(id);
     }
   } catch (error) {
-    if (error && typeof error === 'object' && 'stdout' in error && 'stderr' in error) {
+    if (error && typeof error === "object" && "stdout" in error && "stderr" in error) {
       const output = error as { stdout?: string; stderr?: string };
       console.error(`${mode.toUpperCase()} runner failed:`);
-      if (output.stdout) {
-        console.error(output.stdout);
-      }
-      if (output.stderr) {
-        console.error(output.stderr);
-      }
+      if (output.stdout) console.error(output.stdout);
+      if (output.stderr) console.error(output.stderr);
     } else {
       console.error(`${mode.toUpperCase()} runner failed:`, error);
     }

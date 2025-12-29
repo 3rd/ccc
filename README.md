@@ -2,7 +2,7 @@
 
 ---
 
-**ccc** is a launcher for Claude Code that lets you configure prompts, commands, agents, hooks, and MCPs from a single place, **in a layered way**.
+**CCC** is a launcher for Claude Code that lets you configure prompts, commands, agents, hooks, and MCPs from a single place, **in a layered way**.
 
 **What you get**
 
@@ -542,6 +542,462 @@ export default createConfigSettings({
   },
 });
 ```
+
+## CCC Plugins
+
+CCC has its own plugin system for bundling reusable configuration components. Unlike Claude's built-in plugins (configured via `enabledPlugins`), CCC plugins are local TypeScript modules that can define commands, agents, MCPs, hooks, and prompts dynamically, and which have access to enriched information about the current session.
+
+### CCC Plugins vs Claude Plugins
+
+| Aspect | CCC Plugins (`cccPlugins`) | Claude Plugins (`enabledPlugins`) |
+|--------|---------------------------|-----------------------------------|
+| **Location** | `config/plugins/` directory | `~/.claude/plugins/` |
+| **Format** | TypeScript with `createPlugin()` | Claude's plugin format |
+| **Components** | commands, agents, MCPs, hooks, prompts | Defined by Claude |
+| **Distribution** | Local to your config | Via `/plugin` command |
+
+### Plugin Structure
+
+A CCC plugin requires two files:
+
+```
+config/plugins/my-plugin/
+├── plugin.json    # Manifest with name, version, description
+└── index.ts       # Plugin definition using createPlugin()
+```
+
+**plugin.json** (manifest):
+
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "A custom CCC plugin"
+}
+```
+
+**index.ts** (definition):
+
+```typescript
+import { createPlugin } from "@/config/helpers";
+
+export default createPlugin({
+  // Commands - custom slash commands
+  commands: (context) => ({
+    "my-command": {
+      content: `
+# My Command
+Your command instructions here...
+      `.trim(),
+      mode: "override",
+    },
+  }),
+
+  // Agents - specialized sub-agents
+  agents: (context) => ({
+    "my-agent": {
+      content: `
+---
+name: my-agent
+description: A specialized agent
+tools: [Read, Grep, Glob]
+---
+Agent instructions...
+      `.trim(),
+      mode: "override",
+    },
+  }),
+
+  // MCPs - inline MCP servers
+  mcps: (context) => ({
+    "my-mcp": {
+      type: "inline",
+      config: () => createMyMCP(context),
+    },
+  }),
+
+  // Hooks - event handlers
+  hooks: (context) => ({
+    Stop: [
+      {
+        hooks: [
+          createHook("Stop", () => {
+            // Hook logic
+          }),
+        ],
+      },
+    ],
+  }),
+
+  // Prompts - system/user prompt additions
+  prompts: (context) => ({
+    user: {
+      content: "Additional user prompt content",
+      mode: "append",
+    },
+  }),
+});
+```
+
+### Enabling CCC Plugins
+
+Enable plugins via `cccPlugins` in your settings:
+
+```typescript
+// config/global/settings.ts
+import { createConfigSettings } from "@/config/helpers";
+
+export default createConfigSettings({
+  cccPlugins: {
+    "my-plugin": true,           // Enable plugin
+    "another-plugin": false,     // Explicitly disable
+  },
+});
+```
+
+You can also enable plugins in presets:
+
+```typescript
+// config/presets/typescript/index.ts
+import { createPreset } from "@/config/helpers";
+
+export default createPreset({
+  matcher: (context) => context.project.hasFile("tsconfig.json"),
+  cccPlugins: {
+    "typescript-helpers": true,
+  },
+});
+```
+
+### Plugin Context
+
+Plugins receive a `PluginContext` with access to:
+
+```typescript
+{
+  // Standard context properties
+  workingDirectory: string;
+  launcherDirectory: string;
+  isGitRepo(): boolean;
+  getGitBranch(): string;
+  // ... all Context methods
+
+  // Plugin-specific
+  manifest: PluginManifest;        // Plugin's plugin.json
+  root: string;                     // Plugin directory path
+  settings: Record<string, unknown>; // Plugin settings
+
+  // State management
+  state: {
+    get<T>(key: string): T | undefined;
+    set(key: string, value: unknown): void;
+    clear(): void;
+    getAll(): Record<string, unknown>;
+  };
+}
+```
+
+### Plugin State
+
+Plugins can persist state using the built-in state API. State is automatically saved to disk and restored between sessions.
+
+**State API:**
+
+```typescript
+context.state.get<T>(key: string): T | undefined  // Get a value
+context.state.set(key: string, value: unknown): void  // Set a value
+context.state.clear(): void  // Clear all state
+context.state.getAll(): Record<string, unknown>  // Get all state
+```
+
+**State Locations:**
+
+By default, plugin state is stored in `/tmp/ccc-plugin-{name}-{cwdHash}.json`. The location is isolated by working directory hash to prevent conflicts between projects.
+
+| Location | Path | Use Case |
+|----------|------|----------|
+| `temp` (default) | `/tmp/ccc-plugin-{name}-{hash}.json` | Session-scoped data |
+| `project` | `{cwd}/.ccc/state/plugins/{name}.json` | Project-specific persistent data |
+| `user` | `~/.ccc/state/plugins/{name}.json` | Global user preferences |
+
+**Example - Stateful MCP:**
+
+```typescript
+export default createPlugin({
+  mcps: (context) => ({
+    "stateful-mcp": {
+      type: "inline",
+      config: () => {
+        const server = new FastMCP({ name: "stateful", version: "1.0.0" });
+
+        server.addTool({
+          name: "save_data",
+          parameters: z.object({ key: z.string(), value: z.string() }),
+          execute: async (args) => {
+            context.state.set(args.key, args.value);
+            return "Saved!";
+          },
+        });
+
+        server.addTool({
+          name: "load_data",
+          parameters: z.object({ key: z.string() }),
+          execute: async (args) => {
+            return context.state.get(args.key) ?? "Not found";
+          },
+        });
+
+        return server;
+      },
+    },
+  }),
+});
+```
+
+### Plugin Settings
+
+Plugins define settings using **Zod schemas** in `index.ts`. The type is automatically inferred:
+
+```typescript
+// my-plugin/index.ts
+import { z } from "zod";
+import { createPlugin } from "@/config/helpers";
+
+const settingsSchema = z.object({
+  maxItems: z.number().default(100),
+  mode: z.enum(["fast", "balanced", "thorough"]).default("balanced"),
+});
+
+export default createPlugin({
+  settingsSchema,
+  mcps: (context) => {
+    // context.plugin.settings is typed as { maxItems: number, mode: "fast" | "balanced" | "thorough" }
+    const { maxItems, mode } = context.plugin.settings;
+    // ...
+  },
+});
+```
+
+**Pass settings when enabling the plugin:**
+
+```typescript
+// config/global/settings.ts
+export default createConfigSettings({
+  cccPlugins: {
+    "my-plugin": {
+      enabled: true,
+      settings: {
+        maxItems: 50,
+        mode: "fast",
+      },
+    },
+  },
+});
+```
+
+Settings are validated with Zod at plugin load time. Invalid settings throw errors.
+
+### Plugin State
+
+Plugins get a `context.state` API for key-value storage:
+
+```typescript
+context.state.get<T>(key)      // get value
+context.state.set(key, value)  // set value
+context.state.clear()          // clear all state
+context.state.getAll()         // get all state
+```
+
+**By default, state is in-memory only** (not persisted). To persist state, set `stateType`:
+
+```typescript
+export default createPlugin({
+  stateType: "temp",     // /tmp/ccc-plugin-{name}-{cwdHash}.json
+  // or:
+  stateType: "project",  // {projectRoot}/.ccc/state/plugins/{name}.json
+  // or:
+  stateType: "user",     // ~/.ccc/state/plugins/{name}.json
+
+  mcps: (context) => { /* ... */ },
+});
+```
+
+| stateType | Path | Use case |
+|-----------|------|----------|
+| `"none"` (default) | (in-memory only) | No persistence needed |
+| `"temp"` | `/tmp/ccc-plugin-{name}-{hash}.json` | Session state, cleared on reboot |
+| `"project"` | `{projectRoot}/.ccc/state/plugins/{name}.json` | Project-specific persistent state |
+| `"user"` | `~/.ccc/state/plugins/{name}.json` | User-wide persistent state |
+
+### onLoad Hook
+
+Plugins can define an `onLoad` callback for initialization:
+
+```typescript
+export default createPlugin({
+  onLoad: async (context) => {
+    console.log(`Plugin ${context.plugin.name} loaded`);
+  },
+  commands: () => ({ /* ... */ }),
+});
+```
+
+### Inter-Plugin Communication
+
+Plugins can access other loaded plugins using `getPlugin()`:
+
+```typescript
+export default createPlugin({
+  mcps: (context) => ({
+    "my-mcp": {
+      type: "inline",
+      config: () => {
+        const server = new FastMCP({ name: "my-mcp", version: "1.0.0" });
+
+        server.addTool({
+          name: "get_other_plugin_data",
+          parameters: z.object({}),
+          execute: async () => {
+            // Access another plugin's context
+            const otherPlugin = context.getPlugin("other-plugin");
+            if (!otherPlugin) return "Other plugin not loaded";
+
+            // Read its state
+            const data = otherPlugin.state.get("shared-data");
+            return JSON.stringify(data);
+          },
+        });
+
+        return server;
+      },
+    },
+  }),
+});
+```
+
+### Plugin Dependencies
+
+Plugins can declare dependencies on other plugins in `plugin.json`:
+
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "Depends on base-plugin",
+  "dependencies": ["base-plugin", "utility-plugin"]
+}
+```
+
+Dependencies are loaded first, ensuring they're available when your plugin loads.
+
+### Full plugin.json Schema
+
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "A complete example plugin",
+
+  "author": "Your Name",
+  "license": "MIT",
+  "homepage": "https://example.com/my-plugin",
+  "repository": "https://github.com/user/my-plugin",
+
+  "dependencies": ["other-plugin"]
+}
+```
+
+Note: Settings are defined via Zod schema in `index.ts`, not in `plugin.json`.
+
+### Example: Complete Plugin
+
+Here's a complete example of a plugin with commands, an MCP, and hooks:
+
+```typescript
+// config/plugins/task-tracker/index.ts
+import { FastMCP } from "fastmcp";
+import { z } from "zod";
+import { createPlugin } from "@/config/helpers";
+import { createHook } from "@/hooks/hook-generator";
+
+export default createPlugin({
+  commands: () => ({
+    "track": {
+      content: `
+# Task Tracker
+Track a new task: "$ARGUMENTS"
+Use the task_add MCP tool to add this task.
+      `.trim(),
+      mode: "override",
+    },
+  }),
+
+  mcps: (context) => ({
+    "task-tracker": {
+      type: "inline",
+      config: () => {
+        const server = new FastMCP({
+          name: "task-tracker",
+          version: "1.0.0",
+        });
+
+        server.addTool({
+          name: "task_add",
+          description: "Add a new task",
+          parameters: z.object({
+            title: z.string(),
+            priority: z.enum(["low", "medium", "high"]).default("medium"),
+          }),
+          execute: async (args) => {
+            const tasks = context.state.get<string[]>("tasks") ?? [];
+            tasks.push(`[${args.priority}] ${args.title}`);
+            context.state.set("tasks", tasks);
+            return `Added: ${args.title}`;
+          },
+        });
+
+        server.addTool({
+          name: "task_list",
+          description: "List all tasks",
+          parameters: z.object({}),
+          execute: async () => {
+            const tasks = context.state.get<string[]>("tasks") ?? [];
+            return tasks.length > 0 ? tasks.join("\n") : "No tasks";
+          },
+        });
+
+        return server;
+      },
+    },
+  }),
+
+  hooks: () => ({
+    SessionStart: [
+      {
+        hooks: [
+          createHook("SessionStart", () => {
+            console.log("📋 Task Tracker plugin loaded");
+          }),
+        ],
+      },
+    ],
+  }),
+});
+```
+
+### Viewing Plugin Info
+
+Use `ccc --print-config` to see loaded CCC plugins:
+
+```
+CCC Plugins:
+  my-plugin (v1.0.0) [enabled]
+    Commands: my-plugin:my-command
+    MCPs: my-plugin:my-mcp
+    Hooks: Stop(1)
+```
+
+Note: Plugin components are namespaced with the plugin name (e.g., `my-plugin:my-command`).
 
 ## Runtime Patches
 

@@ -12,10 +12,19 @@ import { buildMCPs } from "@/config/builders/build-mcps";
 import { buildSettings, buildSystemPrompt, buildUserPrompt } from "@/config/builders/build-settings";
 import { dumpConfig } from "@/config/dump-config";
 import { Context } from "@/context/Context";
+import { applyBuiltInPatches, applyUserPatches, type RuntimePatch } from "@/patches/cli-patches";
+import {
+  discoverPlugins,
+  getDefaultPluginDirs,
+  getPluginInfo,
+  loadPlugins,
+  mergePluginConfigs,
+  type PluginEnablementConfig,
+  sortByDependencies,
+} from "@/plugins";
 import { log } from "@/utils/log";
 import { createStartupLogger } from "@/utils/startup";
 import { setupVirtualFileSystem } from "@/utils/virtual-fs";
-import { applyBuiltInPatches, applyUserPatches, type RuntimePatch } from "@/patches/cli-patches";
 
 type ResolveResult = { path: string; source: string };
 
@@ -110,6 +119,50 @@ const run = async () => {
   });
 
   ctxTask.done();
+
+  // discover and load CCC plugins
+  const pluginTask = startup.start("Load CCC plugins");
+  try {
+    const pluginDirs = getDefaultPluginDirs(context.launcherDirectory, context.project.rootDirectory);
+    pluginDirs.push(path.join(context.launcherDirectory, context.configDirectory, "plugins"));
+
+    const discovered = discoverPlugins(pluginDirs);
+    const sorted = sortByDependencies(discovered.plugins);
+
+    // log discovery errors
+    for (const err of discovered.errors) {
+      log.warn("PLUGINS", `Discovery error: ${err.path} - ${err.error}`);
+    }
+
+    // get plugin enablement from settings layers (need to load settings early)
+    const { loadConfigFromLayers, mergeSettings } = await import("@/config/layers");
+    const settingsLayers = await loadConfigFromLayers<Record<string, unknown>>(context, "settings.ts");
+    const mergedSettings = mergeSettings(
+      settingsLayers.global,
+      ...settingsLayers.presets,
+      settingsLayers.project,
+    );
+
+    // merge cccPlugins from settings and presets
+    const globalPlugins = (mergedSettings.cccPlugins ?? {}) as PluginEnablementConfig;
+    const presetPlugins = context.project.presets.map((preset) => preset.cccPlugins).filter(Boolean);
+    const effectivePlugins = mergePluginConfigs(globalPlugins, ...presetPlugins);
+
+    // load enabled plugins
+    const loadResult = await loadPlugins(sorted, effectivePlugins, context);
+    context.loadedPlugins = loadResult.plugins;
+
+    // log load errors
+    for (const err of loadResult.errors) {
+      log.warn("PLUGINS", `Load error: ${err.plugin} - ${err.error}`);
+    }
+
+    const count = loadResult.plugins.length;
+    pluginTask.done(count > 0 ? `${count} plugin(s)` : "none");
+  } catch (error) {
+    pluginTask.fail("failed");
+    log.error("PLUGINS", `Plugin loading failed: ${error}`);
+  }
 
   // build MCPs first so context.hasMCP() is available during prompt building
   const mcps = await startup.run("Build MCPs", () => buildMCPs(context));
@@ -209,6 +262,37 @@ const run = async () => {
     console.log(Array.from(agents.keys()));
     console.log(p.blue("\nMCPs:"));
     console.log(mcps);
+    console.log(p.blue("\nCCC Plugins:"));
+    const pluginInfos = getPluginInfo(context.loadedPlugins);
+    if (pluginInfos.length === 0) {
+      console.log("  (none)");
+    } else {
+      for (const info of pluginInfos) {
+        console.log(`  ${info.name} (v${info.version}) [${info.enabled ? "enabled" : "disabled"}]`);
+        if (info.components.commands.length > 0) {
+          console.log(`    Commands: ${info.components.commands.join(", ")}`);
+        }
+        if (info.components.agents.length > 0) {
+          console.log(`    Agents: ${info.components.agents.join(", ")}`);
+        }
+        if (info.components.mcps.length > 0) {
+          console.log(`    MCPs: ${info.components.mcps.join(", ")}`);
+        }
+        const hookEvents = Object.entries(info.components.hooks)
+          .filter(([, count]) => count > 0)
+          .map(([event, count]) => `${event}(${count})`)
+          .join(", ");
+        if (hookEvents) {
+          console.log(`    Hooks: ${hookEvents}`);
+        }
+        if (info.components.prompts.system || info.components.prompts.user) {
+          const promptTypes = [];
+          if (info.components.prompts.system) promptTypes.push("system");
+          if (info.components.prompts.user) promptTypes.push("user");
+          console.log(`    Prompts: ${promptTypes.join(", ")}`);
+        }
+      }
+    }
     console.log(p.blue("\nContext:"));
     console.log(context);
     process.exit(0);
@@ -368,14 +452,14 @@ const run = async () => {
 
   if (allApplied.length > 0) {
     // write patched CLI to temp file
-    const tmpDir = osModule.tmpdir();
+    const patchTmpDir = osModule.tmpdir();
     const hash = cryptoModule.createHash("md5").update(content).digest("hex").slice(0, 8);
-    const patchedPath = path.join(tmpDir, `claude-cli-patched-${hash}.mjs`);
+    const patchedPath = path.join(patchTmpDir, `claude-cli-patched-${hash}.mjs`);
     fs.writeFileSync(patchedPath, content);
     importPath = patchedPath;
     log.info("LAUNCHER", `Applied ${allApplied.length} runtime patches`);
-    for (const p of allApplied) {
-      log.debug("LAUNCHER", `  - ${p}`);
+    for (const patchName of allApplied) {
+      log.debug("LAUNCHER", `  - ${patchName}`);
     }
   }
 

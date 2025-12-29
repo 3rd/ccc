@@ -3,6 +3,7 @@ import { join } from "path";
 import type { PromptLayerData } from "@/config/helpers";
 import type { Context } from "@/context/Context";
 import { loadPromptFile, mergePrompts } from "@/config/layers";
+import { getPluginCommands } from "@/plugins/registry";
 import { log } from "@/utils/log";
 
 const loadCommandsFromPath = async (
@@ -102,6 +103,12 @@ export const buildCommands = async (context: Context): Promise<Map<string, strin
   for (const [name, layers] of commandLayers) {
     const merged = mergePrompts(...layers);
     commands.set(name, merged);
+  }
+
+  // add plugin commands
+  const pluginCommands = getPluginCommands(context.loadedPlugins);
+  for (const [name, data] of Object.entries(pluginCommands)) {
+    commands.set(`${name}.md`, data.content);
   }
 
   // load local project commands
