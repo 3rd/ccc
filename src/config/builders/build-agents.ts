@@ -39,8 +39,14 @@ export const buildAgents = async (context: Context): Promise<Map<string, string>
   const overrides = new Set<string>();
   const launcherRoot = context.launcherDirectory;
 
+  // resolve config base directory - handle absolute paths (e.g., from CCC_CONFIG_DIR)
+  const configBase =
+    context.configDirectory.startsWith("/") ?
+      context.configDirectory
+    : join(launcherRoot, context.configDirectory);
+
   // load global agents
-  const globalPath = join(launcherRoot, context.configDirectory, "global/agents");
+  const globalPath = join(configBase, "global/agents");
   const globalAgents = await loadAgentsFromPath(context, globalPath);
   for (const [name, data] of globalAgents) {
     agentLayers.set(name, [data]);
@@ -48,7 +54,7 @@ export const buildAgents = async (context: Context): Promise<Map<string, string>
 
   // load preset agents
   for (const preset of context.project.presets) {
-    const presetPath = join(launcherRoot, context.configDirectory, "presets", preset.name, "agents");
+    const presetPath = join(configBase, "presets", preset.name, "agents");
     const presetAgents = await loadAgentsFromPath(context, presetPath);
 
     for (const [name, data] of presetAgents) {
@@ -71,13 +77,7 @@ export const buildAgents = async (context: Context): Promise<Map<string, string>
 
   // load project agents
   if (context.project.projectConfig) {
-    const projectPath = join(
-      launcherRoot,
-      context.configDirectory,
-      "projects",
-      context.project.projectConfig.name,
-      "agents",
-    );
+    const projectPath = join(configBase, "projects", context.project.projectConfig.name, "agents");
     const projectAgents = await loadAgentsFromPath(context, projectPath);
 
     for (const [name, data] of projectAgents) {

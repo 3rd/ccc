@@ -1651,8 +1651,9 @@ export const setupVirtualFileSystem = (args: {
     log.vfs("No agents provided");
   }
 
-  // filter out env vars that already exist in process.env (user env takes precedence)
-  const filteredSettings = { ...args.settings };
+  // filter out cli-only flags (they are passed as args, not written to settings.json)
+  // and env vars that already exist in process.env (user env takes precedence)
+  const { cli: _cli, ...filteredSettings } = args.settings;
   if (filteredSettings.env && typeof filteredSettings.env === "object") {
     const envRecord = filteredSettings.env as Record<string, string>;
     const filteredEnv: Record<string, string> = {};

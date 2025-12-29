@@ -1,0 +1,12 @@
+{
+  "name": "typescript-basic",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo 'no tests'"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

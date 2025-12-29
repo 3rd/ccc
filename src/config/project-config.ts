@@ -14,7 +14,9 @@ const __dirname = dirname(__filename);
 
 export const findProjectConfigDir = async (workingDir: string, configDirectory: string) => {
   const launcherRoot = dirname(dirname(__dirname));
-  const projectsDir = join(launcherRoot, configDirectory, "projects");
+  // resolve config base directory - handle absolute paths (e.g., from CCC_CONFIG_DIR)
+  const configBase = configDirectory.startsWith("/") ? configDirectory : join(launcherRoot, configDirectory);
+  const projectsDir = join(configBase, "projects");
 
   if (!existsSync(projectsDir)) return null;
 

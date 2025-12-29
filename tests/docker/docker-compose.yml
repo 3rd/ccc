@@ -1,0 +1,79 @@
+services:
+  test-all:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../../src:/app/src:ro
+      - ../../tests:/app/tests
+      - test-home:/home/testuser
+    environment:
+      - HOME=/home/testuser
+      - NODE_ENV=test
+      - CCC_TEST_MODE=true
+    tmpfs:
+      - /tmp:exec,mode=1777
+    working_dir: /app
+    command: ["bun", "test", "tests/e2e"]
+
+  test-launcher:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../../src:/app/src:ro
+      - ../../config:/app/config:ro
+      - ../../tests:/app/tests
+      - ../fixtures:/app/tests/fixtures:ro
+      - test-home-launcher:/home/testuser
+    environment:
+      - HOME=/home/testuser
+      - NODE_ENV=test
+    tmpfs:
+      - /tmp:exec,mode=1777
+    working_dir: /app
+    command: ["bun", "test", "tests/e2e/launcher.test.ts"]
+
+  test-config:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../../src:/app/src:ro
+      - ../../config:/app/config:ro
+      - ../../tests:/app/tests
+      - ../fixtures:/app/tests/fixtures:ro
+      - test-home-config:/home/testuser
+    environment:
+      - HOME=/home/testuser
+      - NODE_ENV=test
+    tmpfs:
+      - /tmp:exec,mode=1777
+    working_dir: /app
+    command: ["bun", "test", "tests/e2e/config-resolution.test.ts"]
+
+  shell:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    volumes:
+      - ../../src:/app/src:ro
+      - ../../config:/app/config:ro
+      - ../../tests:/app/tests
+      - ../fixtures:/app/tests/fixtures:ro
+      - test-home-shell:/home/testuser
+    environment:
+      - HOME=/home/testuser
+      - NODE_ENV=test
+    tmpfs:
+      - /tmp:exec,mode=1777
+    working_dir: /app
+    command: ["/bin/bash"]
+    stdin_open: true
+    tty: true
+
+volumes:
+  test-home:
+  test-home-launcher:
+  test-home-config:
+  test-home-shell:

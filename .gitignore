@@ -36,3 +36,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 /.config-dump
 /config
 /dev-config
+
+# test artifacts
+/tests/output
+/tests/coverage

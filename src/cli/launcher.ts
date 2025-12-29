@@ -425,6 +425,90 @@ const run = async () => {
     args.push("--plugin-dir", dir);
   }
 
+  // pass through CLI-only flags from settings.cli (CLI args override settings)
+  // see: https://code.claude.com/docs/en/cli-reference#cli-flags
+  type CliFlags = {
+    tools?: string[] | "default";
+    disallowedTools?: string[];
+    allowedTools?: string[];
+    addDir?: string[];
+    permissionMode?: string;
+    verbose?: boolean;
+    debug?: boolean | string;
+    chrome?: boolean;
+    ide?: boolean;
+    enableLspLogging?: boolean;
+    agent?: string;
+  };
+  const settingsCli = (settings as { cli?: CliFlags }).cli || {};
+
+  const hasCliArg = (flag: string) => process.argv.includes(flag);
+
+  // --tools (comma-separated, "default", or "" to disable)
+  if (!hasCliArg("--tools") && settingsCli.tools !== undefined) {
+    if (settingsCli.tools === "default") {
+      args.push("--tools", "default");
+    } else if (Array.isArray(settingsCli.tools)) {
+      args.push("--tools", settingsCli.tools.length > 0 ? settingsCli.tools.join(",") : "");
+    }
+  }
+
+  // --disallowedTools (comma-separated)
+  if (!hasCliArg("--disallowedTools") && settingsCli.disallowedTools?.length) {
+    args.push("--disallowedTools", settingsCli.disallowedTools.join(","));
+  }
+
+  // --allowedTools (comma-separated)
+  if (!hasCliArg("--allowedTools") && settingsCli.allowedTools?.length) {
+    args.push("--allowedTools", settingsCli.allowedTools.join(","));
+  }
+
+  // --add-dir (multiple flags, one per dir)
+  if (!hasCliArg("--add-dir") && settingsCli.addDir?.length) {
+    for (const dir of settingsCli.addDir) {
+      args.push("--add-dir", dir);
+    }
+  }
+
+  // --permission-mode
+  if (!hasCliArg("--permission-mode") && settingsCli.permissionMode) {
+    args.push("--permission-mode", settingsCli.permissionMode);
+  }
+
+  // --verbose
+  if (!hasCliArg("--verbose") && settingsCli.verbose) {
+    args.push("--verbose");
+  }
+
+  // --debug (boolean or string filter)
+  if (!hasCliArg("--debug") && settingsCli.debug !== undefined) {
+    if (typeof settingsCli.debug === "string") {
+      args.push("--debug", settingsCli.debug);
+    } else if (settingsCli.debug) {
+      args.push("--debug");
+    }
+  }
+
+  // --chrome / --no-chrome
+  if (!hasCliArg("--chrome") && !hasCliArg("--no-chrome") && settingsCli.chrome !== undefined) {
+    args.push(settingsCli.chrome ? "--chrome" : "--no-chrome");
+  }
+
+  // --ide
+  if (!hasCliArg("--ide") && settingsCli.ide) {
+    args.push("--ide");
+  }
+
+  // --enable-lsp-logging
+  if (!hasCliArg("--enable-lsp-logging") && settingsCli.enableLspLogging) {
+    args.push("--enable-lsp-logging");
+  }
+
+  // --agent
+  if (!hasCliArg("--agent") && settingsCli.agent) {
+    args.push("--agent", settingsCli.agent);
+  }
+
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);
   log.debug("LAUNCHER", `Arguments: ${args.join(" ")}`);
   log.debug("LAUNCHER", `Additional args from CLI: ${process.argv.slice(2).join(" ") || "none"}`);

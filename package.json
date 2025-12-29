@@ -8,7 +8,10 @@
   "scripts": {
     "postinstall": "bun run scripts/postinstall.ts",
     "typecheck": "tsc --noEmit",
-    "knip": "knip"
+    "knip": "knip",
+    "test": "docker compose -f tests/docker/docker-compose.yml up test-all --build --abort-on-container-exit",
+    "test:down": "docker compose -f tests/docker/docker-compose.yml down -v",
+    "test:shell": "docker compose -f tests/docker/docker-compose.yml run --rm shell"
   },
   "devDependencies": {
     "@types/bun": "latest",

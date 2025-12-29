@@ -49,6 +49,7 @@ export class StartupLogger {
     return {
       done: (note?: string) => {
         task.endedAt = process.hrtime.bigint();
+        if (!this.enabled) return;
         this.printHeader();
         const detail = [
           task.label,
@@ -62,6 +63,7 @@ export class StartupLogger {
 
       skip: (note?: string) => {
         task.endedAt = process.hrtime.bigint();
+        if (!this.enabled) return;
         this.printHeader();
         const detail = [task.label, note ? pc.dim(`(${note})`) : undefined].filter(Boolean).join(" ");
         process.stdout.write(`${pc.dim("↷")} ${detail}\n`);
@@ -69,6 +71,7 @@ export class StartupLogger {
 
       fail: (error: unknown) => {
         task.endedAt = process.hrtime.bigint();
+        if (!this.enabled) return;
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.printHeader();
         const detail = [task.label, errorMessage ? pc.dim(`- ${errorMessage}`) : undefined]

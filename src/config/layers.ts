@@ -23,7 +23,17 @@ export const mergeSettings = (
   for (const layer of layers) {
     if (layer) {
       for (const [key, value] of Object.entries(layer)) {
-        if (value !== undefined) result[key] = value;
+        if (value !== undefined) {
+          // deep merge for 'env' object - env vars should accumulate, not replace
+          if (key === "env" && typeof value === "object" && value !== null) {
+            result[key] = {
+              ...(result[key] as Record<string, unknown> | undefined),
+              ...value,
+            };
+          } else {
+            result[key] = value;
+          }
+        }
       }
     }
   }
@@ -141,21 +151,27 @@ export const loadConfigLayer = async <T>(
 ) => {
   const launcherRoot = context.launcherDirectory;
 
+  // resolve config base directory - handle absolute paths (e.g., from CCC_CONFIG_DIR)
+  const configBase =
+    context.configDirectory.startsWith("/") ?
+      context.configDirectory
+    : join(launcherRoot, context.configDirectory);
+
   // compute config file path
   let configPath: string;
   switch (layer) {
     case "global": {
-      configPath = join(launcherRoot, context.configDirectory, "global", file);
+      configPath = join(configBase, "global", file);
       break;
     }
     case "preset": {
       if (!name) return undefined;
-      configPath = join(launcherRoot, context.configDirectory, "presets", name, file);
+      configPath = join(configBase, "presets", name, file);
       break;
     }
     case "project": {
       if (!name) return undefined;
-      configPath = join(launcherRoot, context.configDirectory, "projects", name, file);
+      configPath = join(configBase, "projects", name, file);
       break;
     }
     default: {

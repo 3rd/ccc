@@ -147,7 +147,10 @@ const collectLayeredMCPs = async (
       for (const mcpName of Object.keys(presetMCPs)) {
         const mcp = finalMCPs[mcpName];
         if (mcp) {
-          items[mcpName] = { type: getMCPType(mcp), trace: [{ layer: "preset", name: preset.name, mode: "override" }] };
+          items[mcpName] = {
+            type: getMCPType(mcp),
+            trace: [{ layer: "preset", name: preset.name, mode: "override" }],
+          };
         }
       }
     }

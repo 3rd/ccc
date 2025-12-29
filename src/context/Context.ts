@@ -55,6 +55,10 @@ export class Context {
   }
 
   private getConfigDirectory(): string {
+    // allow env override for testing with custom config directories
+    if (process.env.CCC_CONFIG_DIR) {
+      return process.env.CCC_CONFIG_DIR;
+    }
     const devConfigPath = join(this.launcherDirectory, "dev-config");
     if (existsSync(devConfigPath)) {
       return "dev-config";

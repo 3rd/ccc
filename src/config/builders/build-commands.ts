@@ -39,8 +39,14 @@ export const buildCommands = async (context: Context): Promise<Map<string, strin
   const overrides = new Set<string>();
   const launcherRoot = context.launcherDirectory;
 
+  // resolve config base directory - handle absolute paths (e.g., from CCC_CONFIG_DIR)
+  const configBase =
+    context.configDirectory.startsWith("/") ?
+      context.configDirectory
+    : join(launcherRoot, context.configDirectory);
+
   // load global commands
-  const globalPath = join(launcherRoot, context.configDirectory, "global/commands");
+  const globalPath = join(configBase, "global/commands");
   const globalCommands = await loadCommandsFromPath(context, globalPath);
   for (const [name, data] of globalCommands) {
     commandLayers.set(name, [data]);
@@ -48,7 +54,7 @@ export const buildCommands = async (context: Context): Promise<Map<string, strin
 
   // load preset commands
   for (const preset of context.project.presets) {
-    const presetPath = join(launcherRoot, context.configDirectory, "presets", preset.name, "commands");
+    const presetPath = join(configBase, "presets", preset.name, "commands");
     const presetCommands = await loadCommandsFromPath(context, presetPath);
 
     for (const [name, data] of presetCommands) {
@@ -71,13 +77,7 @@ export const buildCommands = async (context: Context): Promise<Map<string, strin
 
   // load project commands
   if (context.project.projectConfig) {
-    const projectPath = join(
-      launcherRoot,
-      context.configDirectory,
-      "projects",
-      context.project.projectConfig.name,
-      "commands",
-    );
+    const projectPath = join(configBase, "projects", context.project.projectConfig.name, "commands");
     const projectCommands = await loadCommandsFromPath(context, projectPath);
 
     for (const [name, data] of projectCommands) {

@@ -177,6 +177,61 @@ claude config set --global preferredNotifChannel terminal_bell
 claude config set -g verbose true
 ```
 
+## CLI argument settings
+
+Some settings are passed directly as CLI arguments to Claude rather than being written to `settings.json`. These are grouped under `settings.cli`. See [Claude Code CLI Reference](https://code.claude.com/docs/en/cli-reference#cli-flags) for details.
+
+```typescript
+// config/global/settings.ts
+import { createConfigSettings } from "@/config/helpers";
+
+export default createConfigSettings({
+  cli: {
+    tools: ["Bash", "Read", "Edit", "Write"],
+    disallowedTools: ["WebSearch", "WebFetch"],
+    allowedTools: ["Read", "Glob", "Grep"],
+    addDir: ["/path/to/shared/libs"],
+    permissionMode: "plan",
+    verbose: true,
+    debug: "api,hooks",
+    chrome: true,
+    ide: true,
+    enableLspLogging: false,
+    agent: "code-reviewer",
+  },
+  // other settings go to settings.json as normal
+  env: { ... },
+});
+```
+
+### Available CLI-Only Settings
+
+| Setting | Type | CLI Flag | Description |
+|---------|------|----------|-------------|
+| `tools` | `string[] \| "default"` | `--tools "Tool1,Tool2"` | Available tools (`"default"` for all, `[]` to disable) |
+| `disallowedTools` | `string[]` | `--disallowedTools "Tool1,Tool2"` | Tools removed from model context entirely |
+| `allowedTools` | `string[]` | `--allowedTools "Tool1,Tool2"` | Tools that execute without permission prompts |
+| `addDir` | `string[]` | `--add-dir path` | Additional directories Claude can access |
+| `permissionMode` | `enum` | `--permission-mode mode` | Start mode: `default`, `acceptEdits`, `plan`, `bypassPermissions` |
+| `verbose` | `boolean` | `--verbose` | Enable verbose logging |
+| `debug` | `boolean \| string` | `--debug [filter]` | Enable debug mode, optionally with category filter |
+| `chrome` | `boolean` | `--chrome` / `--no-chrome` | Enable/disable Chrome browser integration |
+| `ide` | `boolean` | `--ide` | Auto-connect to IDE on startup |
+| `enableLspLogging` | `boolean` | `--enable-lsp-logging` | Enable verbose LSP logging |
+| `agent` | `string` | `--agent name` | Default agent for the session |
+
+### CLI Override
+
+CLI arguments provided directly to `ccc` override the corresponding `settings.cli` values:
+
+```bash
+# override disallowedTools from settings
+ccc --disallowedTools "WebSearch,WebFetch"
+
+# start in plan mode regardless of settings
+ccc --permission-mode plan
+```
+
 ---
 
 ## System & User Prompts

@@ -9,7 +9,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const loadPreset = async (presetName: string, context: Context): Promise<PresetConfig | null> => {
-  const presetPath = join(dirname(dirname(__dirname)), context.configDirectory, "presets", presetName);
+  const launcherRoot = dirname(dirname(__dirname));
+  // resolve config base directory - handle absolute paths (e.g., from CCC_CONFIG_DIR)
+  const configBase =
+    context.configDirectory.startsWith("/") ?
+      context.configDirectory
+    : join(launcherRoot, context.configDirectory);
+  const presetPath = join(configBase, "presets", presetName);
   const indexPath = join(presetPath, "index.ts");
 
   if (!existsSync(indexPath)) {
@@ -57,7 +63,13 @@ export const loadPresets = async (context: Context) => {
   const presets: PresetConfig[] = [];
   const tags: string[] = [];
 
-  const presetsDir = join(dirname(dirname(__dirname)), context.configDirectory, "presets");
+  const launcherRoot = dirname(dirname(__dirname));
+  // resolve config base directory - handle absolute paths (e.g., from CCC_CONFIG_DIR)
+  const configBase =
+    context.configDirectory.startsWith("/") ?
+      context.configDirectory
+    : join(launcherRoot, context.configDirectory);
+  const presetsDir = join(configBase, "presets");
   if (!existsSync(presetsDir)) return { presets, tags };
 
   try {
