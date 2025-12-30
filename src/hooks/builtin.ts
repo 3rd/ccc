@@ -5,16 +5,24 @@ import type { HookCommand, HookEventName } from "@/types/hooks";
 type BuiltinCommands = Record<HookEventName, HookCommand>;
 
 const builtins: BuiltinCommands = {
-  Notification: createHook("Notification", eventRecorder.record),
-  PermissionRequest: createHook("PermissionRequest", eventRecorder.record),
-  PostToolUse: createHook("PostToolUse", eventRecorder.record),
-  PreCompact: createHook("PreCompact", eventRecorder.record),
-  PreToolUse: createHook("PreToolUse", eventRecorder.record),
-  SessionEnd: createHook("SessionEnd", eventRecorder.record),
-  SessionStart: createHook("SessionStart", eventRecorder.record),
-  Stop: createHook("Stop", eventRecorder.record),
-  SubagentStop: createHook("SubagentStop", eventRecorder.record),
-  UserPromptSubmit: createHook("UserPromptSubmit", eventRecorder.record),
+  Notification: createHook({ event: "Notification", id: "builtin-recorder", handler: eventRecorder.record }),
+  PermissionRequest: createHook({
+    event: "PermissionRequest",
+    id: "builtin-recorder",
+    handler: eventRecorder.record,
+  }),
+  PostToolUse: createHook({ event: "PostToolUse", id: "builtin-recorder", handler: eventRecorder.record }),
+  PreCompact: createHook({ event: "PreCompact", id: "builtin-recorder", handler: eventRecorder.record }),
+  PreToolUse: createHook({ event: "PreToolUse", id: "builtin-recorder", handler: eventRecorder.record }),
+  SessionEnd: createHook({ event: "SessionEnd", id: "builtin-recorder", handler: eventRecorder.record }),
+  SessionStart: createHook({ event: "SessionStart", id: "builtin-recorder", handler: eventRecorder.record }),
+  Stop: createHook({ event: "Stop", id: "builtin-recorder", handler: eventRecorder.record }),
+  SubagentStop: createHook({ event: "SubagentStop", id: "builtin-recorder", handler: eventRecorder.record }),
+  UserPromptSubmit: createHook({
+    event: "UserPromptSubmit",
+    id: "builtin-recorder",
+    handler: eventRecorder.record,
+  }),
 };
 
 export const getBuiltinHookCommands = () => builtins;

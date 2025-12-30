@@ -14,11 +14,11 @@ const hooksMap = new Map<string, RuntimeHookHandler>();
 
 export const getHook = (id: string) => hooksMap.get(id);
 
-const generateHookId = <E extends HookEventName>(eventName: E, handler: HookHandler<E>) => {
+const generateHookId = <E extends HookEventName>(eventName: E, stableId: string) => {
   const hash = createHash("sha256");
   hash.update(eventName);
-  hash.update(handler.toString());
-  return `hook_${eventName}_${hash.digest("hex").slice(0, 8)}`;
+  hash.update(stableId);
+  return `hook_${eventName}_${stableId}`;
 };
 
 const getRunnerPath = () => {
@@ -29,12 +29,16 @@ export const setInstanceId = (instanceId: string, configDirectory = "config") =>
   log.debug("HOOKS", `Set instance ID: ${instanceId}, configDir=${configDirectory}`);
 };
 
-export const createHook = <E extends HookEventName>(
-  eventName: E,
-  handler: HookHandler<E>,
-  options?: { timeout?: number },
-): HookCommand => {
-  const hookId = generateHookId(eventName, handler);
+export interface CreateHookOptions<E extends HookEventName> {
+  event: E;
+  id: string;
+  handler: HookHandler<E>;
+  timeout?: number;
+}
+
+export const createHook = <E extends HookEventName>(options: CreateHookOptions<E>): HookCommand => {
+  const { event, id, handler, timeout } = options;
+  const hookId = generateHookId(event, id);
 
   hooksMap.set(hookId, handler as RuntimeHookHandler);
 
@@ -46,6 +50,6 @@ export const createHook = <E extends HookEventName>(
     get command() {
       return cmd;
     },
-    timeout: options?.timeout,
+    timeout,
   } satisfies HookCommand;
 };

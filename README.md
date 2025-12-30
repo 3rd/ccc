@@ -360,29 +360,37 @@ const bashDenyList = [
   },
 ];
 
-const sessionStartHook = createHook("SessionStart", (input) => {
-  const timestamp = new Date().toISOString();
-  console.log(p.dim("🞄"));
-  console.log(
-    `🚀 Session started from ${p.yellow(input.source)} at ${p.blue(timestamp)}`,
-  );
-  console.log(`📍 Working directory: ${p.yellow(process.cwd())}`);
-  console.log(`🔧 Node version: ${p.yellow(process.version)}`);
-  console.log(p.dim("🞄"));
+const sessionStartHook = createHook({
+  event: "SessionStart",
+  id: "global-session-start",
+  handler: (input) => {
+    const timestamp = new Date().toISOString();
+    console.log(p.dim("🞄"));
+    console.log(
+      `🚀 Session started from ${p.yellow(input.source)} at ${p.blue(timestamp)}`,
+    );
+    console.log(`📍 Working directory: ${p.yellow(process.cwd())}`);
+    console.log(`🔧 Node version: ${p.yellow(process.version)}`);
+    console.log(p.dim("🞄"));
+  },
 });
 
-const preBashValidationHook = createHook("PreToolUse", (input) => {
-  const command = input.tool_input.command as string;
-  if (input.tool_name !== "Bash" || !command) return;
-  const firstMatchingRule = bashDenyList.find((rule) =>
-    command.match(rule.match),
-  );
-  if (!firstMatchingRule) return;
-  return {
-    continue: true,
-    decision: "block",
-    reason: firstMatchingRule?.message,
-  };
+const preBashValidationHook = createHook({
+  event: "PreToolUse",
+  id: "bash-deny-list",
+  handler: (input) => {
+    const command = input.tool_input.command as string;
+    if (input.tool_name !== "Bash" || !command) return;
+    const firstMatchingRule = bashDenyList.find((rule) =>
+      command.match(rule.match),
+    );
+    if (!firstMatchingRule) return;
+    return {
+      continue: true,
+      decision: "block",
+      reason: firstMatchingRule?.message,
+    };
+  },
 });
 
 export default createConfigHooks({
@@ -402,16 +410,20 @@ export default createConfigHooks({
   Stop: [
     {
       hooks: [
-        createHook("Stop", async () => {
-          const result = await $`tsc --noEmit`;
-          if (result.exitCode !== 0) {
-            return {
-              continue: true,
-              decision: "block",
-              reason: `Failed tsc --noEmit:\n${result.text()}`,
-            };
-          }
-          return { suppressOutput: true };
+        createHook({
+          event: "Stop",
+          id: "typescript-validation",
+          handler: async () => {
+            const result = await $`tsc --noEmit`;
+            if (result.exitCode !== 0) {
+              return {
+                continue: true,
+                decision: "block",
+                reason: `Failed tsc --noEmit:\n${result.text()}`,
+              };
+            }
+            return { suppressOutput: true };
+          },
         }),
       ],
     },
@@ -676,8 +688,12 @@ Agent instructions...
     Stop: [
       {
         hooks: [
-          createHook("Stop", () => {
-            // Hook logic
+          createHook({
+            event: "Stop",
+            id: "plugin-stop-hook",
+            handler: () => {
+              // Hook logic
+            },
           }),
         ],
       },
@@ -1030,8 +1046,12 @@ Use the task_add MCP tool to add this task.
     SessionStart: [
       {
         hooks: [
-          createHook("SessionStart", () => {
-            console.log("📋 Task Tracker plugin loaded");
+          createHook({
+            event: "SessionStart",
+            id: "task-tracker-init",
+            handler: () => {
+              console.log("📋 Task Tracker plugin loaded");
+            },
           }),
         ],
       },

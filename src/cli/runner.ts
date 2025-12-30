@@ -91,6 +91,7 @@ const runHook = async (id: string) => {
 
   // also load CCC plugin hooks
   const context = new Context(process.cwd());
+  await context.init();
   const loadedPlugins = await loadCCCPlugins(context);
   context.loadedPlugins = loadedPlugins;
 
@@ -114,7 +115,10 @@ const runHook = async (id: string) => {
   }
   const input = JSON.parse(inputJson);
   const result = await Promise.resolve(fn(input));
-  if (result) process.stdout.write(JSON.stringify(result));
+  if (result) {
+    const json = JSON.stringify(result);
+    process.stdout.write(`${json}\n`);
+  }
   process.exit(0);
 };
 
