@@ -1,4 +1,3 @@
-import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
@@ -12,17 +11,17 @@ export interface PluginState {
   getAll: () => Record<string, unknown>;
 }
 
-const getCwdHash = (cwd: string): string => {
-  return createHash("md5").update(cwd).digest("hex").slice(0, 8);
+const getSessionId = (): string => {
+  return process.env.CCC_INSTANCE_ID ?? "unknown";
 };
 
 const getStatePath = (pluginName: string, cwd: string, stateType: StateType): string | null => {
   if (stateType === "none") return null;
-  const cwdHash = getCwdHash(cwd);
 
   switch (stateType) {
     case "temp": {
-      return `/tmp/ccc-plugin-${pluginName}-${cwdHash}.json`;
+      const sessionId = getSessionId();
+      return `/tmp/ccc-plugin-${pluginName}-${sessionId}.json`;
     }
     case "project": {
       return join(cwd, ".ccc", "state", "plugins", `${pluginName}.json`);

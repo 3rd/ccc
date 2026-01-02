@@ -783,11 +783,11 @@ context.state.getAll(): Record<string, unknown>  // Get all state
 
 **State Locations:**
 
-By default, plugin state is stored in `/tmp/ccc-plugin-{name}-{cwdHash}.json`. The location is isolated by working directory hash to prevent conflicts between projects.
+By default, plugin state is stored in `/tmp/ccc-plugin-{name}-{sessionId}.json`. The location is isolated by session ID (CCC_INSTANCE_ID) to prevent conflicts between concurrent CCC instances.
 
 | Location | Path | Use Case |
 |----------|------|----------|
-| `temp` (default) | `/tmp/ccc-plugin-{name}-{hash}.json` | Session-scoped data |
+| `temp` (default) | `/tmp/ccc-plugin-{name}-{sessionId}.json` | Session-scoped data |
 | `project` | `{cwd}/.ccc/state/plugins/{name}.json` | Project-specific persistent data |
 | `user` | `~/.ccc/state/plugins/{name}.json` | Global user preferences |
 
@@ -883,7 +883,7 @@ context.state.getAll()         // get all state
 
 ```typescript
 export default createPlugin({
-  stateType: "temp",     // /tmp/ccc-plugin-{name}-{cwdHash}.json
+  stateType: "temp",     // /tmp/ccc-plugin-{name}-{sessionId}.json (per-instance)
   // or:
   stateType: "project",  // {projectRoot}/.ccc/state/plugins/{name}.json
   // or:
@@ -896,7 +896,7 @@ export default createPlugin({
 | stateType | Path | Use case |
 |-----------|------|----------|
 | `"none"` (default) | (in-memory only) | No persistence needed |
-| `"temp"` | `/tmp/ccc-plugin-{name}-{hash}.json` | Session state, cleared on reboot |
+| `"temp"` | `/tmp/ccc-plugin-{name}-{sessionId}.json` | Per-instance state, cleared on reboot |
 | `"project"` | `{projectRoot}/.ccc/state/plugins/{name}.json` | Project-specific persistent state |
 | `"user"` | `~/.ccc/state/plugins/{name}.json` | User-wide persistent state |
 
