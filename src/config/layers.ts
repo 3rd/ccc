@@ -4,6 +4,7 @@ import type { PromptLayerData } from "@/config/helpers";
 import type { Context } from "@/context/Context";
 import type { HookDefinition, HooksConfiguration } from "@/types/hooks";
 import type { MCPServers } from "@/types/mcps";
+import { formatConfigError } from "@/utils/errors";
 import { log } from "@/utils/log";
 
 export const mergeMCPs = (...layers: (MCPServers | undefined)[]): MCPServers => {
@@ -80,7 +81,8 @@ export const loadPromptFile = async (
 
       return config as PromptLayerData;
     } catch (error) {
-      log.error("PROMPT_LOADER", `Failed to load .ts prompt from ${tsPath}:`, error);
+      const msg = formatConfigError(error, "global", undefined, tsPath);
+      log.error("PROMPT_LOADER", msg);
       return undefined;
     }
   }
@@ -91,7 +93,8 @@ export const loadPromptFile = async (
       const content = readFileSync(appendMdPath, "utf8");
       return { content, mode: "append" };
     } catch (error) {
-      log.error("PROMPT_LOADER", `Failed to load .append.md prompt from ${appendMdPath}:`, error);
+      const msg = formatConfigError(error, "global", undefined, appendMdPath);
+      log.error("PROMPT_LOADER", msg);
       return undefined;
     }
   }
@@ -102,7 +105,8 @@ export const loadPromptFile = async (
       const content = readFileSync(mdPath, "utf8");
       return { content, mode: "override" };
     } catch (error) {
-      log.error("PROMPT_LOADER", `Failed to load .md prompt from ${mdPath}:`, error);
+      const msg = formatConfigError(error, "global", undefined, mdPath);
+      log.error("PROMPT_LOADER", msg);
       return undefined;
     }
   }
@@ -201,7 +205,8 @@ export const loadConfigLayer = async <T>(
 
     return config as T;
   } catch (error) {
-    log.error("LOADER", `Failed to load ${layer} config from ${tsPath}:`, error);
+    const msg = formatConfigError(error, layer, name, tsPath);
+    log.error("LOADER", msg);
     return undefined;
   }
 };

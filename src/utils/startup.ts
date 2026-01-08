@@ -12,6 +12,18 @@ interface TaskData {
   endedAt?: bigint;
 }
 
+export interface TimingEntry {
+  phase: string;
+  durationMs: number;
+  status: "done" | "failed" | "skipped";
+  note?: string;
+}
+
+export interface TimingReport {
+  totalMs: number;
+  phases: TimingEntry[];
+}
+
 export interface StartupLoggerOptions {
   enabled?: boolean;
 }
@@ -19,11 +31,14 @@ export interface StartupLoggerOptions {
 export class StartupLogger {
   private printedHeader = false;
   private readonly enabled: boolean;
+  private readonly startTime: bigint;
+  private readonly timings: TimingEntry[] = [];
 
   constructor(opts: StartupLoggerOptions = {}) {
     const tty = typeof process !== "undefined" && Boolean(process.stdout) && process.stdout.isTTY;
     const debug = Boolean(process.env.DEBUG);
     this.enabled = Boolean(opts.enabled ?? (tty && !debug));
+    this.startTime = process.hrtime.bigint();
   }
 
   private static fmtDuration(startedAt: bigint, endedAt?: bigint): string {
@@ -32,6 +47,10 @@ export class StartupLogger {
     if (ms < 900) return `${Math.round(ms)}ms`;
     const s = ms / 1000;
     return `${s.toFixed(s >= 10 ? 0 : 1)}s`;
+  }
+
+  private static toMs(startedAt: bigint, endedAt: bigint): number {
+    return Number(endedAt - startedAt) / 1_000_000;
   }
 
   private printHeader() {
@@ -49,6 +68,12 @@ export class StartupLogger {
     return {
       done: (note?: string) => {
         task.endedAt = process.hrtime.bigint();
+        this.timings.push({
+          phase: task.label,
+          durationMs: StartupLogger.toMs(task.startedAt, task.endedAt),
+          status: "done",
+          note,
+        });
         if (!this.enabled) return;
         this.printHeader();
         const detail = [
@@ -63,6 +88,12 @@ export class StartupLogger {
 
       skip: (note?: string) => {
         task.endedAt = process.hrtime.bigint();
+        this.timings.push({
+          phase: task.label,
+          durationMs: StartupLogger.toMs(task.startedAt, task.endedAt),
+          status: "skipped",
+          note,
+        });
         if (!this.enabled) return;
         this.printHeader();
         const detail = [task.label, note ? pc.dim(`(${note})`) : undefined].filter(Boolean).join(" ");
@@ -71,8 +102,14 @@ export class StartupLogger {
 
       fail: (error: unknown) => {
         task.endedAt = process.hrtime.bigint();
-        if (!this.enabled) return;
         const errorMessage = error instanceof Error ? error.message : String(error);
+        this.timings.push({
+          phase: task.label,
+          durationMs: StartupLogger.toMs(task.startedAt, task.endedAt),
+          status: "failed",
+          note: errorMessage,
+        });
+        if (!this.enabled) return;
         this.printHeader();
         const detail = [task.label, errorMessage ? pc.dim(`- ${errorMessage}`) : undefined]
           .filter(Boolean)
@@ -92,6 +129,33 @@ export class StartupLogger {
       task.fail(error);
       throw error;
     }
+  }
+
+  getTiming(): TimingReport {
+    const endTime = process.hrtime.bigint();
+    return {
+      totalMs: StartupLogger.toMs(this.startTime, endTime),
+      phases: [...this.timings],
+    };
+  }
+
+  printTiming(): void {
+    const report = this.getTiming();
+    console.log(pc.bold(pc.cyan("\nStartup Timing Report")));
+    console.log(pc.dim("─".repeat(50)));
+
+    for (const entry of report.phases) {
+      const statusIcon =
+        entry.status === "done" ? pc.green("✔")
+        : entry.status === "failed" ? pc.red("✖")
+        : pc.dim("↷");
+      const durationStr = pc.yellow(`${entry.durationMs.toFixed(1)}ms`.padStart(10));
+      const noteStr = entry.note ? pc.dim(` (${entry.note})`) : "";
+      console.log(`${statusIcon} ${durationStr}  ${entry.phase}${noteStr}`);
+    }
+
+    console.log(pc.dim("─".repeat(50)));
+    console.log(`${pc.bold("Total:")} ${pc.yellow(`${report.totalMs.toFixed(1)}ms`)}`);
   }
 }
 

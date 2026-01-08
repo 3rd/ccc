@@ -79,6 +79,7 @@ const run = async () => {
       "--json",
       "--debug-mcp",
       "--debug-mcp-run",
+      "--timing",
     ];
     const hasQuiet = quietFlags.some((f) => args.includes(f));
     return interactive && !debug && !hasQuiet;
@@ -320,6 +321,12 @@ const run = async () => {
       agents,
       mcps,
     });
+    process.exit(0);
+  }
+
+  // --timing
+  if (process.argv.includes("--timing")) {
+    startup.printTiming();
     process.exit(0);
   }
 

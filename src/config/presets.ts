@@ -75,17 +75,22 @@ export const loadPresets = async (context: Context) => {
   try {
     const presetDirs = readdirSync(presetsDir, { withFileTypes: true })
       .filter((dirent) => dirent.isDirectory())
-      .map((dirent) => dirent.name);
+      .map((dirent) => dirent.name)
+      .sort();
 
-    for (const presetName of presetDirs) {
-      try {
-        const preset = await loadPreset(presetName, context);
-        if (preset) {
-          tags.push(presetName);
-          presets.push(preset);
-        }
-      } catch (error) {
-        console.warn(`Failed to load preset ${presetName}:`, error);
+    // load all presets
+    const results = await Promise.allSettled(presetDirs.map((presetName) => loadPreset(presetName, context)));
+
+    // collect successful presets
+    for (const [i, result] of results.entries()) {
+      const presetName = presetDirs[i];
+      if (!result || !presetName) continue;
+
+      if (result.status === "fulfilled" && result.value) {
+        tags.push(presetName);
+        presets.push(result.value);
+      } else if (result.status === "rejected") {
+        console.warn(`Failed to load preset ${presetName}:`, result.reason);
       }
     }
   } catch (error) {

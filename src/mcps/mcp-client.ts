@@ -25,6 +25,36 @@ interface PendingRequest {
   timeoutId: NodeJS.Timeout;
 }
 
+interface ReconnectConfig {
+  maxAttempts: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+}
+
+const DEFAULT_RECONNECT_CONFIG: ReconnectConfig = {
+  maxAttempts: 5,
+  baseDelayMs: 1000,
+  maxDelayMs: 30_000,
+};
+
+const isConnectionError = (error: Error): boolean => {
+  const connectionErrors = [
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "EPIPE",
+    "ENOTFOUND",
+    "Process exited",
+    "SSE connection error",
+  ];
+  return connectionErrors.some((e) => error.message.includes(e));
+};
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
 export class MCPClient {
   private requestId = 0;
   private pendingRequests = new Map<number | string, PendingRequest>();
@@ -34,8 +64,15 @@ export class MCPClient {
   private readonly REQUEST_TIMEOUT = 30_000;
   private readonly config: ClaudeMCPConfig;
 
-  constructor(config: ClaudeMCPConfig) {
+  // reconnection state
+  private reconnectConfig: ReconnectConfig;
+  private reconnectAttempts = 0;
+  private isReconnecting = false;
+  private isConnected = false;
+
+  constructor(config: ClaudeMCPConfig, reconnectConfig?: Partial<ReconnectConfig>) {
     this.config = config;
+    this.reconnectConfig = { ...DEFAULT_RECONNECT_CONFIG, ...reconnectConfig };
   }
 
   async connect(): Promise<void> {
@@ -43,11 +80,65 @@ export class MCPClient {
       await this.connectStdio(this.config);
     } else if (isHttpMCP(this.config)) {
       log.debug("MCP_CLIENT", "HTTP transport ready");
+      this.isConnected = true;
     } else if (isSseMCP(this.config)) {
       await this.connectSSE(this.config);
     } else {
       throw new Error("Unknown MCP transport type");
     }
+    this.reconnectAttempts = 0;
+  }
+
+  private getReconnectDelay(): number {
+    const exponentialDelay = this.reconnectConfig.baseDelayMs * 2 ** this.reconnectAttempts;
+    const cappedDelay = Math.min(exponentialDelay, this.reconnectConfig.maxDelayMs);
+    const jitter = cappedDelay * 0.25 * Math.random();
+    return cappedDelay + jitter;
+  }
+
+  private async attemptReconnect(): Promise<boolean> {
+    if (this.isReconnecting) return false;
+    if (this.reconnectAttempts >= this.reconnectConfig.maxAttempts) {
+      log.error("MCP_CLIENT", `Max reconnect attempts (${this.reconnectConfig.maxAttempts}) reached`);
+      return false;
+    }
+
+    this.isReconnecting = true;
+    this.reconnectAttempts++;
+
+    const delay = this.getReconnectDelay();
+    log.info(
+      "MCP_CLIENT",
+      `Reconnect attempt ${this.reconnectAttempts}/${this.reconnectConfig.maxAttempts} in ${Math.round(delay)}ms`,
+    );
+
+    await sleep(delay);
+
+    try {
+      // clean up
+      this.cleanupConnection();
+      await this.connect();
+      log.info("MCP_CLIENT", "Reconnection successful");
+      this.isReconnecting = false;
+      return true;
+    } catch (error) {
+      log.error("MCP_CLIENT", `Reconnect attempt ${this.reconnectAttempts} failed: ${error}`);
+      this.isReconnecting = false;
+      return this.attemptReconnect();
+    }
+  }
+
+  private cleanupConnection(): void {
+    if (this.process) {
+      this.process.kill();
+      this.process = undefined;
+    }
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = undefined;
+    }
+    this.buffer = "";
+    this.isConnected = false;
   }
 
   private async connectStdio(config: StdioMCPConfig): Promise<void> {
@@ -66,13 +157,15 @@ export class MCPClient {
 
     this.process.on("error", (error) => {
       log.error("MCP_CLIENT", `Process error: ${error.message}`);
-      this.rejectAllPending(error);
+      this.handleConnectionError(error);
     });
 
     this.process.on("exit", (code) => {
       log.debug("MCP_CLIENT", `Process exited with code ${code}`);
-      this.rejectAllPending(new Error(`Process exited with code ${code}`));
+      this.handleConnectionError(new Error(`Process exited with code ${code}`));
     });
+
+    this.isConnected = true;
   }
 
   private handleStdioData(data: Buffer): void {
@@ -109,8 +202,22 @@ export class MCPClient {
 
     this.eventSource.addEventListener("error", (error) => {
       log.error("MCP_CLIENT", `SSE error: ${error}`);
-      this.rejectAllPending(new Error("SSE connection error"));
+      this.handleConnectionError(new Error("SSE connection error"));
     });
+
+    this.isConnected = true;
+  }
+
+  private handleConnectionError(error: Error): void {
+    this.isConnected = false;
+
+    if (isConnectionError(error)) {
+      this.attemptReconnect().catch((reconnectError: unknown) => {
+        log.error("MCP_CLIENT", `Reconnection failed: ${reconnectError}`);
+      });
+    }
+
+    this.rejectAllPending(error);
   }
 
   private handleResponse(response: JsonRpcResponse): void {
@@ -284,14 +391,22 @@ export class MCPClient {
   }
 
   disconnect(): void {
-    if (this.process) {
-      this.process.kill();
-      this.process = undefined;
-    }
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = undefined;
-    }
+    this.reconnectAttempts = this.reconnectConfig.maxAttempts;
+
+    this.cleanupConnection();
     this.rejectAllPending(new Error("Client disconnected"));
+  }
+
+  getConnectionStatus(): { connected: boolean; reconnecting: boolean; reconnectAttempts: number } {
+    return {
+      connected: this.isConnected,
+      reconnecting: this.isReconnecting,
+      reconnectAttempts: this.reconnectAttempts,
+    };
+  }
+
+  async reconnect(): Promise<boolean> {
+    this.reconnectAttempts = 0;
+    return this.attemptReconnect();
   }
 }

@@ -1,6 +1,5 @@
 import { FastMCP } from "fastmcp";
-import { type JsonSchema, jsonSchemaToZod } from "json-schema-to-zod";
-import type { ZodTypeAny } from "zod";
+import { z } from "zod";
 import type { MCPInitializeResponse } from "@/types/mcp-protocol";
 import type { ClaudeMCPConfig, FastMCPFactory, MCPLayerData, MCPToolFilter } from "@/types/mcps";
 import { log } from "@/utils/log";
@@ -56,8 +55,8 @@ export const createMCPProxy = (originalConfig: ClaudeMCPConfig, filter: MCPToolF
           if (!filter(filterableTool)) continue;
 
           registeredTools++;
-          // eslint-disable-next-line no-eval
-          const parameters = eval(jsonSchemaToZod(tool.inputSchema as JsonSchema)) as ZodTypeAny;
+          // use permissive schema - upstream MCP validates actual args
+          const parameters = z.record(z.string(), z.any());
 
           server.addTool({
             name: tool.name,

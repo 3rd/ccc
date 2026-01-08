@@ -5,10 +5,15 @@ import * as path from "path";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 
+export type LogLevel = "debug" | "error" | "info" | "warn";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export type LogLevel = "debug" | "error" | "info" | "warn";
+const BUFFER_CONFIG = {
+  MAX_SIZE: 100,
+  FLUSH_INTERVAL_MS: 100,
+} as const;
 
 class Logger {
   private static instance: Logger;
@@ -16,6 +21,10 @@ class Logger {
   private isEnabled = false;
   private sessionStartTime: string;
   private logBuffer: string[] = [];
+  private asyncBuffer: string[] = [];
+  private flushTimer: NodeJS.Timeout | null = null;
+  private isWriting = false;
+  private writeStream: fs.WriteStream | null = null;
 
   private constructor() {
     this.sessionStartTime = new Date().toISOString();
@@ -55,10 +64,61 @@ class Logger {
     // overwrite log file
     fs.writeFileSync(this.logPath, header);
 
-    // flush buffered logs
+    // create write stream for async writes
+    this.writeStream = fs.createWriteStream(this.logPath, { flags: "a" });
+
+    // start flush
+    this.startFlushTimer();
     if (this.logBuffer.length > 0) {
-      fs.appendFileSync(this.logPath, this.logBuffer.join(""));
+      this.asyncBuffer.push(...this.logBuffer);
       this.logBuffer = [];
+      this.flushAsync();
+    }
+
+    // flush on exit
+    process.on("beforeExit", () => this.flushSync());
+    process.on("exit", () => this.flushSync());
+  }
+
+  private startFlushTimer(): void {
+    if (this.flushTimer) return;
+    this.flushTimer = setInterval(() => {
+      if (this.asyncBuffer.length > 0) {
+        this.flushAsync();
+      }
+    }, BUFFER_CONFIG.FLUSH_INTERVAL_MS);
+    // TBD: block/don't block exit
+    this.flushTimer.unref();
+  }
+
+  private flushAsync(): void {
+    if (!this.writeStream || this.isWriting || this.asyncBuffer.length === 0) return;
+
+    this.isWriting = true;
+    const data = this.asyncBuffer.join("");
+    this.asyncBuffer = [];
+
+    this.writeStream.write(data, () => {
+      this.isWriting = false;
+    });
+  }
+
+  private flushSync(): void {
+    if (!this.logPath) return;
+
+    if (this.asyncBuffer.length > 0) {
+      fs.appendFileSync(this.logPath, this.asyncBuffer.join(""));
+      this.asyncBuffer = [];
+    }
+
+    if (this.writeStream) {
+      this.writeStream.end();
+      this.writeStream = null;
+    }
+
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
     }
   }
 
@@ -103,7 +163,13 @@ class Logger {
       const reset = "\u001b[0m";
       process.stdout.write(`${color}${entry}${reset}`);
     }
-    if (this.logPath) {
+
+    if (this.writeStream) {
+      this.asyncBuffer.push(entry);
+      if (this.asyncBuffer.length >= BUFFER_CONFIG.MAX_SIZE) {
+        this.flushAsync();
+      }
+    } else if (this.logPath) {
       fs.appendFileSync(this.logPath, entry);
     } else {
       this.logBuffer.push(entry);
