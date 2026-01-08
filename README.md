@@ -219,6 +219,11 @@ export default createConfigSettings({
 | `ide` | `boolean` | `--ide` | Auto-connect to IDE on startup |
 | `enableLspLogging` | `boolean` | `--enable-lsp-logging` | Enable verbose LSP logging |
 | `agent` | `string` | `--agent name` | Default agent for the session |
+| `agents` | `Record<string, AgentDef>` | `--agents JSON` | Custom subagent definitions |
+| `forkSession` | `boolean` | `--fork-session` | Create new session ID when resuming |
+| `fallbackModel` | `string` | `--fallback-model name` | Fallback model when primary is overloaded |
+| `settingSources` | `string[]` | `--setting-sources "user,project,local"` | Config sources to use |
+| `strictMcpConfig` | `boolean` | `--strict-mcp-config` | Only use specified MCP config |
 
 ### CLI Override
 
@@ -396,6 +401,21 @@ const preBashValidationHook = createHook({
 export default createConfigHooks({
   SessionStart: [{ hooks: [sessionStartHook] }],
   PreToolUse: [{ hooks: [preBashValidationHook] }],
+});
+```
+
+**Hook Options**:
+
+```typescript
+const oneTimeHook = createHook({
+  event: "SessionStart",
+  id: "one-time-setup",
+  handler: (input) => {
+    // this will only run once per session
+    console.log("First session start only");
+  },
+  timeout: 5000,  // optional: timeout in ms
+  once: true,     // optional: run only first time per session
 });
 ```
 
@@ -592,15 +612,7 @@ Or via CLI: `ccc --plugin-dir ./my-plugin`
 
 ### LSP Plugin Support
 
-CCC automatically patches Claude Code at runtime to fix broken LSP plugin support. See [GitHub issue #14803](https://github.com/anthropics/claude-code/issues/14803).
-
-Built-in patches (applied automatically):
-- Race condition fix: LSP manager now initializes after plugins load
-- Server registration fix: `initialize()` properly registers servers
-- didOpen notification: Injects `textDocument/didOpen` when opening files
-- Validation fix: Removes errors for `restartOnCrash`, `startupTimeout`, `shutdownTimeout`
-
-Just enable your LSP plugins normally:
+LSP plugins are supported natively. Just enable your LSP plugins normally:
 
 ```typescript
 export default createConfigSettings({
@@ -1081,7 +1093,6 @@ All CLI patches are applied at runtime - the original `node_modules` files are n
 ### Built-in Patches
 
 Applied automatically on every launch:
-- LSP fixes (see above)
 - Disable `pr-comments` and `security-review` features
 
 ### User-defined Patches

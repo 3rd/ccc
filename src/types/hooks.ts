@@ -33,6 +33,7 @@ export interface HookCommand {
   type: "command";
   command: string;
   timeout?: number;
+  once?: boolean;
 }
 
 export interface HookPrompt {

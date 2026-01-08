@@ -34,10 +34,11 @@ export interface CreateHookOptions<E extends HookEventName> {
   id: string;
   handler: HookHandler<E>;
   timeout?: number;
+  once?: boolean;
 }
 
 export const createHook = <E extends HookEventName>(options: CreateHookOptions<E>): HookCommand => {
-  const { event, id, handler, timeout } = options;
+  const { event, id, handler, timeout, once } = options;
   const hookId = generateHookId(event, id);
 
   hooksMap.set(hookId, handler as RuntimeHookHandler);
@@ -51,5 +52,6 @@ export const createHook = <E extends HookEventName>(options: CreateHookOptions<E
       return cmd;
     },
     timeout,
+    once,
   } satisfies HookCommand;
 };

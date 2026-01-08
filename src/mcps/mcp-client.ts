@@ -31,6 +31,12 @@ interface ReconnectConfig {
   maxDelayMs: number;
 }
 
+export interface NotificationHandlers {
+  onToolsListChanged?: () => void;
+  onPromptsListChanged?: () => void;
+  onResourcesListChanged?: () => void;
+}
+
 const DEFAULT_RECONNECT_CONFIG: ReconnectConfig = {
   maxAttempts: 5,
   baseDelayMs: 1000,
@@ -70,9 +76,16 @@ export class MCPClient {
   private isReconnecting = false;
   private isConnected = false;
 
-  constructor(config: ClaudeMCPConfig, reconnectConfig?: Partial<ReconnectConfig>) {
+  private notificationHandlers?: NotificationHandlers;
+
+  constructor(
+    config: ClaudeMCPConfig,
+    reconnectConfig?: Partial<ReconnectConfig>,
+    notificationHandlers?: NotificationHandlers,
+  ) {
     this.config = config;
     this.reconnectConfig = { ...DEFAULT_RECONNECT_CONFIG, ...reconnectConfig };
+    this.notificationHandlers = notificationHandlers;
   }
 
   async connect(): Promise<void> {
@@ -176,8 +189,13 @@ export class MCPClient {
     for (const line of lines) {
       if (line.trim()) {
         try {
-          const message = JSON.parse(line) as JsonRpcResponse;
-          this.handleResponse(message);
+          const message = JSON.parse(line) as JsonRpcResponse & { method?: string; params?: unknown };
+          // check if this is a notification (has method, no id)
+          if (message.method && (message.id === undefined || message.id === null)) {
+            this.handleNotification(message.method, message.params);
+          } else {
+            this.handleResponse(message);
+          }
         } catch {
           log.debug("MCP_CLIENT", `Failed to parse response: ${line}`);
         }
@@ -193,8 +211,13 @@ export class MCPClient {
 
     this.eventSource.addEventListener("message", (event) => {
       try {
-        const message = JSON.parse(event.data) as JsonRpcResponse;
-        this.handleResponse(message);
+        const message = JSON.parse(event.data) as JsonRpcResponse & { method?: string; params?: unknown };
+        // check if this is a notification (has method, no id)
+        if (message.method && (message.id === undefined || message.id === null)) {
+          this.handleNotification(message.method, message.params);
+        } else {
+          this.handleResponse(message);
+        }
       } catch (error) {
         log.debug("MCP_CLIENT", `Failed to parse SSE message: ${error}`);
       }
@@ -234,6 +257,33 @@ export class MCPClient {
       pending.reject(new Error(error.message));
     } else {
       pending.resolve(result);
+    }
+  }
+
+  // handle MCP list_changed notifications
+  private handleNotification(method: string, _params: unknown): void {
+    if (!this.isConnected || !this.notificationHandlers) return;
+
+    try {
+      switch (method) {
+        case "notifications/tools/list_changed": {
+          this.notificationHandlers.onToolsListChanged?.();
+          break;
+        }
+        case "notifications/prompts/list_changed": {
+          this.notificationHandlers.onPromptsListChanged?.();
+          break;
+        }
+        case "notifications/resources/list_changed": {
+          this.notificationHandlers.onResourcesListChanged?.();
+          break;
+        }
+        default: {
+          log.debug("MCP_CLIENT", `Unhandled notification: ${method}`);
+        }
+      }
+    } catch (error) {
+      log.debug("MCP_CLIENT", `Notification handler error for ${method}: ${error}`);
     }
   }
 

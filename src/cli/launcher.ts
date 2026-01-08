@@ -5,6 +5,7 @@ import * as path from "path";
 import p from "picocolors";
 import { which } from "zx";
 import { setInstanceId } from "@/hooks/hook-generator";
+import type { AgentDefinition } from "@/config/schema";
 import { runDoctor } from "@/cli/doctor";
 import { buildAgents } from "@/config/builders/build-agents";
 import { buildCommands } from "@/config/builders/build-commands";
@@ -446,6 +447,11 @@ const run = async () => {
     ide?: boolean;
     enableLspLogging?: boolean;
     agent?: string;
+    agents?: Record<string, AgentDefinition>;
+    forkSession?: boolean;
+    fallbackModel?: string;
+    settingSources?: ("local" | "project" | "user")[];
+    strictMcpConfig?: boolean;
   };
   const settingsCli = (settings as { cli?: CliFlags }).cli || {};
 
@@ -514,6 +520,31 @@ const run = async () => {
   // --agent
   if (!hasCliArg("--agent") && settingsCli.agent) {
     args.push("--agent", settingsCli.agent);
+  }
+
+  // --agents (JSON string)
+  if (!hasCliArg("--agents") && settingsCli.agents && Object.keys(settingsCli.agents).length > 0) {
+    args.push("--agents", JSON.stringify(settingsCli.agents));
+  }
+
+  // --fork-session
+  if (!hasCliArg("--fork-session") && settingsCli.forkSession) {
+    args.push("--fork-session");
+  }
+
+  // --fallback-model
+  if (!hasCliArg("--fallback-model") && settingsCli.fallbackModel) {
+    args.push("--fallback-model", settingsCli.fallbackModel);
+  }
+
+  // --setting-sources (comma-separated)
+  if (!hasCliArg("--setting-sources") && settingsCli.settingSources?.length) {
+    args.push("--setting-sources", settingsCli.settingSources.join(","));
+  }
+
+  // --strict-mcp-config
+  if (!hasCliArg("--strict-mcp-config") && settingsCli.strictMcpConfig) {
+    args.push("--strict-mcp-config");
   }
 
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);

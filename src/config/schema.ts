@@ -1,6 +1,15 @@
 import { z } from "zod";
 import { pluginEnablementConfigSchema } from "@/plugins/schema";
 
+export const agentDefinitionSchema = z.object({
+  description: z.string(),
+  prompt: z.string(),
+  tools: z.array(z.string()).optional(),
+  model: z.enum(["sonnet", "opus", "haiku"]).optional(),
+});
+
+export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
+
 // https://docs.anthropic.com/en/docs/claude-code/settings
 export const settingsSchema = z.object({
   env: z.record(z.string(), z.string()).optional(),
@@ -30,8 +39,23 @@ export const settingsSchema = z.object({
       enableLspLogging: z.boolean().optional(),
       // specify agent for the session
       agent: z.string().optional(),
+      // custom subagent definitions
+      agents: z.record(z.string(), agentDefinitionSchema).optional(),
+      // create new session ID when resuming
+      forkSession: z.boolean().optional(),
+      // fallback model when primary model is overloaded
+      fallbackModel: z.string().optional(),
+      // config sources to use: user, project, local
+      settingSources: z.array(z.enum(["user", "project", "local"])).optional(),
+      // only use specified MCP config, ignore others
+      strictMcpConfig: z.boolean().optional(),
     })
     .optional(),
+
+  // response language (e.g., "Japanese", "Spanish")
+  language: z.string().optional(),
+  // control @-mention file picker behavior per project
+  respectGitignore: z.boolean().optional(),
 
   apiKeyHelper: z.string().optional(),
   awsAuthRefresh: z.string().optional(),
