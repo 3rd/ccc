@@ -452,6 +452,7 @@ const run = async () => {
     fallbackModel?: string;
     settingSources?: ("local" | "project" | "user")[];
     strictMcpConfig?: boolean;
+    loopy?: boolean;
   };
   const settingsCli = (settings as { cli?: CliFlags }).cli || {};
 
@@ -545,6 +546,11 @@ const run = async () => {
   // --strict-mcp-config
   if (!hasCliArg("--strict-mcp-config") && settingsCli.strictMcpConfig) {
     args.push("--strict-mcp-config");
+  }
+
+  // --loopy
+  if (!hasCliArg("--loopy") && settingsCli.loopy) {
+    args.push("--loopy");
   }
 
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);

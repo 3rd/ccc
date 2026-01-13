@@ -49,6 +49,8 @@ export const settingsSchema = z.object({
       settingSources: z.array(z.enum(["user", "project", "local"])).optional(),
       // only use specified MCP config, ignore others
       strictMcpConfig: z.boolean().optional(),
+      // enable loopy for -p
+      loopy: z.boolean().optional(),
     })
     .optional(),
 

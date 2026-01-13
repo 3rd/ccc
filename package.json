@@ -17,7 +17,7 @@
     "@types/bun": "latest",
     "@types/eventsource": "^3.0.0",
     "@types/json-schema": "^7.0.15",
-    "@types/node": "^24.10.7",
+    "@types/node": "^24.10.8",
     "knip": "^5.80.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
