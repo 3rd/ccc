@@ -1,6 +1,5 @@
 import type { ClaudeSettings } from "@/config/schema";
 import type { Context } from "@/context/Context";
-import type { PluginEnablementConfig } from "@/plugins/schema";
 import type { HooksConfiguration } from "./hooks";
 import type { MCPServers } from "./mcps";
 
@@ -14,5 +13,4 @@ export interface PresetConfig {
   userPrompt?: PromptFunction;
   hooks?: HooksConfiguration;
   mcps?: MCPServers;
-  cccPlugins?: PluginEnablementConfig;
 }

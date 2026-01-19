@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { pluginEnablementConfigSchema } from "@/plugins/schema";
 
 export const agentDefinitionSchema = z.object({
   description: z.string(),
@@ -102,24 +101,6 @@ export const settingsSchema = z.object({
       enableWeakerNestedSandbox: z.boolean().optional(),
     })
     .optional(),
-
-  // claude plugins
-  enabledPlugins: z
-    .record(
-      z.string(),
-      z.union([
-        z.boolean(),
-        z.object({
-          enabled: z.boolean().optional(),
-          settings: z.record(z.string(), z.unknown()).optional(),
-        }),
-      ]),
-    )
-    .optional(),
-  pluginDirs: z.array(z.string()).optional(),
-
-  // ccc plugins
-  cccPlugins: pluginEnablementConfigSchema.optional(),
 
   // runtime string patches applied to claude cli
   patches: z

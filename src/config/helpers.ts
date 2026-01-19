@@ -1,8 +1,9 @@
 import type { ClaudeSettings } from "@/config/schema";
+import type { PluginsConfig } from "@/config/plugins";
 import type { Context } from "@/context/Context";
-import type { PluginEnablementConfig } from "@/plugins/schema";
 import type { PluginDefinition } from "@/plugins/types";
 import type { HooksConfiguration } from "@/types/hooks";
+import type { SkillDefinition, SkillDefinitionFactory } from "@/types/skills";
 import type {
   ClaudeMCPConfig,
   HttpMCPConfig,
@@ -41,6 +42,12 @@ export const createAppendCommand = createAppendPrompt;
 
 export const createAgent = createPrompt;
 export const createAppendAgent = createAppendPrompt;
+
+export const createSkill = (
+  definition: SkillDefinition | SkillDefinitionFactory,
+): SkillDefinition | SkillDefinitionFactory => {
+  return definition;
+};
 
 export const createStatusline = (fn: (data: StatusLineInput) => Promise<void> | void) => fn;
 
@@ -83,17 +90,19 @@ export const createConfigFullSettings = (settingsConfig: ClaudeSettings): Claude
   return settingsConfig;
 };
 
+export const createConfigPlugins = (pluginsConfig: PluginsConfig): PluginsConfig => {
+  return pluginsConfig;
+};
+
 export interface PresetDefinition {
   name: string;
   matcher: (context: Context) => boolean;
-  cccPlugins?: PluginEnablementConfig;
 }
 
 export const createPreset = (definition: PresetDefinition): PresetConfig => {
   return {
     name: definition.name,
     matcher: definition.matcher,
-    cccPlugins: definition.cccPlugins,
   };
 };
 

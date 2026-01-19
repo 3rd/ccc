@@ -41,6 +41,8 @@ export {
 
 export { type LoaderResult, loadPlugins } from "./loader";
 
+export { type CCCPluginLoadResult, loadCCCPluginsFromConfig } from "./ccc-loader";
+
 export {
   getPluginAgents,
   getPluginCommands,

@@ -50,6 +50,7 @@ Your configuration lives in the `./config` directory, which includes some exampl
     │   ├── prompts/      # System (output style) / user (CLAUDE.md) prompts
     │   ├── commands/     # Your commands
     │   ├── agents/       # Your sub-agents
+    │   ├── skills/       # Your skills
     │   ├── hooks.ts      # Your hooks
     │   └── mcps.ts       # Your MCPs
     ├── presets/          # Your language/framework/whatever-specific configs
@@ -96,6 +97,7 @@ Each layer can define:
 - `prompts/system.{md,ts}` - Output style
 - `commands/*.{md,ts}` - Custom slash commands
 - `agents/*.{md,ts}` - Custom sub-agents
+- `skills/*/SKILL.{md,ts}` - Custom skills (and supporting files)
 - `hooks.ts` - Custom hooks
 - `mcps.ts` - Custom MCPs
 
@@ -343,6 +345,50 @@ Additional instructions for TypeScript projects...
 );
 ```
 
+## Skills
+
+Skills are reusable instruction bundles that Claude can invoke via the Skill tool. Define them as folders under
+`skills/` with either `SKILL.md` (static) or `SKILL.ts` (structured) and any supporting files (e.g. `references/*.md`).
+
+**Static (Markdown)** (`config/global/skills/my-skill/SKILL.md`):
+
+```markdown
+---
+name: my-skill
+description: Quick checks for the current repo
+allowed-tools:
+  - Read
+  - Grep
+---
+
+Use this skill to run quick repository checks and summarize findings.
+```
+
+**Structured (TypeScript)** (`config/global/skills/my-skill/SKILL.ts`):
+
+```typescript
+import { createSkill } from "@/config/helpers";
+
+export default createSkill((context) => ({
+  description: `Checks for ${context.project.name}`,
+  content: `
+Run targeted analysis for ${context.workingDirectory}.
+Use $ARGUMENTS to accept parameters.
+`,
+  allowedTools: ["Read", "Grep"],
+  userInvocable: true,
+  disableModelInvocation: false,
+  hooks: {
+    PreToolUse: [
+      {
+        matcher: "Bash",
+        hooks: [{ type: "command", command: "echo 'Skill hook'" }],
+      },
+    ],
+  },
+}));
+```
+
 ## Hooks
 
 Event handlers that run at specific Claude events. See `config/global/hooks.ts` for examples:
@@ -575,25 +621,27 @@ export default createConfigMCPs({
 
 ## Plugins
 
-CCC supports Claude Code plugins through the `enabledPlugins` and `pluginDirs` settings.
+CCC configures Claude Code plugins via layered `plugins.ts` files (global/preset/project). Claude plugin settings live under the `claude` namespace.
 
 ### Workflow
 
 1. Install plugins using the `/plugin` command
 2. Find plugin keys in `~/.claude/plugins/installed_plugins.json`
-3. Enable plugins in your CCC settings (plugins won't be active until added to config)
+3. Enable plugins in your `plugins.ts` layer
 
-### Enabling Plugins
+### Enabling Claude Plugins
 
 ```typescript
-// config/global/settings.ts
-import { createConfigSettings } from "@/config/helpers";
+// config/global/plugins.ts
+import { createConfigPlugins } from "@/config/helpers";
 
-export default createConfigSettings({
-  enabledPlugins: {
-    // Use keys from ~/.claude/plugins/installed_plugins.json
-    "typescript-lsp@claude-plugins-official": true,
-    "gopls-lsp@claude-plugins-official": true,
+export default createConfigPlugins({
+  claude: {
+    enabledPlugins: {
+      // Use keys from ~/.claude/plugins/installed_plugins.json
+      "typescript-lsp@claude-plugins-official": true,
+      "gopls-lsp@claude-plugins-official": true,
+    },
   },
 });
 ```
@@ -601,36 +649,44 @@ export default createConfigSettings({
 ### Local Plugin Directories
 
 ```typescript
-export default createConfigSettings({
-  pluginDirs: [
-    "./config/plugins/my-plugin",
-  ],
+// config/global/plugins.ts
+import { createConfigPlugins } from "@/config/helpers";
+
+export default createConfigPlugins({
+  claude: {
+    pluginDirs: [
+      "./claude-plugins/my-plugin",
+    ],
+  },
 });
 ```
 
-Or via CLI: `ccc --plugin-dir ./my-plugin`
+You can also drop local plugins into `config/claude-plugins/` and CCC will auto-discover them.
+CLI override: `ccc --plugin-dir ./path/to/plugin`
 
 ### LSP Plugin Support
 
 LSP plugins are supported natively. Just enable your LSP plugins normally:
 
 ```typescript
-export default createConfigSettings({
-  enabledPlugins: {
-    "typescript-lsp@claude-plugins-official": true,
+export default createConfigPlugins({
+  claude: {
+    enabledPlugins: {
+      "typescript-lsp@claude-plugins-official": true,
+    },
   },
 });
 ```
 
 ## CCC Plugins
 
-CCC has its own plugin system for bundling reusable configuration components. Unlike Claude's built-in plugins (configured via `enabledPlugins`), CCC plugins are local TypeScript modules that can define commands, agents, MCPs, hooks, and prompts dynamically, and which have access to enriched information about the current session.
+CCC has its own plugin system for bundling reusable configuration components. Unlike Claude's built-in plugins (configured via `plugins.ts` under `claude`), CCC plugins are local TypeScript modules that can define commands, agents, MCPs, hooks, and prompts dynamically, and which have access to enriched information about the current session.
 
 ### CCC Plugins vs Claude Plugins
 
-| Aspect | CCC Plugins (`cccPlugins`) | Claude Plugins (`enabledPlugins`) |
+| Aspect | CCC Plugins (`plugins.ts` → `ccc`) | Claude Plugins (`plugins.ts` → `claude`) |
 |--------|---------------------------|-----------------------------------|
-| **Location** | `config/plugins/` directory | `~/.claude/plugins/` |
+| **Location** | `config/plugins/` directory | `~/.claude/plugins/` (installed) or local roots via `config/claude-plugins/` |
 | **Format** | TypeScript with `createPlugin()` | Claude's plugin format |
 | **Components** | commands, agents, MCPs, hooks, prompts | Defined by Claude |
 | **Distribution** | Local to your config | Via `/plugin` command |
@@ -724,14 +780,14 @@ Agent instructions...
 
 ### Enabling CCC Plugins
 
-Enable plugins via `cccPlugins` in your settings:
+Enable CCC plugins via `plugins.ts`:
 
 ```typescript
-// config/global/settings.ts
-import { createConfigSettings } from "@/config/helpers";
+// config/global/plugins.ts
+import { createConfigPlugins } from "@/config/helpers";
 
-export default createConfigSettings({
-  cccPlugins: {
+export default createConfigPlugins({
+  ccc: {
     "my-plugin": true,           // Enable plugin
     "another-plugin": false,     // Explicitly disable
   },
@@ -741,12 +797,11 @@ export default createConfigSettings({
 You can also enable plugins in presets:
 
 ```typescript
-// config/presets/typescript/index.ts
-import { createPreset } from "@/config/helpers";
+// config/presets/typescript/plugins.ts
+import { createConfigPlugins } from "@/config/helpers";
 
-export default createPreset({
-  matcher: (context) => context.project.hasFile("tsconfig.json"),
-  cccPlugins: {
+export default createConfigPlugins({
+  ccc: {
     "typescript-helpers": true,
   },
 });
@@ -864,9 +919,11 @@ export default createPlugin({
 **Pass settings when enabling the plugin:**
 
 ```typescript
-// config/global/settings.ts
-export default createConfigSettings({
-  cccPlugins: {
+// config/global/plugins.ts
+import { createConfigPlugins } from "@/config/helpers";
+
+export default createConfigPlugins({
+  ccc: {
     "my-plugin": {
       enabled: true,
       settings: {

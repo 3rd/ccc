@@ -40,3 +40,5 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # test artifacts
 /tests/output
 /tests/coverage
+
+/analysis

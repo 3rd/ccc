@@ -3,15 +3,13 @@ import { existsSync, readdirSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { getHook } from "@/hooks/hook-generator";
-import type { PluginEnablementConfig } from "@/plugins/schema";
 import type { MCPServers } from "@/types/mcps";
-import { loadConfigFromLayers, mergeMCPs, mergeSettings } from "@/config/layers";
+import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
+import { buildPlugins } from "@/config/builders/build-plugins";
 import { Context } from "@/context/Context";
 import { createMCPProxy } from "@/mcps/mcp-generator";
-import { discoverPlugins, getDefaultPluginDirs, sortByDependencies } from "@/plugins/discovery";
-import { loadPlugins } from "@/plugins/loader";
-import { mergePluginConfigs } from "@/plugins/merge";
 import { getPluginMCPs } from "@/plugins/registry";
+import { loadCCCPluginsFromConfig } from "@/plugins";
 import "@/hooks/builtin";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -60,28 +58,16 @@ const readStdin = async (): Promise<string> => {
 };
 
 const loadCCCPlugins = async (context: Context) => {
-  const configDir = resolveConfigDirectory();
+  const pluginsConfig = await buildPlugins(context);
+  const loadResult = await loadCCCPluginsFromConfig(context, pluginsConfig.ccc ?? {});
 
-  // discover plugins
-  const pluginDirs = getDefaultPluginDirs(launcherRoot, context.project.rootDirectory);
-  pluginDirs.push(join(launcherRoot, configDir, "plugins"));
+  for (const err of loadResult.discoveryErrors) {
+    console.warn(`CCC plugin discovery error: ${err.path} - ${err.error}`);
+  }
+  for (const err of loadResult.loadErrors) {
+    console.warn(`CCC plugin load error: ${err.plugin} - ${err.error}`);
+  }
 
-  const discovered = discoverPlugins(pluginDirs);
-  const sorted = sortByDependencies(discovered.plugins);
-
-  // get plugin enablement from settings
-  const settingsLayers = await loadConfigFromLayers<Record<string, unknown>>(context, "settings.ts");
-  const mergedSettings = mergeSettings(
-    settingsLayers.global,
-    ...settingsLayers.presets,
-    settingsLayers.project,
-  );
-
-  const globalPlugins = (mergedSettings.cccPlugins ?? {}) as PluginEnablementConfig;
-  const presetPlugins = context.project.presets.map((p) => p.cccPlugins).filter(Boolean);
-  const effectivePlugins = mergePluginConfigs(globalPlugins, ...presetPlugins);
-
-  const loadResult = await loadPlugins(sorted, effectivePlugins, context);
   return loadResult.plugins;
 };
 
@@ -124,6 +110,7 @@ const runHook = async (id: string) => {
 
 const runMCP = async (mcpName: string) => {
   const context = new Context(process.cwd());
+  await context.init();
 
   // load CCC plugins for their MCPs
   const loadedPlugins = await loadCCCPlugins(context);

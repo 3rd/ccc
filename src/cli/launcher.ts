@@ -10,19 +10,13 @@ import { runDoctor } from "@/cli/doctor";
 import { buildAgents } from "@/config/builders/build-agents";
 import { buildCommands } from "@/config/builders/build-commands";
 import { buildMCPs } from "@/config/builders/build-mcps";
+import { buildPlugins } from "@/config/builders/build-plugins";
 import { buildSettings, buildSystemPrompt, buildUserPrompt } from "@/config/builders/build-settings";
+import { buildSkills } from "@/config/builders/build-skills";
 import { dumpConfig } from "@/config/dump-config";
 import { Context } from "@/context/Context";
 import { applyBuiltInPatches, applyUserPatches, type RuntimePatch } from "@/patches/cli-patches";
-import {
-  discoverPlugins,
-  getDefaultPluginDirs,
-  getPluginInfo,
-  loadPlugins,
-  mergePluginConfigs,
-  type PluginEnablementConfig,
-  sortByDependencies,
-} from "@/plugins";
+import { getPluginInfo, loadCCCPluginsFromConfig } from "@/plugins";
 import { log } from "@/utils/log";
 import { createStartupLogger } from "@/utils/startup";
 import { setupVirtualFileSystem } from "@/utils/virtual-fs";
@@ -122,40 +116,18 @@ const run = async () => {
 
   ctxTask.done();
 
+  const pluginsConfig = await startup.run("Build plugins", () => buildPlugins(context));
+
   // discover and load CCC plugins
   const pluginTask = startup.start("Load CCC plugins");
   try {
-    const pluginDirs = getDefaultPluginDirs(context.launcherDirectory, context.project.rootDirectory);
-    pluginDirs.push(path.join(context.launcherDirectory, context.configDirectory, "plugins"));
-
-    const discovered = discoverPlugins(pluginDirs);
-    const sorted = sortByDependencies(discovered.plugins);
-
-    // log discovery errors
-    for (const err of discovered.errors) {
-      log.warn("PLUGINS", `Discovery error: ${err.path} - ${err.error}`);
-    }
-
-    // get plugin enablement from settings layers (need to load settings early)
-    const { loadConfigFromLayers, mergeSettings } = await import("@/config/layers");
-    const settingsLayers = await loadConfigFromLayers<Record<string, unknown>>(context, "settings.ts");
-    const mergedSettings = mergeSettings(
-      settingsLayers.global,
-      ...settingsLayers.presets,
-      settingsLayers.project,
-    );
-
-    // merge cccPlugins from settings and presets
-    const globalPlugins = (mergedSettings.cccPlugins ?? {}) as PluginEnablementConfig;
-    const presetPlugins = context.project.presets.map((preset) => preset.cccPlugins).filter(Boolean);
-    const effectivePlugins = mergePluginConfigs(globalPlugins, ...presetPlugins);
-
-    // load enabled plugins
-    const loadResult = await loadPlugins(sorted, effectivePlugins, context);
+    const loadResult = await loadCCCPluginsFromConfig(context, pluginsConfig.ccc ?? {});
     context.loadedPlugins = loadResult.plugins;
 
-    // log load errors
-    for (const err of loadResult.errors) {
+    for (const err of loadResult.discoveryErrors) {
+      log.warn("PLUGINS", `Discovery error: ${err.path} - ${err.error}`);
+    }
+    for (const err of loadResult.loadErrors) {
       log.warn("PLUGINS", `Load error: ${err.plugin} - ${err.error}`);
     }
 
@@ -176,13 +148,23 @@ const run = async () => {
   const userPromptPromise = startup.run("Build user prompt", () => buildUserPrompt(context));
   const commandsPromise = startup.run("Build commands", () => buildCommands(context));
   const agentsPromise = startup.run("Build agents", () => buildAgents(context));
-  const [settings, systemPrompt, userPrompt, commands, agents] = await Promise.all([
+  const skillsPromise = startup.run("Build skills", () => buildSkills(context));
+  const [settings, systemPrompt, userPrompt, commands, agents, skills] = await Promise.all([
     settingsPromise,
     systemPromptPromise,
     userPromptPromise,
     commandsPromise,
     agentsPromise,
+    skillsPromise,
   ]);
+
+  const settingsWithPlugins = {
+    ...settings,
+    ...(pluginsConfig.claude?.enabledPlugins && { enabledPlugins: pluginsConfig.claude.enabledPlugins }),
+    ...(pluginsConfig.claude?.extraKnownMarketplaces && {
+      extraKnownMarketplaces: pluginsConfig.claude.extraKnownMarketplaces,
+    }),
+  };
 
   // --debug-mcp-run <name> (internal handler for debugging inline MCPs)
   const debugMcpRunIndex = process.argv.indexOf("--debug-mcp-run");
@@ -238,11 +220,12 @@ const run = async () => {
     await runDoctor(
       context,
       {
-        settings: settings as Record<string, unknown>,
+        settings: settingsWithPlugins as Record<string, unknown>,
         systemPrompt,
         userPrompt,
         commands,
         agents,
+        skills,
         mcps,
       },
       { json: process.argv.includes("--json") },
@@ -254,6 +237,16 @@ const run = async () => {
   if (process.argv.includes("--print-config")) {
     console.log(p.blue("\nSettings:"));
     console.log(JSON.stringify(settings, null, 2));
+    console.log(p.blue("\nPlugins:"));
+    console.log(JSON.stringify(pluginsConfig, null, 2));
+    console.log(p.blue("\nSkills:"));
+    if (skills.length === 0) {
+      console.log("  (none)");
+    } else {
+      for (const skill of skills) {
+        console.log(`  ${skill.name} (${skill.files.length} files)`);
+      }
+    }
     console.log(p.blue("\nSystem prompt:"));
     console.log(systemPrompt.slice(0, 200) + (systemPrompt.length > 200 ? "..." : ""));
     console.log(p.blue("\nUser prompt:"));
@@ -315,11 +308,12 @@ const run = async () => {
   // --dump-config
   if (process.argv.includes("--dump-config")) {
     await dumpConfig(context, {
-      settings: settings as Record<string, unknown>,
+      settings: settingsWithPlugins as Record<string, unknown>,
       systemPrompt,
       userPrompt,
       commands,
       agents,
+      skills,
       mcps,
     });
     process.exit(0);
@@ -408,10 +402,11 @@ const run = async () => {
   // setup vfs
   await startup.run("Mount VFS", async () => {
     setupVirtualFileSystem({
-      settings: settings as unknown as Record<string, unknown>,
+      settings: settingsWithPlugins as unknown as Record<string, unknown>,
       userPrompt,
       commands,
       agents,
+      skills,
       workingDirectory: context.workingDirectory,
       disableParentClaudeMds: context.project.projectConfig?.disableParentClaudeMds,
     });
@@ -422,15 +417,19 @@ const run = async () => {
   args.push("--mcp-config", JSON.stringify({ mcpServers: mcps }));
   args.push("--append-system-prompt", systemPrompt);
 
-  // pass through --plugin-dir args from CLI or settings.pluginDirs
+  // pass through --plugin-dir args from CLI or plugins config
   const cliPluginDirs = process.argv
     .map((arg, i, arr) => (arr[i - 1] === "--plugin-dir" ? arg : null))
     .filter((dir): dir is string => dir !== null);
 
-  const settingsPluginDirs = (settings as { pluginDirs?: string[] }).pluginDirs || [];
-
-  for (const dir of [...cliPluginDirs, ...settingsPluginDirs]) {
+  for (const dir of cliPluginDirs) {
     args.push("--plugin-dir", dir);
+  }
+
+  if (cliPluginDirs.length === 0 && pluginsConfig.claude?.pluginDirs) {
+    for (const dir of pluginsConfig.claude.pluginDirs) {
+      args.push("--plugin-dir", dir);
+    }
   }
 
   // pass through CLI-only flags from settings.cli (CLI args override settings)
