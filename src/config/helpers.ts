@@ -1,9 +1,8 @@
-import type { ClaudeSettings } from "@/config/schema";
 import type { PluginsConfig } from "@/config/plugins";
+import type { ClaudeSettings } from "@/config/schema";
 import type { Context } from "@/context/Context";
 import type { PluginDefinition } from "@/plugins/types";
 import type { HooksConfiguration } from "@/types/hooks";
-import type { SkillDefinition, SkillDefinitionFactory } from "@/types/skills";
 import type {
   ClaudeMCPConfig,
   HttpMCPConfig,
@@ -13,6 +12,7 @@ import type {
   StdioMCPConfig,
 } from "@/types/mcps";
 import type { PresetConfig, PromptFunction } from "@/types/presets";
+import type { SkillDefinition, SkillDefinitionFactory } from "@/types/skills";
 import type { StatusLineInput } from "@/types/statusline";
 import { isHttpMCP, isSseMCP } from "@/types/mcps";
 

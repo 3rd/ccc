@@ -50,6 +50,28 @@ export const settingsSchema = z.object({
       strictMcpConfig: z.boolean().optional(),
       // enable loopy for -p
       loopy: z.boolean().optional(),
+      // trigger Setup hook
+      init: z.boolean().optional(),
+      // run Setup hook and exit
+      initOnly: z.boolean().optional(),
+      // maintenance mode Setup
+      maintenance: z.boolean().optional(),
+      // specify model directly
+      model: z.string().optional(),
+      // override system prompt
+      systemPrompt: z.string().optional(),
+      // load system prompt from file
+      systemPromptFile: z.string().optional(),
+      // enable MCP debug logging
+      mcpDebug: z.boolean().optional(),
+      // output format: json, text, stream-json
+      outputFormat: z.enum(["json", "text", "stream-json"]).optional(),
+      // disable slash commands
+      disableSlashCommands: z.boolean().optional(),
+      // SDK budget limit
+      maxBudgetUsd: z.number().optional(),
+      // bypass all permissions
+      dangerouslySkipPermissions: z.boolean().optional(),
     })
     .optional(),
 
@@ -57,6 +79,20 @@ export const settingsSchema = z.object({
   language: z.string().optional(),
   // control @-mention file picker behavior per project
   respectGitignore: z.boolean().optional(),
+  // customize where plan files are stored
+  plansDirectory: z.string().optional(),
+  // hide turn duration messages (e.g., "Cooked for 1m 6s")
+  showTurnDuration: z.boolean().optional(),
+  // hide status line entirely
+  hideStatusLine: z.boolean().optional(),
+  // toggle between stable/latest update channels
+  releaseChannel: z.enum(["stable", "latest"]).optional(),
+  // disable automatic updates
+  disableAutoUpdate: z.boolean().optional(),
+  // enable/disable file history feature
+  claudeFileHistoryEnabled: z.boolean().optional(),
+  // disable all hooks globally
+  disableAllHooks: z.boolean().optional(),
 
   apiKeyHelper: z.string().optional(),
   awsAuthRefresh: z.string().optional(),

@@ -10,20 +10,25 @@ export interface StdioMCPConfig {
   cwd?: string;
   env?: Record<string, string>;
   filter?: MCPToolFilter;
+  autoEnable?: string;
 }
 
 export interface HttpMCPConfig {
   type: "http";
   url: string;
   headers?: Record<string, string>;
+  headersHelper?: string;
   filter?: MCPToolFilter;
+  autoEnable?: string;
 }
 
 export interface SseMCPConfig {
   type: "sse";
   url: string;
   headers?: Record<string, string>;
+  headersHelper?: string;
   filter?: MCPToolFilter;
+  autoEnable?: string;
 }
 
 export type ClaudeMCPConfig = HttpMCPConfig | SseMCPConfig | StdioMCPConfig;

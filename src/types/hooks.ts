@@ -6,7 +6,9 @@ export type HookEventName =
   | "PreToolUse"
   | "SessionEnd"
   | "SessionStart"
+  | "Setup"
   | "Stop"
+  | "SubagentStart"
   | "SubagentStop"
   | "UserPromptSubmit";
 
@@ -121,6 +123,17 @@ export interface PreCompactHookInput extends BaseHookInput {
   custom_instructions: string;
 }
 
+export interface SetupHookInput extends BaseHookInput {
+  hook_event_name: "Setup";
+  source: "init-only" | "init" | "maintenance";
+}
+
+export interface SubagentStartHookInput extends BaseHookInput {
+  hook_event_name: "SubagentStart";
+  agent_id: string;
+  agent_type?: string;
+}
+
 export type ClaudeHookInput =
   | NotificationHookInput
   | PermissionRequestHookInput
@@ -129,7 +142,9 @@ export type ClaudeHookInput =
   | PreToolUseHookInput
   | SessionEndHookInput
   | SessionStartHookInput
+  | SetupHookInput
   | StopHookInput
+  | SubagentStartHookInput
   | SubagentStopHookInput
   | UserPromptSubmitHookInput;
 
@@ -146,6 +161,7 @@ export interface PreToolUseHookResponse extends BaseHookResponse {
     permissionDecision?: "allow" | "ask" | "deny";
     permissionDecisionReason?: string;
     updatedInput?: Record<string, unknown>;
+    additionalContext?: string;
   };
   /** @deprecated use hookSpecificOutput.permissionDecision instead */
   decision?: "approve" | "block";
@@ -206,6 +222,10 @@ export interface PreCompactHookResponse extends BaseHookResponse {}
 
 export interface SessionEndHookResponse extends BaseHookResponse {}
 
+export interface SetupHookResponse extends BaseHookResponse {}
+
+export interface SubagentStartHookResponse extends BaseHookResponse {}
+
 export type HookResponse =
   | NotificationHookResponse
   | PermissionRequestHookResponse
@@ -214,7 +234,9 @@ export type HookResponse =
   | PreToolUseHookResponse
   | SessionEndHookResponse
   | SessionStartHookResponse
+  | SetupHookResponse
   | StopHookResponse
+  | SubagentStartHookResponse
   | SubagentStopHookResponse
   | UserPromptSubmitHookResponse;
 
@@ -243,9 +265,17 @@ export interface HookEventMap {
     input: SessionEndHookInput;
     response: SessionEndHookResponse | void;
   };
+  Setup: {
+    input: SetupHookInput;
+    response: SetupHookResponse | void;
+  };
   Stop: {
     input: StopHookInput;
     response: StopHookResponse | void;
+  };
+  SubagentStart: {
+    input: SubagentStartHookInput;
+    response: SubagentStartHookResponse | void;
   };
   SubagentStop: {
     input: SubagentStopHookInput;

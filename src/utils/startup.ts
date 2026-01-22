@@ -144,18 +144,22 @@ export class StartupLogger {
     console.log(pc.bold(pc.cyan("\nStartup Timing Report")));
     console.log(pc.dim("─".repeat(50)));
 
+    const getStatusIcon = (status: string) => {
+      if (status === "done") return pc.green("✔");
+      if (status === "failed") return pc.red("✖");
+      return pc.dim("↷");
+    };
+
     for (const entry of report.phases) {
-      const statusIcon =
-        entry.status === "done" ? pc.green("✔")
-        : entry.status === "failed" ? pc.red("✖")
-        : pc.dim("↷");
+      const statusIcon = getStatusIcon(entry.status);
       const durationStr = pc.yellow(`${entry.durationMs.toFixed(1)}ms`.padStart(10));
       const noteStr = entry.note ? pc.dim(` (${entry.note})`) : "";
       console.log(`${statusIcon} ${durationStr}  ${entry.phase}${noteStr}`);
     }
 
     console.log(pc.dim("─".repeat(50)));
-    console.log(`${pc.bold("Total:")} ${pc.yellow(`${report.totalMs.toFixed(1)}ms`)}`);
+    const totalStr = pc.yellow(`${report.totalMs.toFixed(1)}ms`);
+    console.log(`${pc.bold("Total:")} ${totalStr}`);
   }
 }
 

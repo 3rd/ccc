@@ -2,11 +2,12 @@ import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 import p from "picoprint";
 import type { PromptLayerData } from "@/config/helpers";
-import type { Context } from "@/context/Context";
 import type { PluginsConfig } from "@/config/plugins";
+import type { Context } from "@/context/Context";
 import type { HookCommand } from "@/types/hooks";
 import type { ClaudeMCPConfig } from "@/types/mcps";
 import type { SkillBundle } from "@/types/skills";
+import { buildPlugins } from "@/config/builders/build-plugins";
 import { loadConfigFromLayers, loadConfigLayer, loadPromptFile } from "@/config/layers";
 import { isHttpMCP, isSseMCP } from "@/types/mcps";
 
@@ -35,6 +36,7 @@ export interface DoctorReport {
   prompts: PromptTraces;
   commands: ItemTraces;
   agents: ItemTraces;
+  rules: ItemTraces;
   mcps: Record<string, { type: "http" | "sse" | "stdio"; trace: TraceEntry[] }>;
   hooks: ItemTraces;
   plugins: {
@@ -291,17 +293,84 @@ const collectLayeredSkills = async (context: Context): Promise<ItemTraces> => {
   return items;
 };
 
+const listRuleNames = (dirPath: string | undefined): string[] => {
+  if (!dirPath || !existsSync(dirPath)) return [];
+  const names: string[] = [];
+
+  const walkDir = (currentPath: string, relativePath = ""): void => {
+    const entries = readdirSync(currentPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const relPath = relativePath ? join(relativePath, entry.name) : entry.name;
+      if (entry.isDirectory()) {
+        walkDir(join(currentPath, entry.name), relPath);
+      } else if (entry.name.endsWith(".md")) {
+        names.push(relPath);
+      }
+    }
+  };
+
+  walkDir(dirPath);
+  return names.sort();
+};
+
+const collectLayeredRules = async (context: Context): Promise<ItemTraces> => {
+  const launcherRoot = context.launcherDirectory;
+  const items: ItemTraces = {};
+
+  const configBase =
+    context.configDirectory.startsWith("/") ?
+      context.configDirectory
+    : join(launcherRoot, context.configDirectory);
+
+  const globalDir = join(configBase, "global", "rules");
+  const globalNames = listRuleNames(globalDir);
+
+  const presetEntries = context.project.presets.map((preset) => ({
+    name: preset.name,
+    dir: join(configBase, "presets", preset.name, "rules"),
+  }));
+  const presetNameMap = new Map<string, string[]>();
+  for (const entry of presetEntries) presetNameMap.set(entry.name, listRuleNames(entry.dir));
+
+  const projectDir =
+    context.project.projectConfig ?
+      join(configBase, "projects", context.project.projectConfig.name, "rules")
+    : undefined;
+  const projectNames = listRuleNames(projectDir);
+
+  const allNames = new Set<string>([...globalNames, ...projectNames]);
+  for (const pn of presetEntries) {
+    for (const n of presetNameMap.get(pn.name) || []) allNames.add(n);
+  }
+
+  for (const name of Array.from(allNames).sort()) {
+    const seq: TraceEntry[] = [];
+    // rules accumulate (no override), so we just track where they come from
+    if (globalNames.includes(name)) seq.push({ layer: "global", mode: "append" });
+    for (const entry of presetEntries) {
+      if ((presetNameMap.get(entry.name) || []).includes(name)) {
+        seq.push({ layer: "preset", name: entry.name, mode: "append" });
+      }
+    }
+    if (projectNames.includes(name) && context.project.projectConfig) {
+      seq.push({ layer: "project", name: context.project.projectConfig.name, mode: "append" });
+    }
+    items[name] = seq;
+  }
+
+  return items;
+};
+
 const collectLayeredPlugins = async (context: Context) => {
   const layers = await loadConfigFromLayers<PluginsConfig>(context, "plugins.ts");
   const ccc: ItemTraces = {};
   const enabled: ItemTraces = {};
   const marketplaces: ItemTraces = {};
   const pluginDirsTrace: TraceEntry[] = [];
-  let pluginDirs: string[] = [];
 
-  const pushTrace = (map: ItemTraces, key: string, entry: TraceEntry) => {
-    if (!map[key]) map[key] = [];
-    map[key].push(entry);
+  const pushTrace = (traces: ItemTraces, key: string, entry: TraceEntry) => {
+    const existing = traces[key] ?? [];
+    traces[key] = [...existing, entry];
   };
 
   const applyLayer = (layer: PluginsConfig | undefined, entry: TraceEntry) => {
@@ -322,7 +391,6 @@ const collectLayeredPlugins = async (context: Context) => {
       }
     }
     if (layer.claude?.pluginDirs) {
-      pluginDirs = layer.claude.pluginDirs;
       pluginDirsTrace.push(entry);
     }
   };
@@ -341,6 +409,10 @@ const collectLayeredPlugins = async (context: Context) => {
       mode: "override",
     });
   }
+
+  // use buildPlugins to get actual resolved dirs (includes auto-discovery)
+  const builtPlugins = await buildPlugins(context);
+  const pluginDirs = builtPlugins.claude?.pluginDirs ?? [];
 
   return { ccc, enabled, marketplaces, pluginDirs, pluginDirsTrace };
 };
@@ -394,6 +466,15 @@ const printPretty = (report: DoctorReport) => {
     p.dim.log("(none)");
   } else {
     p(agentNames.map((name) => ({ name, trace: fmtTrace(report.agents[name] || []) })));
+  }
+
+  // rules
+  p.bold.blue.log("\nRules:");
+  const ruleNames = Object.keys(report.rules).sort();
+  if (ruleNames.length === 0) {
+    p.dim.log("(none)");
+  } else {
+    p(ruleNames.map((name) => ({ name, trace: fmtTrace(report.rules[name] || []) })));
   }
 
   // MCPs
@@ -456,7 +537,12 @@ const printPretty = (report: DoctorReport) => {
   if (marketplaceNames.length === 0) {
     p.dim.log("(none)");
   } else {
-    p(marketplaceNames.map((name) => ({ name, trace: fmtTrace(report.plugins.claude.marketplaces[name] || []) })));
+    p(
+      marketplaceNames.map((name) => ({
+        name,
+        trace: fmtTrace(report.plugins.claude.marketplaces[name] || []),
+      })),
+    );
   }
 
   // skills
@@ -479,6 +565,7 @@ export const runDoctor = async (
     agents: Map<string, string>;
     mcps: Record<string, ClaudeMCPConfig>;
     skills?: SkillBundle[];
+    rules?: Map<string, string>;
   },
   opts: { json?: boolean } = {},
 ) => {
@@ -486,6 +573,7 @@ export const runDoctor = async (
   const userTrace = await collectPromptTrace(context, "prompts/user");
   const commands = await collectLayeredItems(context, "commands");
   const agents = await collectLayeredItems(context, "agents");
+  const rules = await collectLayeredRules(context);
   const hooks = await collectLayeredHooks(context);
   const mcps = await collectLayeredMCPs(context, artifacts.mcps);
   const skills = await collectLayeredSkills(context);
@@ -501,6 +589,7 @@ export const runDoctor = async (
     prompts: { system: systemTrace, user: userTrace },
     commands,
     agents,
+    rules,
     mcps,
     hooks,
     plugins: {

@@ -4,12 +4,12 @@ import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { getHook } from "@/hooks/hook-generator";
 import type { MCPServers } from "@/types/mcps";
-import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
 import { buildPlugins } from "@/config/builders/build-plugins";
+import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
 import { Context } from "@/context/Context";
 import { createMCPProxy } from "@/mcps/mcp-generator";
-import { getPluginMCPs } from "@/plugins/registry";
 import { loadCCCPluginsFromConfig } from "@/plugins";
+import { getPluginMCPs } from "@/plugins/registry";
 import "@/hooks/builtin";
 
 const __filename = fileURLToPath(import.meta.url);

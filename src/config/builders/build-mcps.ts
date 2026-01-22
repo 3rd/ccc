@@ -6,7 +6,7 @@ import { setInstanceId } from "@/mcps/mcp-generator";
 import { getPluginMCPs } from "@/plugins/registry";
 
 const processExternalMCP = (
-  config: ClaudeMCPConfig & { filter?: unknown },
+  config: ClaudeMCPConfig & { filter?: unknown; autoEnable?: string; headersHelper?: string },
   name: string,
   context: Context,
 ): ClaudeMCPConfig | null => {
@@ -21,16 +21,21 @@ const processExternalMCP = (
       Object.assign(env, config.env);
     }
 
-    return {
+    const result: ClaudeMCPConfig = {
       type: "stdio" as const,
       command: "tsx",
       args: [runnerPath, "mcp", name],
       env,
     };
+
+    if (config.autoEnable) {
+      (result as { autoEnable?: string }).autoEnable = config.autoEnable;
+    }
+
+    return result;
   }
 
-  // external MCP without filter
-  const { filter: _filter, ...configWithoutFilter } = config;
+  const { filter: _, ...configWithoutFilter } = config;
   return configWithoutFilter;
 };
 

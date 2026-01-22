@@ -16,7 +16,13 @@ const builtins: BuiltinCommands = {
   PreToolUse: createHook({ event: "PreToolUse", id: "builtin-recorder", handler: eventRecorder.record }),
   SessionEnd: createHook({ event: "SessionEnd", id: "builtin-recorder", handler: eventRecorder.record }),
   SessionStart: createHook({ event: "SessionStart", id: "builtin-recorder", handler: eventRecorder.record }),
+  Setup: createHook({ event: "Setup", id: "builtin-recorder", handler: eventRecorder.record }),
   Stop: createHook({ event: "Stop", id: "builtin-recorder", handler: eventRecorder.record }),
+  SubagentStart: createHook({
+    event: "SubagentStart",
+    id: "builtin-recorder",
+    handler: eventRecorder.record,
+  }),
   SubagentStop: createHook({ event: "SubagentStop", id: "builtin-recorder", handler: eventRecorder.record }),
   UserPromptSubmit: createHook({
     event: "UserPromptSubmit",

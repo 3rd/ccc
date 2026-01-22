@@ -11,6 +11,7 @@ import { buildAgents } from "@/config/builders/build-agents";
 import { buildCommands } from "@/config/builders/build-commands";
 import { buildMCPs } from "@/config/builders/build-mcps";
 import { buildPlugins } from "@/config/builders/build-plugins";
+import { buildRules } from "@/config/builders/build-rules";
 import { buildSettings, buildSystemPrompt, buildUserPrompt } from "@/config/builders/build-settings";
 import { buildSkills } from "@/config/builders/build-skills";
 import { dumpConfig } from "@/config/dump-config";
@@ -149,13 +150,15 @@ const run = async () => {
   const commandsPromise = startup.run("Build commands", () => buildCommands(context));
   const agentsPromise = startup.run("Build agents", () => buildAgents(context));
   const skillsPromise = startup.run("Build skills", () => buildSkills(context));
-  const [settings, systemPrompt, userPrompt, commands, agents, skills] = await Promise.all([
+  const rulesPromise = startup.run("Build rules", () => buildRules(context));
+  const [settings, systemPrompt, userPrompt, commands, agents, skills, rules] = await Promise.all([
     settingsPromise,
     systemPromptPromise,
     userPromptPromise,
     commandsPromise,
     agentsPromise,
     skillsPromise,
+    rulesPromise,
   ]);
 
   const settingsWithPlugins = {
@@ -226,6 +229,7 @@ const run = async () => {
         commands,
         agents,
         skills,
+        rules,
         mcps,
       },
       { json: process.argv.includes("--json") },
@@ -255,6 +259,8 @@ const run = async () => {
     console.log(Array.from(commands.keys()));
     console.log(p.blue("\nAgents:"));
     console.log(Array.from(agents.keys()));
+    console.log(p.blue("\nRules:"));
+    console.log(Array.from(rules.keys()));
     console.log(p.blue("\nMCPs:"));
     console.log(mcps);
     console.log(p.blue("\nCCC Plugins:"));
@@ -380,6 +386,7 @@ const run = async () => {
     `  Commands: ${commands.size} files (${Array.from(commands.keys()).join(", ")})`,
   );
   log.debug("BUILD-SUMMARY", `  Agents: ${agents.size} files (${Array.from(agents.keys()).join(", ")})`);
+  log.debug("BUILD-SUMMARY", `  Rules: ${rules.size} files (${Array.from(rules.keys()).join(", ")})`);
   log.debug("BUILD-SUMMARY", `  MCPs: ${Object.keys(mcps || {}).join(", ") || "none"}`);
 
   // resolve claude cli path first (needed for runtime patches in VFS)
@@ -407,6 +414,7 @@ const run = async () => {
       commands,
       agents,
       skills,
+      rules,
       workingDirectory: context.workingDirectory,
       disableParentClaudeMds: context.project.projectConfig?.disableParentClaudeMds,
     });
@@ -452,6 +460,18 @@ const run = async () => {
     settingSources?: ("local" | "project" | "user")[];
     strictMcpConfig?: boolean;
     loopy?: boolean;
+    // new flags (v2.1.x)
+    init?: boolean;
+    initOnly?: boolean;
+    maintenance?: boolean;
+    model?: string;
+    systemPrompt?: string;
+    systemPromptFile?: string;
+    mcpDebug?: boolean;
+    outputFormat?: "json" | "stream-json" | "text";
+    disableSlashCommands?: boolean;
+    maxBudgetUsd?: number;
+    dangerouslySkipPermissions?: boolean;
   };
   const settingsCli = (settings as { cli?: CliFlags }).cli || {};
 
@@ -550,6 +570,61 @@ const run = async () => {
   // --loopy
   if (!hasCliArg("--loopy") && settingsCli.loopy) {
     args.push("--loopy");
+  }
+
+  // --init (v2.1.10)
+  if (!hasCliArg("--init") && settingsCli.init) {
+    args.push("--init");
+  }
+
+  // --init-only (v2.1.10)
+  if (!hasCliArg("--init-only") && settingsCli.initOnly) {
+    args.push("--init-only");
+  }
+
+  // --maintenance (v2.1.10)
+  if (!hasCliArg("--maintenance") && settingsCli.maintenance) {
+    args.push("--maintenance");
+  }
+
+  // --model (v1.0.111)
+  if (!hasCliArg("--model") && settingsCli.model) {
+    args.push("--model", settingsCli.model);
+  }
+
+  // --system-prompt (v2.0.64)
+  if (!hasCliArg("--system-prompt") && settingsCli.systemPrompt) {
+    args.push("--system-prompt", settingsCli.systemPrompt);
+  }
+
+  // --system-prompt-file (v1.0.51)
+  if (!hasCliArg("--system-prompt-file") && settingsCli.systemPromptFile) {
+    args.push("--system-prompt-file", settingsCli.systemPromptFile);
+  }
+
+  // --mcp-debug (v0.2.31)
+  if (!hasCliArg("--mcp-debug") && settingsCli.mcpDebug) {
+    args.push("--mcp-debug");
+  }
+
+  // --output-format (v0.2.66)
+  if (!hasCliArg("--output-format") && settingsCli.outputFormat) {
+    args.push("--output-format", settingsCli.outputFormat);
+  }
+
+  // --disable-slash-commands (v2.0.60)
+  if (!hasCliArg("--disable-slash-commands") && settingsCli.disableSlashCommands) {
+    args.push("--disable-slash-commands");
+  }
+
+  // --max-budget-usd (v2.0.28)
+  if (!hasCliArg("--max-budget-usd") && settingsCli.maxBudgetUsd !== undefined) {
+    args.push("--max-budget-usd", String(settingsCli.maxBudgetUsd));
+  }
+
+  // --dangerously-skip-permissions (v2.0.31)
+  if (!hasCliArg("--dangerously-skip-permissions") && settingsCli.dangerouslySkipPermissions) {
+    args.push("--dangerously-skip-permissions");
   }
 
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);

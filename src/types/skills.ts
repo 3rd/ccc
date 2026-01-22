@@ -41,4 +41,4 @@ export interface SkillDefinition {
   files?: SkillFile[];
 }
 
-export type SkillDefinitionFactory = (context: Context) => SkillDefinition | Promise<SkillDefinition>;
+export type SkillDefinitionFactory = (context: Context) => Promise<SkillDefinition> | SkillDefinition;

@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, statSync } from "fs";
 import { isAbsolute, join, resolve } from "path";
 import type { Context } from "@/context/Context";
-import { loadConfigFromLayers } from "@/config/layers";
-import { validatePlugins, type ClaudePluginsConfig, type PluginsConfig } from "@/config/plugins";
-import { log } from "@/utils/log";
 import type { PluginEnablementConfig } from "@/plugins/schema";
+import { loadConfigFromLayers } from "@/config/layers";
+import { type ClaudePluginsConfig, type PluginsConfig, validatePlugins } from "@/config/plugins";
+import { log } from "@/utils/log";
 
 const mergePluginsConfig = (...layers: (PluginsConfig | undefined)[]): PluginsConfig => {
   const mergedCCC: PluginEnablementConfig = {};
@@ -22,14 +22,14 @@ const mergePluginsConfig = (...layers: (PluginsConfig | undefined)[]): PluginsCo
 
     if (layer.claude?.enabledPlugins) {
       mergedClaude.enabledPlugins = {
-        ...(mergedClaude.enabledPlugins ?? {}),
+        ...mergedClaude.enabledPlugins,
         ...layer.claude.enabledPlugins,
       };
     }
 
     if (layer.claude?.extraKnownMarketplaces) {
       mergedClaude.extraKnownMarketplaces = {
-        ...(mergedClaude.extraKnownMarketplaces ?? {}),
+        ...mergedClaude.extraKnownMarketplaces,
         ...layer.claude.extraKnownMarketplaces,
       };
     }
@@ -109,9 +109,8 @@ export const buildPlugins = async (context: Context): Promise<PluginsConfig> => 
       context.configDirectory
     : join(context.launcherDirectory, context.configDirectory);
 
-  const resolvedPluginDirs = validated.claude?.pluginDirs ?
-      resolvePluginDirs(configBase, validated.claude.pluginDirs)
-    : [];
+  const resolvedPluginDirs =
+    validated.claude?.pluginDirs ? resolvePluginDirs(configBase, validated.claude.pluginDirs) : [];
   const autoDiscovered = discoverClaudePluginDirs(configBase);
   const pluginDirs = uniq([...resolvedPluginDirs, ...autoDiscovered]);
 

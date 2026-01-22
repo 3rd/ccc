@@ -85,6 +85,7 @@ const monkeyPatchFS = ({
   virtualAgents,
   skillsPath,
   virtualSkills,
+  rulesPath,
   virtualRoots,
   volPromises,
 }: {
@@ -97,12 +98,14 @@ const monkeyPatchFS = ({
   virtualAgents?: string[];
   skillsPath?: string;
   virtualSkills?: string[];
+  rulesPath?: string;
   virtualRoots: Set<string>;
   volPromises: typeof fsDefault.promises;
 }) => {
   const normalizedCommandsPath = commandsPath ? path.normalize(path.resolve(commandsPath)) : undefined;
   const normalizedAgentsPath = agentsPath ? path.normalize(path.resolve(agentsPath)) : undefined;
   const normalizedSkillsPath = skillsPath ? path.normalize(path.resolve(skillsPath)) : undefined;
+  const normalizedRulesPath = rulesPath ? path.normalize(path.resolve(rulesPath)) : undefined;
 
   const normalizeArgPath = (arg: string): string => {
     if (arg.startsWith(`~${path.sep}`)) {
@@ -212,6 +215,25 @@ const monkeyPatchFS = ({
     return result;
   };
 
+  const isRulesPath = (filePath: unknown): boolean => {
+    if (!normalizedRulesPath || typeof filePath !== "string") return false;
+    const normalized = path.normalize(path.resolve(filePath));
+    const result =
+      normalized === normalizedRulesPath ||
+      normalized === normalizedRulesPath + path.sep ||
+      normalizedRulesPath === normalized + path.sep;
+    if (result) log.vfs(`isRulesPath: "${filePath}" => true (normalized: "${normalized}")`);
+    return result;
+  };
+
+  const isRulesChild = (filePath: unknown): boolean => {
+    if (!normalizedRulesPath || typeof filePath !== "string") return false;
+    const normalized = path.normalize(path.resolve(filePath));
+    const result = normalized.startsWith(normalizedRulesPath + path.sep);
+    if (result) log.vfs(`isRulesChild: "${filePath}" => true`);
+    return result;
+  };
+
   const isVirtualRoot = (filePath: string): boolean => {
     const normalized = path.normalize(path.resolve(filePath));
     for (const root of virtualRoots) {
@@ -227,7 +249,9 @@ const monkeyPatchFS = ({
       isAgentsPath(filePath) ||
       isAgentsChild(filePath) ||
       isSkillsPath(filePath) ||
-      isSkillsChild(filePath)
+      isSkillsChild(filePath) ||
+      isRulesPath(filePath) ||
+      isRulesChild(filePath)
     ) {
       return path.normalize(path.resolve(filePath));
     }
@@ -352,7 +376,9 @@ const monkeyPatchFS = ({
       isCommandsPath(filePath) ||
       isCommandsChild(filePath) ||
       isAgentsPath(filePath) ||
-      isAgentsChild(filePath)
+      isAgentsChild(filePath) ||
+      isRulesPath(filePath) ||
+      isRulesChild(filePath)
     ) {
       const result = vol.existsSync(filePath);
       log.vfs(`existsSync("${filePath}") => ${result} (virtual only)`);
@@ -370,7 +396,9 @@ const monkeyPatchFS = ({
       isCommandsPath(filePath) ||
       isCommandsChild(filePath) ||
       isAgentsPath(filePath) ||
-      isAgentsChild(filePath)
+      isAgentsChild(filePath) ||
+      isRulesPath(filePath) ||
+      isRulesChild(filePath)
     ) {
       try {
         if (vol.existsSync(filePath)) {
@@ -486,6 +514,23 @@ const monkeyPatchFS = ({
       log.vfs(`readdirSync("${filePath}") => [] (empty, virtual only)`);
       return [];
     }
+    if (isRulesPath(filePath) || isRulesChild(filePath)) {
+      log.vfs(`Rules dir read, yielding virtual files only`);
+      try {
+        if (vol.existsSync(filePath)) {
+          const result = vol.readdirSync(
+            filePath,
+            options as Parameters<typeof vol.readdirSync>[1],
+          ) as ReaddirResult;
+          log.vfs(`readdirSync("${filePath}") => [${result}] (${result.length} files, virtual only)`);
+          return result;
+        }
+      } catch (error) {
+        log.vfs(`readdirSync("${filePath}") => ERROR: ${error}`);
+      }
+      log.vfs(`readdirSync("${filePath}") => [] (empty, virtual only)`);
+      return [];
+    }
     let realFiles: ReaddirResult = [];
     try {
       // @ts-expect-error
@@ -535,198 +580,86 @@ const monkeyPatchFS = ({
       process.nextTick(() => cb(error as NodeJS.ErrnoException));
     }
   } as typeof fsDefault.readdir;
+
+  // helper to create virtual Dir for opendir operations
+  const createVirtualDir = (dirPath: PathLike, label: string): Dir => {
+    log.vfs(`opendirSync caught for ${label}, returning virtual Dir`);
+    const files = vol.existsSync(dirPath) ? vol.readdirSync(dirPath) : [];
+    log.vfs(`Virtual Dir will contain: ${files}`);
+    const createDirent = (name: string) => {
+      const stats = vol.statSync(path.join(String(dirPath), name));
+      return {
+        name,
+        parentPath: String(dirPath),
+        isBlockDevice: () => false,
+        isCharacterDevice: () => false,
+        isDirectory: () => stats.isDirectory(),
+        isFIFO: () => false,
+        isFile: () => stats.isFile(),
+        isSocket: () => false,
+        isSymbolicLink: () => false,
+      } as Dirent;
+    };
+    let index = 0;
+    return {
+      path: String(dirPath),
+      read: (callback?: (err: NodeJS.ErrnoException | null, dirent: Dirent | null) => void) => {
+        log.vfs(`Dir.read() called, returning file ${index} of ${files.length}`);
+        if (callback) {
+          if (index < files.length) {
+            const dirent = createDirent(String(files[index++]));
+            process.nextTick(() => callback(null, dirent));
+            return dirent;
+          }
+          process.nextTick(() => callback(null, null));
+          return null;
+        }
+        return null;
+      },
+      readSync: () => {
+        log.vfs(`Dir.readSync() called, returning file ${index} of ${files.length}`);
+        if (index < files.length) {
+          return createDirent(String(files[index++])) as Dirent;
+        }
+        return null;
+      },
+      close: (callback?: (err?: NodeJS.ErrnoException | null) => void) => {
+        log.vfs(`Dir.close() called`);
+        if (callback) process.nextTick(() => callback(null));
+      },
+      closeSync: () => {
+        log.vfs(`Dir.closeSync() called`);
+      },
+      async *[Symbol.asyncIterator]() {
+        log.vfs(`Dir async iterator called, yielding ${files.length} files`);
+        for (const file of files) {
+          yield createDirent(String(file));
+        }
+      },
+      *[Symbol.iterator]() {
+        log.vfs(`Dir sync iterator called, yielding ${files.length} files`);
+        for (const file of files) {
+          yield createDirent(String(file));
+        }
+      },
+    } as unknown as Dir;
+  };
+
   fsDefault.opendirSync = function (filePath: PathLike, options?: OpenDirOptions): Dir {
     if (typeof filePath === "string" && filePath.includes(".claude")) {
       log.vfs(`opendirSync("${filePath}") called`);
     }
     if (isCommandsPath(filePath)) {
-      log.vfs(`opendirSync caught for commands, returning virtual Dir`);
-      const files = vol.existsSync(filePath) ? vol.readdirSync(filePath) : [];
-      log.vfs(`Virtual Dir will contain: ${files}`);
-      const createDirent = (name: string) => {
-        const stats = vol.statSync(path.join(String(filePath), name));
-        return {
-          name,
-          parentPath: String(filePath),
-          isBlockDevice: () => false,
-          isCharacterDevice: () => false,
-          isDirectory: () => stats.isDirectory(),
-          isFIFO: () => false,
-          isFile: () => stats.isFile(),
-          isSocket: () => false,
-          isSymbolicLink: () => false,
-        } as any;
-      };
-      let index = 0;
-      const dir = {
-        path: String(filePath),
-        read: (callback?: (err: NodeJS.ErrnoException | null, dirent: Dirent | null) => void) => {
-          log.vfs(`Dir.read() called, returning file ${index} of ${files.length}`);
-          if (callback) {
-            if (index < files.length) {
-              const dirent = createDirent(String(files[index++]));
-              process.nextTick(() => callback(null, dirent));
-              return dirent;
-            }
-            process.nextTick(() => callback(null, null));
-            return null;
-          }
-          return null;
-        },
-        readSync: () => {
-          log.vfs(`Dir.readSync() called, returning file ${index} of ${files.length}`);
-          if (index < files.length) {
-            return createDirent(String(files[index++])) as any;
-          }
-          return null;
-        },
-        close: (callback?: (err?: NodeJS.ErrnoException | null) => void) => {
-          log.vfs(`Dir.close() called`);
-          if (callback) process.nextTick(() => callback(null));
-        },
-        closeSync: () => {
-          log.vfs(`Dir.closeSync() called`);
-        },
-        async *[Symbol.asyncIterator]() {
-          log.vfs(`Dir async iterator called, yielding ${files.length} files`);
-          for (const file of files) {
-            yield createDirent(String(file));
-          }
-        },
-        *[Symbol.iterator]() {
-          log.vfs(`Dir sync iterator called, yielding ${files.length} files`);
-          for (const file of files) {
-            yield createDirent(String(file));
-          }
-        },
-      };
-      return dir as unknown as Dir;
+      return createVirtualDir(filePath, "commands");
     }
     if (isAgentsPath(filePath)) {
-      log.vfs(`opendirSync caught for agents, returning virtual Dir`);
-      const files = vol.existsSync(filePath) ? vol.readdirSync(filePath) : [];
-      log.vfs(`Virtual Dir will contain: ${files}`);
-      const createDirent = (name: string) => {
-        const stats = vol.statSync(path.join(String(filePath), name));
-        return {
-          name,
-          parentPath: String(filePath),
-          isBlockDevice: () => false,
-          isCharacterDevice: () => false,
-          isDirectory: () => stats.isDirectory(),
-          isFIFO: () => false,
-          isFile: () => stats.isFile(),
-          isSocket: () => false,
-          isSymbolicLink: () => false,
-        } as Dirent;
-      };
-      let index = 0;
-      const dir = {
-        path: String(filePath),
-        read: (callback?: (err: NodeJS.ErrnoException | null, dirent: Dirent | null) => void) => {
-          log.vfs(`Dir.read() called, returning file ${index} of ${files.length}`);
-          if (callback) {
-            if (index < files.length) {
-              const dirent = createDirent(String(files[index++]));
-              process.nextTick(() => callback(null, dirent));
-              return dirent;
-            }
-            process.nextTick(() => callback(null, null));
-            return null;
-          }
-          return null;
-        },
-        readSync: () => {
-          log.vfs(`Dir.readSync() called, returning file ${index} of ${files.length}`);
-          if (index < files.length) {
-            return createDirent(String(files[index++])) as any;
-          }
-          return null;
-        },
-        close: (callback?: (err?: NodeJS.ErrnoException | null) => void) => {
-          log.vfs(`Dir.close() called`);
-          if (callback) process.nextTick(() => callback(null));
-        },
-        closeSync: () => {
-          log.vfs(`Dir.closeSync() called`);
-        },
-        async *[Symbol.asyncIterator]() {
-          log.vfs(`Dir async iterator called, yielding ${files.length} files`);
-          for (const file of files) {
-            yield createDirent(String(file));
-          }
-        },
-        *[Symbol.iterator]() {
-          log.vfs(`Dir sync iterator called, yielding ${files.length} files`);
-          for (const file of files) {
-            yield createDirent(String(file));
-          }
-        },
-      };
-      return dir as unknown as Dir;
+      return createVirtualDir(filePath, "agents");
     }
     if (isSkillsPath(filePath)) {
-      log.vfs(`opendirSync caught for skills, returning virtual Dir`);
-      const files = vol.existsSync(filePath) ? vol.readdirSync(filePath) : [];
-      log.vfs(`Virtual Dir will contain: ${files}`);
-      const createDirent = (name: string) => {
-        const stats = vol.statSync(path.join(String(filePath), name));
-        return {
-          name,
-          parentPath: String(filePath),
-          isBlockDevice: () => false,
-          isCharacterDevice: () => false,
-          isDirectory: () => stats.isDirectory(),
-          isFIFO: () => false,
-          isFile: () => stats.isFile(),
-          isSocket: () => false,
-          isSymbolicLink: () => false,
-        } as Dirent;
-      };
-      let index = 0;
-      const dir = {
-        path: String(filePath),
-        read: (callback?: (err: NodeJS.ErrnoException | null, dirent: Dirent | null) => void) => {
-          log.vfs(`Dir.read() called, returning file ${index} of ${files.length}`);
-          if (callback) {
-            if (index < files.length) {
-              const dirent = createDirent(String(files[index++]));
-              process.nextTick(() => callback(null, dirent));
-              return dirent;
-            }
-            process.nextTick(() => callback(null, null));
-            return null;
-          }
-          return null;
-        },
-        readSync: () => {
-          log.vfs(`Dir.readSync() called, returning file ${index} of ${files.length}`);
-          if (index < files.length) {
-            return createDirent(String(files[index++])) as any;
-          }
-          return null;
-        },
-        close: (callback?: (err?: NodeJS.ErrnoException | null) => void) => {
-          log.vfs(`Dir.close() called`);
-          if (callback) process.nextTick(() => callback(null));
-        },
-        closeSync: () => {
-          log.vfs(`Dir.closeSync() called`);
-        },
-        async *[Symbol.asyncIterator]() {
-          log.vfs(`Dir async iterator called, yielding ${files.length} files`);
-          for (const file of files) {
-            yield createDirent(String(file));
-          }
-        },
-        *[Symbol.iterator]() {
-          log.vfs(`Dir sync iterator called, yielding ${files.length} files`);
-          for (const file of files) {
-            yield createDirent(String(file));
-          }
-        },
-      };
-      return dir as unknown as Dir;
+      return createVirtualDir(filePath, "skills");
+    }
+    if (isRulesPath(filePath) || isRulesChild(filePath)) {
+      return createVirtualDir(filePath, "rules");
     }
     // @ts-expect-error
     return Reflect.apply(origOpendirSync, this, [filePath, options]);
@@ -775,6 +708,10 @@ const monkeyPatchFS = ({
     }
     if (isSkillsPath(filePath) || isSkillsChild(filePath)) {
       log.vfs(`WRITE BLOCKED: Skills directory "${filePath}"`);
+      return true;
+    }
+    if (isRulesPath(filePath) || isRulesChild(filePath)) {
+      log.vfs(`WRITE BLOCKED: Rules directory "${filePath}"`);
       return true;
     }
 
@@ -1006,7 +943,9 @@ const monkeyPatchFS = ({
               isCommandsPath(filePath) ||
               isCommandsChild(filePath) ||
               isAgentsPath(filePath) ||
-              isAgentsChild(filePath)
+              isAgentsChild(filePath) ||
+              isRulesPath(filePath) ||
+              isRulesChild(filePath)
             ) {
               const error = new Error(
                 `ENOENT: no such file or directory, open '${filePath}'`,
@@ -1034,7 +973,9 @@ const monkeyPatchFS = ({
               isCommandsPath(filePath) ||
               isCommandsChild(filePath) ||
               isAgentsPath(filePath) ||
-              isAgentsChild(filePath);
+              isAgentsChild(filePath) ||
+              isRulesPath(filePath) ||
+              isRulesChild(filePath);
 
             if (virtualPath && (vol.existsSync(virtualPath) || mustVirtualize)) {
               if (mustVirtualize) {
@@ -1081,7 +1022,9 @@ const monkeyPatchFS = ({
               isCommandsPath(filePath) ||
               isCommandsChild(filePath) ||
               isAgentsPath(filePath) ||
-              isAgentsChild(filePath)
+              isAgentsChild(filePath) ||
+              isRulesPath(filePath) ||
+              isRulesChild(filePath)
             ) {
               const error = new Error(
                 `ENOENT: no such file or directory, stat '${filePath}'`,
@@ -1585,8 +1528,24 @@ const monkeyPatchFS = ({
       filePath: PathLike,
       options?: BufferEncoding | { encoding?: BufferEncoding | null },
     ) {
-      if (typeof filePath === "string" && filePath.includes(".claude")) {
-        log.vfs(`realpathSync("${filePath}") called`);
+      if (typeof filePath === "string") {
+        // for virtual paths, return as-is to prevent resolution to real filesystem
+        if (
+          isCommandsPath(filePath) ||
+          isCommandsChild(filePath) ||
+          isAgentsPath(filePath) ||
+          isAgentsChild(filePath) ||
+          isSkillsPath(filePath) ||
+          isSkillsChild(filePath) ||
+          isRulesPath(filePath) ||
+          isRulesChild(filePath)
+        ) {
+          log.vfs(`realpathSync("${filePath}") => returning as-is (virtual)`);
+          return path.normalize(path.resolve(filePath));
+        }
+        if (filePath.includes(".claude")) {
+          log.vfs(`realpathSync("${filePath}") called`);
+        }
       }
       return Reflect.apply(origRealpathSync, this, [filePath, options]);
     } as typeof fsDefault.realpathSync;
@@ -1801,6 +1760,7 @@ export const setupVirtualFileSystem = (args: {
   commands?: Map<string, string>;
   agents?: Map<string, string>;
   skills?: SkillBundle[];
+  rules?: Map<string, string>;
   workingDirectory?: string;
   disableParentClaudeMds?: boolean;
 }): void => {
@@ -1809,6 +1769,7 @@ export const setupVirtualFileSystem = (args: {
   const commandsPath = path.normalize(path.resolve(os.homedir(), ".claude", "commands"));
   const agentsPath = path.normalize(path.resolve(os.homedir(), ".claude", "agents"));
   const skillsPath = path.normalize(path.resolve(os.homedir(), ".claude", "skills"));
+  const rulesPath = path.normalize(path.resolve(os.homedir(), ".claude", "rules"));
 
   log.vfs("Initializing virtual filesystem");
 
@@ -1867,9 +1828,21 @@ export const setupVirtualFileSystem = (args: {
     log.vfs("No skills provided");
   }
 
+  // log rules
+  log.vfs(`Rules path: ${rulesPath}`);
+  if (args.rules) {
+    log.vfs(`Rules to inject: ${args.rules.size} files`);
+    for (const [filename, content] of args.rules) {
+      log.vfs(`  - ${filename} (${content.length} chars)`);
+    }
+  } else {
+    log.vfs("No rules provided");
+  }
+
   // filter out cli-only flags (they are passed as args, not written to settings.json)
   // and env vars that already exist in process.env (user env takes precedence)
   const { cli: _cli, ...filteredSettings } = args.settings;
+  void _cli; // eslint: intentionally excluded from settings.json
   if (filteredSettings.env && typeof filteredSettings.env === "object") {
     const envRecord = filteredSettings.env as Record<string, string>;
     const filteredEnv: Record<string, string> = {};
@@ -1946,6 +1919,24 @@ export const setupVirtualFileSystem = (args: {
     log.vfs(`Virtual directory contents: ${vol.readdirSync(skillsPath)}`);
   }
 
+  // add rules to virtual volume if provided
+  const virtualRuleFiles: string[] = [];
+  if (args.rules) {
+    vol.mkdirSync(rulesPath, { recursive: true });
+    virtualRoots.add(rulesPath);
+
+    for (const [filename, content] of args.rules) {
+      const filePath = path.join(rulesPath, filename);
+      // handle subdirectories in rule paths
+      vol.mkdirSync(path.dirname(filePath), { recursive: true });
+      vol.writeFileSync(filePath, content);
+      virtualRuleFiles.push(filename);
+    }
+
+    log.vfs("Rules written to virtual volume");
+    log.vfs(`Virtual directory contents: ${vol.readdirSync(rulesPath)}`);
+  }
+
   // ensure files exists - workaround for discovery issues
   // TODO: remove since we can monkey patch now
   ensureFileExists(claudeMdPath);
@@ -1960,6 +1951,7 @@ export const setupVirtualFileSystem = (args: {
     virtualAgents: virtualAgentFiles,
     skillsPath: args.skills ? skillsPath : undefined,
     virtualSkills: virtualSkillDirs,
+    rulesPath: args.rules ? rulesPath : undefined,
     virtualRoots,
     volPromises,
   });

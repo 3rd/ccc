@@ -1,9 +1,9 @@
 import { join } from "path";
 import type { Context } from "@/context/Context";
-import { discoverPlugins, getDefaultPluginDirs, sortByDependencies } from "@/plugins/discovery";
-import { loadPlugins } from "@/plugins/loader";
 import type { PluginEnablementConfig } from "@/plugins/schema";
 import type { LoadedPlugin } from "@/plugins/types";
+import { discoverPlugins, getDefaultPluginDirs, sortByDependencies } from "@/plugins/discovery";
+import { loadPlugins } from "@/plugins/loader";
 
 export interface CCCPluginLoadResult {
   plugins: LoadedPlugin[];

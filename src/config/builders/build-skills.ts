@@ -1,12 +1,12 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import * as path from "path";
 import { join, relative } from "path";
-import type { ConfigLayer } from "@/utils/errors";
-import type { Context } from "@/context/Context";
 import type { ConfigModule } from "@/config/layers";
+import type { Context } from "@/context/Context";
 import type { SkillBundle, SkillDefinition, SkillFile } from "@/types/skills";
-import { log } from "@/utils/log";
+import type { ConfigLayer } from "@/utils/errors";
 import { formatConfigError } from "@/utils/errors";
+import { log } from "@/utils/log";
 
 const SKILL_MD = "SKILL.md";
 const SKILL_TS = "SKILL.ts";
@@ -17,7 +17,7 @@ const normalizeRelativePath = (value: string): string | null => {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
-  const withoutLeading = trimmed.replace(/^[.][/\\]/, "");
+  const withoutLeading = trimmed.replace(/^\.[/\\]/, "");
   const normalized = path.posix.normalize(toPosixPath(withoutLeading));
   if (normalized === "." || normalized.startsWith("..") || path.isAbsolute(normalized)) {
     return null;
@@ -51,10 +51,10 @@ const readSkillFiles = (skillDir: string, exclude: Set<string> = new Set()): Ski
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const isScalar = (value: unknown): value is string | number | boolean | null =>
-  value === null || ["string", "number", "boolean"].includes(typeof value);
+const isScalar = (value: unknown): value is boolean | number | string | null =>
+  value === null || ["boolean", "number", "string"].includes(typeof value);
 
-const renderYamlScalar = (value: string | number | boolean | null): string => {
+const renderYamlScalar = (value: boolean | number | string | null): string => {
   if (value === null) return "null";
   if (typeof value === "string") return JSON.stringify(value);
   return String(value);
@@ -113,7 +113,8 @@ const renderFrontmatter = (data: Record<string, unknown>): string => {
 };
 
 const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string, skillPath: string) => {
-  const resolvedName = definition.name && definition.name !== skillName ? skillName : definition.name ?? skillName;
+  const resolvedName =
+    definition.name && definition.name !== skillName ? skillName : (definition.name ?? skillName);
   if (definition.name && definition.name !== skillName) {
     log.warn(
       "SKILLS",
@@ -133,15 +134,15 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
   }
 
   const reserved = new Set([
-    "name",
-    "description",
-    "model",
-    "context",
     "agent",
     "allowed-tools",
-    "user-invocable",
+    "context",
+    "description",
     "disable-model-invocation",
     "hooks",
+    "model",
+    "name",
+    "user-invocable",
   ]);
 
   const frontmatter: Record<string, unknown> = {
@@ -203,7 +204,7 @@ const loadSkillFromTs = async (
     const normalized = normalizeSkillDefinition(definition, skillName, skillTsPath);
     if (!normalized) return null;
 
-    const exclude = new Set<string>([SKILL_TS, SKILL_MD]);
+    const exclude = new Set<string>([SKILL_MD, SKILL_TS]);
     const diskFiles = readSkillFiles(skillDir, exclude);
     const fileMap = new Map<string, string>();
     fileMap.set(SKILL_MD, normalized.content);
@@ -259,7 +260,7 @@ const loadSkillFromDir = async (
     if (existsSync(skillMdPath)) {
       log.warn("SKILLS", `Using ${SKILL_TS} over ${SKILL_MD} in ${skillDir}`);
     }
-    return await loadSkillFromTs(context, skillDir, skillName, layer, layerName);
+    return loadSkillFromTs(context, skillDir, skillName, layer, layerName);
   }
 
   if (!existsSync(skillMdPath)) {
