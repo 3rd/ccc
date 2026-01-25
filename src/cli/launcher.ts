@@ -460,7 +460,6 @@ const run = async () => {
     settingSources?: ("local" | "project" | "user")[];
     strictMcpConfig?: boolean;
     loopy?: boolean;
-    // new flags (v2.1.x)
     init?: boolean;
     initOnly?: boolean;
     maintenance?: boolean;
@@ -472,6 +471,7 @@ const run = async () => {
     disableSlashCommands?: boolean;
     maxBudgetUsd?: number;
     dangerouslySkipPermissions?: boolean;
+    sessionId?: string;
   };
   const settingsCli = (settings as { cli?: CliFlags }).cli || {};
 
@@ -625,6 +625,11 @@ const run = async () => {
   // --dangerously-skip-permissions (v2.0.31)
   if (!hasCliArg("--dangerously-skip-permissions") && settingsCli.dangerouslySkipPermissions) {
     args.push("--dangerously-skip-permissions");
+  }
+
+  // --session-id (v2.0.73)
+  if (!hasCliArg("--session-id") && settingsCli.sessionId) {
+    args.push("--session-id", settingsCli.sessionId);
   }
 
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);

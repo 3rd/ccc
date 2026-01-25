@@ -72,6 +72,8 @@ export const settingsSchema = z.object({
       maxBudgetUsd: z.number().optional(),
       // bypass all permissions
       dangerouslySkipPermissions: z.boolean().optional(),
+      // custom session ID when forking sessions
+      sessionId: z.string().optional(),
     })
     .optional(),
 

@@ -26,18 +26,18 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^2.1.15",
+    "@anthropic-ai/claude-code": "^2.1.19",
     "dotenv": "^17.2.3",
     "eventsource": "^4.1.0",
     "fast-glob": "^3.3.3",
-    "fastmcp": "^3.28.0",
+    "fastmcp": "^3.29.0",
     "json-schema": "^0.4.0",
     "json-schema-to-zod": "^2.7.0",
-    "memfs": "^4.56.9",
+    "memfs": "^4.56.10",
     "picocolors": "^1.1.1",
     "picoprint": "^1.0.6",
     "unionfs": "^4.6.0",
-    "zod": "^4.3.5",
+    "zod": "^4.3.6",
     "zx": "^8.8.5"
   }
 }
