@@ -26,11 +26,11 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^2.1.19",
+    "@anthropic-ai/claude-code": "^2.1.20",
     "dotenv": "^17.2.3",
     "eventsource": "^4.1.0",
     "fast-glob": "^3.3.3",
-    "fastmcp": "^3.29.0",
+    "fastmcp": "^3.30.1",
     "json-schema": "^0.4.0",
     "json-schema-to-zod": "^2.7.0",
     "memfs": "^4.56.10",
