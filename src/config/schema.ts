@@ -74,6 +74,8 @@ export const settingsSchema = z.object({
       dangerouslySkipPermissions: z.boolean().optional(),
       // custom session ID when forking sessions
       sessionId: z.string().optional(),
+      // resume session linked to PR number or URL (v2.1.27)
+      fromPr: z.union([z.string(), z.number()]).optional(),
     })
     .optional(),
 

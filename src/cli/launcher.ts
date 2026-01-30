@@ -472,6 +472,7 @@ const run = async () => {
     maxBudgetUsd?: number;
     dangerouslySkipPermissions?: boolean;
     sessionId?: string;
+    fromPr?: string | number;
   };
   const settingsCli = (settings as { cli?: CliFlags }).cli || {};
 
@@ -630,6 +631,11 @@ const run = async () => {
   // --session-id (v2.0.73)
   if (!hasCliArg("--session-id") && settingsCli.sessionId) {
     args.push("--session-id", settingsCli.sessionId);
+  }
+
+  // --from-pr (v2.1.27)
+  if (!hasCliArg("--from-pr") && settingsCli.fromPr !== undefined) {
+    args.push("--from-pr", String(settingsCli.fromPr));
   }
 
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);
