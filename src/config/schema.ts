@@ -89,6 +89,8 @@ export const settingsSchema = z.object({
   showTurnDuration: z.boolean().optional(),
   // hide status line entirely
   hideStatusLine: z.boolean().optional(),
+  // enable reduced motion mode (v2.1.30)
+  reducedMotion: z.boolean().optional(),
   // toggle between stable/latest update channels
   releaseChannel: z.enum(["stable", "latest"]).optional(),
   // disable automatic updates
