@@ -76,6 +76,12 @@ export const settingsSchema = z.object({
       sessionId: z.string().optional(),
       // resume session linked to PR number or URL (v2.1.27)
       fromPr: z.union([z.string(), z.number()]).optional(),
+      // agent teams display mode (v2.1.32)
+      teammateMode: z.enum(["auto", "in-process", "tmux"]).optional(),
+      // append text to system prompt (works in both interactive and print modes)
+      appendSystemPrompt: z.string().optional(),
+      // load additional system prompt from file and append (print mode only)
+      appendSystemPromptFile: z.string().optional(),
     })
     .optional(),
 
@@ -89,8 +95,8 @@ export const settingsSchema = z.object({
   showTurnDuration: z.boolean().optional(),
   // hide status line entirely
   hideStatusLine: z.boolean().optional(),
-  // enable reduced motion mode (v2.1.30)
-  reducedMotion: z.boolean().optional(),
+  // reduce or disable UI animations (v2.1.30)
+  prefersReducedMotion: z.boolean().optional(),
   // toggle between stable/latest update channels
   releaseChannel: z.enum(["stable", "latest"]).optional(),
   // disable automatic updates
@@ -99,6 +105,17 @@ export const settingsSchema = z.object({
   claudeFileHistoryEnabled: z.boolean().optional(),
   // disable all hooks globally
   disableAllHooks: z.boolean().optional(),
+  // agent teams display mode (v2.1.32)
+  teammateMode: z.enum(["auto", "in-process", "tmux"]).optional(),
+  // customize spinner verbs (v2.1.23)
+  spinnerVerbs: z
+    .object({
+      mode: z.enum(["append", "replace"]),
+      verbs: z.array(z.string()),
+    })
+    .optional(),
+  // enable terminal progress bar in supported terminals (v2.1.30)
+  terminalProgressBarEnabled: z.boolean().optional(),
 
   apiKeyHelper: z.string().optional(),
   awsAuthRefresh: z.string().optional(),
@@ -135,7 +152,9 @@ export const settingsSchema = z.object({
       network: z
         .object({
           allowUnixSockets: z.array(z.string()).optional(),
+          allowAllUnixSockets: z.boolean().optional(),
           allowLocalBinding: z.boolean().optional(),
+          allowedDomains: z.array(z.string()).optional(),
           httpProxyPort: z.number().optional(),
           socksProxyPort: z.number().optional(),
         })

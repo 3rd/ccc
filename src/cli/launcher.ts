@@ -473,6 +473,9 @@ const run = async () => {
     dangerouslySkipPermissions?: boolean;
     sessionId?: string;
     fromPr?: string | number;
+    teammateMode?: "auto" | "in-process" | "tmux";
+    appendSystemPrompt?: string;
+    appendSystemPromptFile?: string;
   };
   const settingsCli = (settings as { cli?: CliFlags }).cli || {};
 
@@ -636,6 +639,21 @@ const run = async () => {
   // --from-pr (v2.1.27)
   if (!hasCliArg("--from-pr") && settingsCli.fromPr !== undefined) {
     args.push("--from-pr", String(settingsCli.fromPr));
+  }
+
+  // --teammate-mode (v2.1.32)
+  if (!hasCliArg("--teammate-mode") && settingsCli.teammateMode) {
+    args.push("--teammate-mode", settingsCli.teammateMode);
+  }
+
+  // --append-system-prompt (v2.1.32)
+  if (!hasCliArg("--append-system-prompt") && settingsCli.appendSystemPrompt) {
+    args.push("--append-system-prompt", settingsCli.appendSystemPrompt);
+  }
+
+  // --append-system-prompt-file (v2.1.32)
+  if (!hasCliArg("--append-system-prompt-file") && settingsCli.appendSystemPromptFile) {
+    args.push("--append-system-prompt-file", settingsCli.appendSystemPromptFile);
   }
 
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);
