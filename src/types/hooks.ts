@@ -10,6 +10,8 @@ export type HookEventName =
   | "Stop"
   | "SubagentStart"
   | "SubagentStop"
+  | "TaskCompleted"
+  | "TeammateIdle"
   | "UserPromptSubmit";
 
 export type HookMatcherType =
@@ -134,6 +136,21 @@ export interface SubagentStartHookInput extends BaseHookInput {
   agent_type?: string;
 }
 
+export interface TeammateIdleHookInput extends BaseHookInput {
+  hook_event_name: "TeammateIdle";
+  teammate_name: string;
+  team_name: string;
+}
+
+export interface TaskCompletedHookInput extends BaseHookInput {
+  hook_event_name: "TaskCompleted";
+  task_id: string;
+  task_subject: string;
+  task_description: string;
+  teammate_name: string;
+  team_name: string;
+}
+
 export type ClaudeHookInput =
   | NotificationHookInput
   | PermissionRequestHookInput
@@ -146,6 +163,8 @@ export type ClaudeHookInput =
   | StopHookInput
   | SubagentStartHookInput
   | SubagentStopHookInput
+  | TaskCompletedHookInput
+  | TeammateIdleHookInput
   | UserPromptSubmitHookInput;
 
 interface BaseHookResponse {
@@ -226,6 +245,10 @@ export interface SetupHookResponse extends BaseHookResponse {}
 
 export interface SubagentStartHookResponse extends BaseHookResponse {}
 
+export interface TeammateIdleHookResponse extends BaseHookResponse {}
+
+export interface TaskCompletedHookResponse extends BaseHookResponse {}
+
 export type HookResponse =
   | NotificationHookResponse
   | PermissionRequestHookResponse
@@ -238,6 +261,8 @@ export type HookResponse =
   | StopHookResponse
   | SubagentStartHookResponse
   | SubagentStopHookResponse
+  | TaskCompletedHookResponse
+  | TeammateIdleHookResponse
   | UserPromptSubmitHookResponse;
 
 export interface HookEventMap {
@@ -280,6 +305,14 @@ export interface HookEventMap {
   SubagentStop: {
     input: SubagentStopHookInput;
     response: SubagentStopHookResponse | void;
+  };
+  TaskCompleted: {
+    input: TaskCompletedHookInput;
+    response: TaskCompletedHookResponse | void;
+  };
+  TeammateIdle: {
+    input: TeammateIdleHookInput;
+    response: TeammateIdleHookResponse | void;
   };
   Notification: {
     input: NotificationHookInput;

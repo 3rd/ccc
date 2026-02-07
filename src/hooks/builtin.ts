@@ -24,6 +24,16 @@ const builtins: BuiltinCommands = {
     handler: eventRecorder.record,
   }),
   SubagentStop: createHook({ event: "SubagentStop", id: "builtin-recorder", handler: eventRecorder.record }),
+  TaskCompleted: createHook({
+    event: "TaskCompleted",
+    id: "builtin-recorder",
+    handler: eventRecorder.record,
+  }),
+  TeammateIdle: createHook({
+    event: "TeammateIdle",
+    id: "builtin-recorder",
+    handler: eventRecorder.record,
+  }),
   UserPromptSubmit: createHook({
     event: "UserPromptSubmit",
     id: "builtin-recorder",
