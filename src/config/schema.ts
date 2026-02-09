@@ -4,7 +4,11 @@ export const agentDefinitionSchema = z.object({
   description: z.string(),
   prompt: z.string(),
   tools: z.array(z.string()).optional(),
-  model: z.enum(["sonnet", "opus", "haiku"]).optional(),
+  disallowedTools: z.array(z.string()).optional(),
+  model: z.enum(["sonnet", "opus", "haiku", "inherit"]).optional(),
+  skills: z.array(z.string()).optional(),
+  mcpServers: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])).optional(),
+  maxTurns: z.number().optional(),
 });
 
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
@@ -82,6 +86,24 @@ export const settingsSchema = z.object({
       appendSystemPrompt: z.string().optional(),
       // load additional system prompt from file and append (print mode only)
       appendSystemPromptFile: z.string().optional(),
+      // beta headers to include in API requests (API key users only)
+      betas: z.array(z.string()).optional(),
+      // limit number of agentic turns (print mode only)
+      maxTurns: z.number().optional(),
+      // disable session persistence (print mode only)
+      noSessionPersistence: z.boolean().optional(),
+      // MCP tool for permission prompts in non-interactive mode
+      permissionPromptTool: z.string().optional(),
+      // include partial streaming events (requires print + stream-json)
+      includePartialMessages: z.boolean().optional(),
+      // input format for print mode: text, stream-json
+      inputFormat: z.enum(["text", "stream-json"]).optional(),
+      // get validated JSON output matching a JSON schema (print mode only)
+      jsonSchema: z.string().optional(),
+      // enable permission bypassing without immediately activating
+      allowDangerouslySkipPermissions: z.boolean().optional(),
+      // load additional settings from file or JSON string
+      settings: z.string().optional(),
     })
     .optional(),
 
@@ -97,8 +119,10 @@ export const settingsSchema = z.object({
   hideStatusLine: z.boolean().optional(),
   // reduce or disable UI animations (v2.1.30)
   prefersReducedMotion: z.boolean().optional(),
-  // toggle between stable/latest update channels
+  // toggle between stable/latest update channels (deprecated, use autoUpdatesChannel)
   releaseChannel: z.enum(["stable", "latest"]).optional(),
+  // release channel: stable (week-old, skips regressions) or latest (most recent)
+  autoUpdatesChannel: z.enum(["stable", "latest"]).optional(),
   // disable automatic updates
   disableAutoUpdate: z.boolean().optional(),
   // enable/disable file history feature
@@ -116,18 +140,46 @@ export const settingsSchema = z.object({
     .optional(),
   // enable terminal progress bar in supported terminals (v2.1.30)
   terminalProgressBarEnabled: z.boolean().optional(),
+  // enable fast mode for faster Opus 4.6 responses at higher cost (v2.1.36)
+  fastMode: z.boolean().optional(),
+  // effort level for Opus 4.6 adaptive reasoning: low, medium, high (default)
+  effortLevel: z.enum(["low", "medium", "high"]).optional(),
+  // output style to adjust system prompt (e.g., "Explanatory")
+  outputStyle: z.string().optional(),
 
   apiKeyHelper: z.string().optional(),
   awsAuthRefresh: z.string().optional(),
+  // script outputting JSON with AWS credentials
+  awsCredentialExport: z.string().optional(),
   cleanupPeriodDays: z.number().optional(),
   companyAnnouncements: z.array(z.string()).optional(),
   enableAllProjectMcpServers: z.boolean().optional(),
-  forceLoginMethod: z.string().optional(),
+  // specific MCP servers from .mcp.json to approve
+  enabledMcpjsonServers: z.array(z.string()).optional(),
+  // specific MCP servers from .mcp.json to reject
+  disabledMcpjsonServers: z.array(z.string()).optional(),
+  forceLoginMethod: z.enum(["claudeai", "console"]).optional(),
+  // auto-select organization UUID during login (requires forceLoginMethod)
+  forceLoginOrgUUID: z.string().optional(),
+  // script to generate dynamic OpenTelemetry headers
+  otelHeadersHelper: z.string().optional(),
+  // git/PR attribution settings (replaces deprecated includeCoAuthoredBy)
+  attribution: z
+    .object({
+      commit: z.string().optional(),
+      pr: z.string().optional(),
+    })
+    .optional(),
+  // deprecated: use attribution instead
   includeCoAuthoredBy: z.boolean().optional(),
-  model: z.union([z.enum(["auto", "opus", "opusplan", "sonnet"]), z.string()]).optional(),
+  model: z.union([z.enum(["auto", "default", "opus", "opusplan", "sonnet", "haiku"]), z.string()]).optional(),
   spinnerTipsEnabled: z.boolean().optional(),
   skipWebFetchPreflight: z.boolean().optional(),
   alwaysThinkingEnabled: z.boolean().optional(),
+  // allow only managed and SDK hooks, block user/project/plugin hooks
+  allowManagedHooksOnly: z.boolean().optional(),
+  // per-plugin configuration
+  pluginConfigs: z.record(z.string(), z.unknown()).optional(),
 
   permissions: z
     .object({
@@ -136,7 +188,7 @@ export const settingsSchema = z.object({
       ask: z.array(z.string()).optional(),
       additionalDirectories: z.array(z.string()).optional(),
       defaultMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions"]).optional(),
-      disableBypassPermissionsMode: z.boolean().optional(),
+      disableBypassPermissionsMode: z.union([z.boolean(), z.literal("disable")]).optional(),
     })
     .optional(),
 
@@ -173,8 +225,7 @@ export const settingsSchema = z.object({
     )
     .optional(),
 
-  // overwritten by launcher
-  // outputStyle: z.string().optional(),
+  // hooks are overwritten by launcher
   // hooks: z.record(z.string(), z.array(z.any())).optional(),
 
   // config options

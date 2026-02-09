@@ -447,7 +447,7 @@ const run = async () => {
     disallowedTools?: string[];
     allowedTools?: string[];
     addDir?: string[];
-    permissionMode?: string;
+    permissionMode?: "default" | "acceptEdits" | "plan" | "bypassPermissions";
     verbose?: boolean;
     debug?: boolean | string;
     chrome?: boolean;
@@ -476,6 +476,15 @@ const run = async () => {
     teammateMode?: "auto" | "in-process" | "tmux";
     appendSystemPrompt?: string;
     appendSystemPromptFile?: string;
+    betas?: string[];
+    maxTurns?: number;
+    noSessionPersistence?: boolean;
+    permissionPromptTool?: string;
+    includePartialMessages?: boolean;
+    inputFormat?: "text" | "stream-json";
+    jsonSchema?: string;
+    allowDangerouslySkipPermissions?: boolean;
+    settings?: string;
   };
   const settingsCli = (settings as { cli?: CliFlags }).cli || {};
 
@@ -654,6 +663,51 @@ const run = async () => {
   // --append-system-prompt-file (v2.1.32)
   if (!hasCliArg("--append-system-prompt-file") && settingsCli.appendSystemPromptFile) {
     args.push("--append-system-prompt-file", settingsCli.appendSystemPromptFile);
+  }
+
+  // --betas (comma-separated)
+  if (!hasCliArg("--betas") && settingsCli.betas?.length) {
+    args.push("--betas", settingsCli.betas.join(","));
+  }
+
+  // --max-turns (number, print mode only)
+  if (!hasCliArg("--max-turns") && settingsCli.maxTurns !== undefined) {
+    args.push("--max-turns", String(settingsCli.maxTurns));
+  }
+
+  // --no-session-persistence (print mode only)
+  if (!hasCliArg("--no-session-persistence") && settingsCli.noSessionPersistence) {
+    args.push("--no-session-persistence");
+  }
+
+  // --permission-prompt-tool (non-interactive mode)
+  if (!hasCliArg("--permission-prompt-tool") && settingsCli.permissionPromptTool) {
+    args.push("--permission-prompt-tool", settingsCli.permissionPromptTool);
+  }
+
+  // --include-partial-messages (requires print + stream-json)
+  if (!hasCliArg("--include-partial-messages") && settingsCli.includePartialMessages) {
+    args.push("--include-partial-messages");
+  }
+
+  // --input-format (print mode only)
+  if (!hasCliArg("--input-format") && settingsCli.inputFormat) {
+    args.push("--input-format", settingsCli.inputFormat);
+  }
+
+  // --json-schema (print mode only)
+  if (!hasCliArg("--json-schema") && settingsCli.jsonSchema) {
+    args.push("--json-schema", settingsCli.jsonSchema);
+  }
+
+  // --allow-dangerously-skip-permissions
+  if (!hasCliArg("--allow-dangerously-skip-permissions") && settingsCli.allowDangerouslySkipPermissions) {
+    args.push("--allow-dangerously-skip-permissions");
+  }
+
+  // --settings (path to settings file or JSON string)
+  if (!hasCliArg("--settings") && settingsCli.settings) {
+    args.push("--settings", settingsCli.settings);
   }
 
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);
