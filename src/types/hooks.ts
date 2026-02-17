@@ -2,6 +2,7 @@ export type HookEventName =
   | "Notification"
   | "PermissionRequest"
   | "PostToolUse"
+  | "PostToolUseFailure"
   | "PreCompact"
   | "PreToolUse"
   | "SessionEnd"
@@ -16,19 +17,26 @@ export type HookEventName =
 
 export type HookMatcherType =
   | ({} & string)
+  | "AskUserQuestion"
   | "auto"
   | "Bash"
   | "clear"
   | "compact"
   | "Edit"
+  | "EnterPlanMode"
+  | "ExitPlanMode"
   | "Glob"
   | "Grep"
+  | "LSP"
   | "manual"
   | "MultiEdit"
+  | "NotebookEdit"
   | "Read"
   | "resume"
   | "startup"
   | "Task"
+  | "TaskOutput"
+  | "ToolSearch"
   | "WebFetch"
   | "WebSearch"
   | "Write";
@@ -55,7 +63,7 @@ export interface HookDefinition {
 
 export type HooksConfiguration = Partial<Record<HookEventName, HookDefinition[]>>;
 
-export type PermissionMode = "acceptEdits" | "bypassPermissions" | "default" | "plan";
+export type PermissionMode = "acceptEdits" | "bypassPermissions" | "default" | "delegate" | "dontAsk" | "plan";
 
 interface BaseHookInput {
   session_id: string;
@@ -127,7 +135,7 @@ export interface PreCompactHookInput extends BaseHookInput {
 
 export interface SetupHookInput extends BaseHookInput {
   hook_event_name: "Setup";
-  source: "init-only" | "init" | "maintenance";
+  trigger: "init" | "maintenance";
 }
 
 export interface SubagentStartHookInput extends BaseHookInput {
@@ -151,9 +159,21 @@ export interface TaskCompletedHookInput extends BaseHookInput {
   team_name: string;
 }
 
+export interface PostToolUseFailureHookInput extends BaseHookInput {
+  hook_event_name: "PostToolUseFailure";
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  tool_use_id: string;
+  error: string;
+  error_type: string;
+  is_interrupt: boolean;
+  is_timeout: boolean;
+}
+
 export type ClaudeHookInput =
   | NotificationHookInput
   | PermissionRequestHookInput
+  | PostToolUseFailureHookInput
   | PostToolUseHookInput
   | PreCompactHookInput
   | PreToolUseHookInput
@@ -241,6 +261,13 @@ export interface PreCompactHookResponse extends BaseHookResponse {}
 
 export interface SessionEndHookResponse extends BaseHookResponse {}
 
+export interface PostToolUseFailureHookResponse extends BaseHookResponse {
+  hookSpecificOutput?: {
+    hookEventName: "PostToolUseFailure";
+    additionalContext?: string;
+  };
+}
+
 export interface SetupHookResponse extends BaseHookResponse {}
 
 export interface SubagentStartHookResponse extends BaseHookResponse {}
@@ -252,6 +279,7 @@ export interface TaskCompletedHookResponse extends BaseHookResponse {}
 export type HookResponse =
   | NotificationHookResponse
   | PermissionRequestHookResponse
+  | PostToolUseFailureHookResponse
   | PostToolUseHookResponse
   | PreCompactHookResponse
   | PreToolUseHookResponse
@@ -277,6 +305,10 @@ export interface HookEventMap {
   PostToolUse: {
     input: PostToolUseHookInput;
     response: PostToolUseHookResponse | void;
+  };
+  PostToolUseFailure: {
+    input: PostToolUseFailureHookInput;
+    response: PostToolUseFailureHookResponse | void;
   };
   UserPromptSubmit: {
     input: UserPromptSubmitHookInput;

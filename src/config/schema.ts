@@ -29,7 +29,7 @@ export const settingsSchema = z.object({
       // additional working directories for Claude to access
       addDir: z.array(z.string()).optional(),
       // permission mode to start in: "default", "acceptEdits", "plan", "bypassPermissions"
-      permissionMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions"]).optional(),
+      permissionMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions", "delegate", "dontAsk"]).optional(),
       // enable verbose logging
       verbose: z.boolean().optional(),
       // enable debug mode with optional category filter (e.g., "api,hooks" or "!statsig")
@@ -104,6 +104,14 @@ export const settingsSchema = z.object({
       allowDangerouslySkipPermissions: z.boolean().optional(),
       // load additional settings from file or JSON string
       settings: z.string().optional(),
+      // effort level override via CLI (low, medium, high, max)
+      effort: z.enum(["low", "medium", "high", "max"]).optional(),
+      // file resources to download at startup
+      file: z.array(z.string()).optional(),
+      // write debug logs to a specific file path
+      debugFile: z.string().optional(),
+      // re-emit user messages in stream-json output
+      replayUserMessages: z.boolean().optional(),
     })
     .optional(),
 
@@ -187,7 +195,7 @@ export const settingsSchema = z.object({
       deny: z.array(z.string()).optional(),
       ask: z.array(z.string()).optional(),
       additionalDirectories: z.array(z.string()).optional(),
-      defaultMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions"]).optional(),
+      defaultMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions", "delegate", "dontAsk"]).optional(),
       disableBypassPermissionsMode: z.union([z.boolean(), z.literal("disable")]).optional(),
     })
     .optional(),

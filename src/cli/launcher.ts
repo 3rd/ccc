@@ -447,7 +447,7 @@ const run = async () => {
     disallowedTools?: string[];
     allowedTools?: string[];
     addDir?: string[];
-    permissionMode?: "default" | "acceptEdits" | "plan" | "bypassPermissions";
+    permissionMode?: "default" | "acceptEdits" | "plan" | "bypassPermissions" | "delegate" | "dontAsk";
     verbose?: boolean;
     debug?: boolean | string;
     chrome?: boolean;
@@ -485,6 +485,10 @@ const run = async () => {
     jsonSchema?: string;
     allowDangerouslySkipPermissions?: boolean;
     settings?: string;
+    effort?: "low" | "medium" | "high" | "max";
+    file?: string[];
+    debugFile?: string;
+    replayUserMessages?: boolean;
   };
   const settingsCli = (settings as { cli?: CliFlags }).cli || {};
 
@@ -708,6 +712,28 @@ const run = async () => {
   // --settings (path to settings file or JSON string)
   if (!hasCliArg("--settings") && settingsCli.settings) {
     args.push("--settings", settingsCli.settings);
+  }
+
+  // --effort (low, medium, high, max)
+  if (!hasCliArg("--effort") && settingsCli.effort) {
+    args.push("--effort", settingsCli.effort);
+  }
+
+  // --file (multiple flags, one per file spec)
+  if (!hasCliArg("--file") && !hasCliArg("--files") && settingsCli.file?.length) {
+    for (const f of settingsCli.file) {
+      args.push("--file", f);
+    }
+  }
+
+  // --debug-file (path to write debug logs)
+  if (!hasCliArg("--debug-file") && settingsCli.debugFile) {
+    args.push("--debug-file", settingsCli.debugFile);
+  }
+
+  // --replay-user-messages (stream-json mode)
+  if (!hasCliArg("--replay-user-messages") && settingsCli.replayUserMessages) {
+    args.push("--replay-user-messages");
   }
 
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);
