@@ -182,6 +182,12 @@ export const settingsSchema = z.object({
   includeCoAuthoredBy: z.boolean().optional(),
   model: z.union([z.enum(["auto", "default", "opus", "opusplan", "sonnet", "haiku"]), z.string()]).optional(),
   spinnerTipsEnabled: z.boolean().optional(),
+  spinnerTipsOverride: z
+    .object({
+      tips: z.array(z.string()),
+      excludeDefault: z.boolean().optional(),
+    })
+    .optional(),
   skipWebFetchPreflight: z.boolean().optional(),
   alwaysThinkingEnabled: z.boolean().optional(),
   // allow only managed and SDK hooks, block user/project/plugin hooks
