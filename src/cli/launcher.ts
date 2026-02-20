@@ -489,6 +489,10 @@ const run = async () => {
     file?: string[];
     debugFile?: string;
     replayUserMessages?: boolean;
+    // create a new git worktree for this session (v2.1.49)
+    worktree?: boolean | string;
+    // create a tmux session for the worktree (requires --worktree) (v2.1.49)
+    tmux?: boolean | string;
   };
   const settingsCli = (settings as { cli?: CliFlags }).cli || {};
 
@@ -734,6 +738,24 @@ const run = async () => {
   // --replay-user-messages (stream-json mode)
   if (!hasCliArg("--replay-user-messages") && settingsCli.replayUserMessages) {
     args.push("--replay-user-messages");
+  }
+
+  // --worktree [name] (v2.1.49)
+  if (!hasCliArg("--worktree") && !hasCliArg("-w") && settingsCli.worktree !== undefined) {
+    if (typeof settingsCli.worktree === "string") {
+      args.push("--worktree", settingsCli.worktree);
+    } else if (settingsCli.worktree) {
+      args.push("--worktree");
+    }
+  }
+
+  // --tmux (requires --worktree) (v2.1.49)
+  if (!hasCliArg("--tmux") && settingsCli.tmux !== undefined) {
+    if (typeof settingsCli.tmux === "string") {
+      args.push("--tmux", settingsCli.tmux);
+    } else if (settingsCli.tmux) {
+      args.push("--tmux");
+    }
   }
 
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);

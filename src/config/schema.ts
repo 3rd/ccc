@@ -112,6 +112,10 @@ export const settingsSchema = z.object({
       debugFile: z.string().optional(),
       // re-emit user messages in stream-json output
       replayUserMessages: z.boolean().optional(),
+      // create a new git worktree for this session (v2.1.49)
+      worktree: z.union([z.boolean(), z.string()]).optional(),
+      // create a tmux session for the worktree (requires --worktree) (v2.1.49)
+      tmux: z.union([z.boolean(), z.string()]).optional(),
     })
     .optional(),
 
@@ -208,6 +212,14 @@ export const settingsSchema = z.object({
 
   statusLine: z.object({ type: z.string(), command: z.string() }).optional(),
   fileSuggestion: z.object({ type: z.string(), command: z.string() }).optional(),
+
+  // git worktree configuration for --worktree flag (v2.1.49)
+  worktree: z
+    .object({
+      // directories to symlink from main repo to worktrees to avoid disk bloat
+      symlinkDirectories: z.array(z.string()).optional(),
+    })
+    .optional(),
 
   sandbox: z
     .object({

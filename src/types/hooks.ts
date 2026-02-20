@@ -112,11 +112,18 @@ export interface SessionEndHookInput extends BaseHookInput {
 export interface StopHookInput extends BaseHookInput {
   hook_event_name: "Stop";
   stop_hook_active: boolean;
+  // text content of the last assistant message before stopping (v2.1.47)
+  last_assistant_message?: string;
 }
 
 export interface SubagentStopHookInput extends BaseHookInput {
   hook_event_name: "SubagentStop";
   stop_hook_active: boolean;
+  agent_id: string;
+  agent_transcript_path: string;
+  agent_type: string;
+  // text content of the last assistant message before stopping (v2.1.47)
+  last_assistant_message?: string;
 }
 
 export type NotificationType = "auth_success" | "elicitation_dialog" | "idle_prompt" | "permission_prompt";
@@ -202,9 +209,9 @@ export interface PreToolUseHookResponse extends BaseHookResponse {
     updatedInput?: Record<string, unknown>;
     additionalContext?: string;
   };
-  /** @deprecated use hookSpecificOutput.permissionDecision instead */
+  // @deprecated use hookSpecificOutput.permissionDecision instead
   decision?: "approve" | "block";
-  /** @deprecated use hookSpecificOutput.permissionDecisionReason instead */
+  // @deprecated use hookSpecificOutput.permissionDecisionReason instead
   reason?: string;
 }
 
