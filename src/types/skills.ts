@@ -30,6 +30,10 @@ export interface SkillDefinition {
   userInvocable?: boolean;
   /** Blocks programmatic invocation via the Skill tool. */
   disableModelInvocation?: boolean;
+  /** Run agent in an isolated git worktree (v2.1.50). */
+  isolation?: "worktree";
+  /** Always run as a background task (v2.1.49). */
+  background?: boolean;
   /** Hook definitions scoped to this skill. */
   hooks?: HooksConfiguration | Record<string, unknown>;
   /**

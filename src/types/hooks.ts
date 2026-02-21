@@ -1,4 +1,5 @@
 export type HookEventName =
+  | "ConfigChange"
   | "Notification"
   | "PermissionRequest"
   | "PostToolUse"
@@ -13,7 +14,9 @@ export type HookEventName =
   | "SubagentStop"
   | "TaskCompleted"
   | "TeammateIdle"
-  | "UserPromptSubmit";
+  | "UserPromptSubmit"
+  | "WorktreeCreate"
+  | "WorktreeRemove";
 
 export type HookMatcherType =
   | ({} & string)
@@ -92,6 +95,7 @@ export interface PermissionRequestHookInput extends BaseHookInput {
   tool_name: string;
   tool_input: Record<string, unknown>;
   tool_use_id: string;
+  permission_suggestions?: Record<string, unknown>[];
 }
 
 export interface UserPromptSubmitHookInput extends BaseHookInput {
@@ -102,11 +106,13 @@ export interface UserPromptSubmitHookInput extends BaseHookInput {
 export interface SessionStartHookInput extends BaseHookInput {
   hook_event_name: "SessionStart";
   source: "clear" | "compact" | "resume" | "startup";
+  agent_type?: string;
+  model?: string;
 }
 
 export interface SessionEndHookInput extends BaseHookInput {
   hook_event_name: "SessionEnd";
-  reason: "clear" | "logout" | "other" | "prompt_input_exit";
+  reason: "bypass_permissions_disabled" | "clear" | "logout" | "other" | "prompt_input_exit";
 }
 
 export interface StopHookInput extends BaseHookInput {
@@ -131,13 +137,14 @@ export type NotificationType = "auth_success" | "elicitation_dialog" | "idle_pro
 export interface NotificationHookInput extends BaseHookInput {
   hook_event_name: "Notification";
   message: string;
+  title?: string;
   notification_type: NotificationType;
 }
 
 export interface PreCompactHookInput extends BaseHookInput {
   hook_event_name: "PreCompact";
   trigger: "auto" | "manual";
-  custom_instructions: string;
+  custom_instructions: string | null;
 }
 
 export interface SetupHookInput extends BaseHookInput {
@@ -148,7 +155,7 @@ export interface SetupHookInput extends BaseHookInput {
 export interface SubagentStartHookInput extends BaseHookInput {
   hook_event_name: "SubagentStart";
   agent_id: string;
-  agent_type?: string;
+  agent_type: string;
 }
 
 export interface TeammateIdleHookInput extends BaseHookInput {
@@ -161,9 +168,25 @@ export interface TaskCompletedHookInput extends BaseHookInput {
   hook_event_name: "TaskCompleted";
   task_id: string;
   task_subject: string;
-  task_description: string;
-  teammate_name: string;
-  team_name: string;
+  task_description?: string;
+  teammate_name?: string;
+  team_name?: string;
+}
+
+export interface ConfigChangeHookInput extends BaseHookInput {
+  hook_event_name: "ConfigChange";
+  source: "local_settings" | "policy_settings" | "project_settings" | "skills" | "user_settings";
+  file_path?: string;
+}
+
+export interface WorktreeCreateHookInput extends BaseHookInput {
+  hook_event_name: "WorktreeCreate";
+  name: string;
+}
+
+export interface WorktreeRemoveHookInput extends BaseHookInput {
+  hook_event_name: "WorktreeRemove";
+  worktree_path: string;
 }
 
 export interface PostToolUseFailureHookInput extends BaseHookInput {
@@ -172,12 +195,11 @@ export interface PostToolUseFailureHookInput extends BaseHookInput {
   tool_input: Record<string, unknown>;
   tool_use_id: string;
   error: string;
-  error_type: string;
-  is_interrupt: boolean;
-  is_timeout: boolean;
+  is_interrupt?: boolean;
 }
 
 export type ClaudeHookInput =
+  | ConfigChangeHookInput
   | NotificationHookInput
   | PermissionRequestHookInput
   | PostToolUseFailureHookInput
@@ -192,7 +214,9 @@ export type ClaudeHookInput =
   | SubagentStopHookInput
   | TaskCompletedHookInput
   | TeammateIdleHookInput
-  | UserPromptSubmitHookInput;
+  | UserPromptSubmitHookInput
+  | WorktreeCreateHookInput
+  | WorktreeRemoveHookInput;
 
 interface BaseHookResponse {
   continue?: boolean;
@@ -283,7 +307,14 @@ export interface TeammateIdleHookResponse extends BaseHookResponse {}
 
 export interface TaskCompletedHookResponse extends BaseHookResponse {}
 
+export interface ConfigChangeHookResponse extends BaseHookResponse {}
+
+export interface WorktreeCreateHookResponse extends BaseHookResponse {}
+
+export interface WorktreeRemoveHookResponse extends BaseHookResponse {}
+
 export type HookResponse =
+  | ConfigChangeHookResponse
   | NotificationHookResponse
   | PermissionRequestHookResponse
   | PostToolUseFailureHookResponse
@@ -298,7 +329,9 @@ export type HookResponse =
   | SubagentStopHookResponse
   | TaskCompletedHookResponse
   | TeammateIdleHookResponse
-  | UserPromptSubmitHookResponse;
+  | UserPromptSubmitHookResponse
+  | WorktreeCreateHookResponse
+  | WorktreeRemoveHookResponse;
 
 export interface HookEventMap {
   PreToolUse: {
@@ -360,6 +393,18 @@ export interface HookEventMap {
   PreCompact: {
     input: PreCompactHookInput;
     response: PreCompactHookResponse | void;
+  };
+  ConfigChange: {
+    input: ConfigChangeHookInput;
+    response: ConfigChangeHookResponse | void;
+  };
+  WorktreeCreate: {
+    input: WorktreeCreateHookInput;
+    response: WorktreeCreateHookResponse | void;
+  };
+  WorktreeRemove: {
+    input: WorktreeRemoveHookInput;
+    response: WorktreeRemoveHookResponse | void;
   };
 }
 

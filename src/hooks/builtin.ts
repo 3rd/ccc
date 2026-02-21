@@ -5,6 +5,7 @@ import type { HookCommand, HookEventName } from "@/types/hooks";
 type BuiltinCommands = Record<HookEventName, HookCommand>;
 
 const builtins: BuiltinCommands = {
+  ConfigChange: createHook({ event: "ConfigChange", id: "builtin-recorder", handler: eventRecorder.record }),
   Notification: createHook({ event: "Notification", id: "builtin-recorder", handler: eventRecorder.record }),
   PermissionRequest: createHook({
     event: "PermissionRequest",
@@ -41,6 +42,16 @@ const builtins: BuiltinCommands = {
   }),
   UserPromptSubmit: createHook({
     event: "UserPromptSubmit",
+    id: "builtin-recorder",
+    handler: eventRecorder.record,
+  }),
+  WorktreeCreate: createHook({
+    event: "WorktreeCreate",
+    id: "builtin-recorder",
+    handler: eventRecorder.record,
+  }),
+  WorktreeRemove: createHook({
+    event: "WorktreeRemove",
     id: "builtin-recorder",
     handler: eventRecorder.record,
   }),
