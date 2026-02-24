@@ -198,6 +198,34 @@ export const settingsSchema = z.object({
   allowManagedHooksOnly: z.boolean().optional(),
   // per-plugin configuration
   pluginConfigs: z.record(z.string(), z.unknown()).optional(),
+  // enable/disable auto-memory for the project (v2.1.51)
+  autoMemoryEnabled: z.boolean().optional(),
+  // disable syntax highlighting in diffs (v2.1.51)
+  syntaxHighlightingDisabled: z.boolean().optional(),
+  // whether /rename updates terminal tab title (v2.1.51)
+  terminalTitleFromRename: z.boolean().optional(),
+  // enable/disable prompt suggestions (v2.1.51)
+  promptSuggestionEnabled: z.boolean().optional(),
+  // minimum version to stay on, prevents downgrades (v2.1.51)
+  minimumVersion: z.string().optional(),
+  // allowlist of models users can select (v2.1.51)
+  availableModels: z.array(z.string()).optional(),
+  // glob patterns of CLAUDE.md files to exclude from loading (v2.1.51)
+  claudeMdExcludes: z.array(z.string()).optional(),
+  // remote session configuration (v2.1.51)
+  remote: z.object({ defaultEnvironmentId: z.string().optional() }).optional(),
+  // enterprise MCP server allowlist (v2.1.51)
+  allowedMcpServers: z
+    .array(z.object({ serverName: z.string().optional(), serverCommand: z.string().optional(), serverUrl: z.string().optional() }))
+    .optional(),
+  // enterprise MCP server denylist (v2.1.51)
+  deniedMcpServers: z
+    .array(z.object({ serverName: z.string().optional(), serverCommand: z.string().optional(), serverUrl: z.string().optional() }))
+    .optional(),
+  // when set in managed settings, only managed permission rules apply (v2.1.51)
+  allowManagedPermissionRulesOnly: z.boolean().optional(),
+  // when set in managed settings, only managed MCP allowlist applies (v2.1.51)
+  allowManagedMcpServersOnly: z.boolean().optional(),
 
   permissions: z
     .object({
@@ -206,12 +234,12 @@ export const settingsSchema = z.object({
       ask: z.array(z.string()).optional(),
       additionalDirectories: z.array(z.string()).optional(),
       defaultMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions", "delegate", "dontAsk"]).optional(),
-      disableBypassPermissionsMode: z.union([z.boolean(), z.literal("disable")]).optional(),
+      disableBypassPermissionsMode: z.literal("disable").optional(),
     })
     .optional(),
 
-  statusLine: z.object({ type: z.string(), command: z.string() }).optional(),
-  fileSuggestion: z.object({ type: z.string(), command: z.string() }).optional(),
+  statusLine: z.object({ type: z.literal("command"), command: z.string(), padding: z.number().optional() }).optional(),
+  fileSuggestion: z.object({ type: z.literal("command"), command: z.string() }).optional(),
 
   // git worktree configuration for --worktree flag (v2.1.49)
   worktree: z

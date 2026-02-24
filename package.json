@@ -18,7 +18,7 @@
     "@types/eventsource": "^3.0.0",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^24.10.13",
-    "knip": "^5.83.1",
+    "knip": "^5.85.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
@@ -26,7 +26,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^2.1.50",
+    "@anthropic-ai/claude-code": "^2.1.52",
     "dotenv": "^17.3.1",
     "eventsource": "^4.1.0",
     "fast-glob": "^3.3.3",

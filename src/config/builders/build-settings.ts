@@ -20,7 +20,7 @@ export const buildSettings = async (context: Context) => {
   }
 
   // statusline - check for config/global/statusline.ts or use settings.statusLine
-  let statusLine: { type: string; command: string } | undefined;
+  let statusLine: { type: "command"; command: string; padding?: number } | undefined;
 
   const statuslineConfigPath = join(context.launcherDirectory, "config/global/statusline.ts");
   const statuslineScriptPath = join(context.launcherDirectory, "src/cli/statusline.ts");
