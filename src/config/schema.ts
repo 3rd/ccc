@@ -154,6 +154,8 @@ export const settingsSchema = z.object({
   terminalProgressBarEnabled: z.boolean().optional(),
   // enable fast mode for faster Opus 4.6 responses at higher cost (v2.1.36)
   fastMode: z.boolean().optional(),
+  // per-session fast mode opt-in (v2.1.59)
+  fastModePerSessionOptIn: z.boolean().optional(),
   // effort level for Opus 4.6 adaptive reasoning: low, medium, high (default)
   effortLevel: z.enum(["low", "medium", "high"]).optional(),
   // output style to adjust system prompt (e.g., "Explanatory")
@@ -200,6 +202,10 @@ export const settingsSchema = z.object({
   pluginConfigs: z.record(z.string(), z.unknown()).optional(),
   // enable/disable auto-memory for the project (v2.1.51)
   autoMemoryEnabled: z.boolean().optional(),
+  // enable voice mode (hold Space to dictate) (v2.1.59)
+  voiceEnabled: z.boolean().optional(),
+  // skip confirmation dialog for dangerous mode (v2.1.59)
+  skipDangerousModePermissionPrompt: z.boolean().optional(),
   // disable syntax highlighting in diffs (v2.1.51)
   syntaxHighlightingDisabled: z.boolean().optional(),
   // whether /rename updates terminal tab title (v2.1.51)
@@ -214,6 +220,18 @@ export const settingsSchema = z.object({
   claudeMdExcludes: z.array(z.string()).optional(),
   // remote session configuration (v2.1.51)
   remote: z.object({ defaultEnvironmentId: z.string().optional() }).optional(),
+  // SSH remote environment configurations (v2.1.59)
+  sshConfigs: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        sshHost: z.string(),
+        sshPort: z.number().optional(),
+        sshIdentityFile: z.string().optional(),
+      }),
+    )
+    .optional(),
   // enterprise MCP server allowlist (v2.1.51)
   allowedMcpServers: z
     .array(z.object({ serverName: z.string().optional(), serverCommand: z.string().optional(), serverUrl: z.string().optional() }))
