@@ -55,6 +55,16 @@ const builtins: BuiltinCommands = {
     id: "builtin-recorder",
     handler: eventRecorder.record,
   }),
+  Elicitation: createHook({
+    event: "Elicitation",
+    id: "builtin-recorder",
+    handler: eventRecorder.record,
+  }),
+  ElicitationResult: createHook({
+    event: "ElicitationResult",
+    id: "builtin-recorder",
+    handler: eventRecorder.record,
+  }),
 };
 
 export const getBuiltinHookCommands = () => builtins;

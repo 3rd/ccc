@@ -1,5 +1,7 @@
 export type HookEventName =
   | "ConfigChange"
+  | "Elicitation"
+  | "ElicitationResult"
   | "Notification"
   | "PermissionRequest"
   | "PostToolUse"
@@ -58,15 +60,50 @@ export interface HookCommand {
   command: string;
   timeout?: number;
   once?: boolean;
+  // custom spinner status message while hook runs (v2.1.63)
+  statusMessage?: string;
+  // run in background without blocking (v2.1.63)
+  async?: boolean;
 }
 
 export interface HookPrompt {
   type: "prompt";
   prompt: string;
   timeout?: number;
+  once?: boolean;
+  // model to use for prompt evaluation (v2.1.63)
+  model?: string;
+  // custom spinner status message while hook runs (v2.1.63)
+  statusMessage?: string;
 }
 
-export type HookEntry = HookCommand | HookPrompt;
+// http hook: POST JSON to a URL and receive JSON response (v2.1.63)
+export interface HookHttp {
+  type: "http";
+  url: string;
+  timeout?: number;
+  once?: boolean;
+  // additional request headers; values support $VAR_NAME interpolation (v2.1.63)
+  headers?: Record<string, string>;
+  // env vars allowed to be interpolated in header values (v2.1.63)
+  allowedEnvVars?: string[];
+  // custom spinner status message while hook runs (v2.1.63)
+  statusMessage?: string;
+}
+
+// agentic verifier hook: runs an agent to verify conditions (v2.1.63)
+export interface HookAgent {
+  type: "agent";
+  prompt: string;
+  timeout?: number;
+  once?: boolean;
+  // model to use for agent hook (v2.1.63)
+  model?: string;
+  // custom spinner status message while hook runs (v2.1.63)
+  statusMessage?: string;
+}
+
+export type HookEntry = HookCommand | HookPrompt | HookHttp | HookAgent;
 
 export interface HookDefinition {
   matcher?: HookMatcherType;
@@ -198,6 +235,14 @@ export interface WorktreeRemoveHookInput extends BaseHookInput {
   worktree_path: string;
 }
 
+export interface ElicitationHookInput extends BaseHookInput {
+  hook_event_name: "Elicitation";
+}
+
+export interface ElicitationResultHookInput extends BaseHookInput {
+  hook_event_name: "ElicitationResult";
+}
+
 export interface PostToolUseFailureHookInput extends BaseHookInput {
   hook_event_name: "PostToolUseFailure";
   tool_name: string;
@@ -209,6 +254,8 @@ export interface PostToolUseFailureHookInput extends BaseHookInput {
 
 export type ClaudeHookInput =
   | ConfigChangeHookInput
+  | ElicitationHookInput
+  | ElicitationResultHookInput
   | NotificationHookInput
   | PermissionRequestHookInput
   | PostToolUseFailureHookInput
@@ -322,8 +369,14 @@ export interface WorktreeCreateHookResponse extends BaseHookResponse {}
 
 export interface WorktreeRemoveHookResponse extends BaseHookResponse {}
 
+export interface ElicitationHookResponse extends BaseHookResponse {}
+
+export interface ElicitationResultHookResponse extends BaseHookResponse {}
+
 export type HookResponse =
   | ConfigChangeHookResponse
+  | ElicitationHookResponse
+  | ElicitationResultHookResponse
   | NotificationHookResponse
   | PermissionRequestHookResponse
   | PostToolUseFailureHookResponse
@@ -414,6 +467,14 @@ export interface HookEventMap {
   WorktreeRemove: {
     input: WorktreeRemoveHookInput;
     response: WorktreeRemoveHookResponse | void;
+  };
+  Elicitation: {
+    input: ElicitationHookInput;
+    response: ElicitationHookResponse | void;
+  };
+  ElicitationResult: {
+    input: ElicitationResultHookInput;
+    response: ElicitationResultHookResponse | void;
   };
 }
 

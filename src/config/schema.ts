@@ -242,6 +242,10 @@ export const settingsSchema = z.object({
   alwaysThinkingEnabled: z.boolean().optional(),
   // allow only managed and SDK hooks, block user/project/plugin hooks
   allowManagedHooksOnly: z.boolean().optional(),
+  // allowlist of URL patterns for HTTP hooks (supports * wildcard) (v2.1.63)
+  allowedHttpHookUrls: z.array(z.string()).optional(),
+  // allowlist of env var names HTTP hooks may interpolate into headers (v2.1.63)
+  httpHookAllowedEnvVars: z.array(z.string()).optional(),
   // per-plugin configuration
   pluginConfigs: z.record(z.string(), z.unknown()).optional(),
   // enable/disable auto-memory for the project (v2.1.51)
