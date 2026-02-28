@@ -493,6 +493,8 @@ const run = async () => {
     worktree?: boolean | string;
     // create a tmux session for the worktree (requires --worktree) (v2.1.49)
     tmux?: boolean | string;
+    // thinking mode: enabled (= adaptive), adaptive, disabled (v2.1.61)
+    thinking?: "enabled" | "adaptive" | "disabled";
   };
   const settingsCli = (settings as { cli?: CliFlags }).cli || {};
 
@@ -756,6 +758,11 @@ const run = async () => {
     } else if (settingsCli.tmux) {
       args.push("--tmux");
     }
+  }
+
+  // --thinking (enabled, adaptive, disabled) (v2.1.61)
+  if (!hasCliArg("--thinking") && settingsCli.thinking) {
+    args.push("--thinking", settingsCli.thinking);
   }
 
   log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);

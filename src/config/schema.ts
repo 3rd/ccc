@@ -13,6 +13,48 @@ export const agentDefinitionSchema = z.object({
 
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
 
+// marketplace source types for plugin marketplace configuration (v2.1.61)
+const marketplaceSourceSchema = z.discriminatedUnion("source", [
+  z.object({
+    source: z.literal("url"),
+    url: z.url(),
+    headers: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    source: z.literal("github"),
+    repo: z.string(),
+    ref: z.string().optional(),
+    path: z.string().optional(),
+  }),
+  z.object({
+    source: z.literal("git"),
+    url: z.string(),
+    ref: z.string().optional(),
+    path: z.string().optional(),
+  }),
+  z.object({
+    source: z.literal("npm"),
+    package: z.string(),
+  }),
+  z.object({
+    source: z.literal("file"),
+    path: z.string(),
+  }),
+  z.object({
+    source: z.literal("directory"),
+    path: z.string(),
+  }),
+  z.object({
+    source: z.literal("hostPattern"),
+    hostPattern: z.string(),
+  }),
+]);
+
+const marketplaceEntrySchema = z.object({
+  source: marketplaceSourceSchema,
+  installLocation: z.string().optional(),
+});
+
 // https://docs.anthropic.com/en/docs/claude-code/settings
 export const settingsSchema = z.object({
   env: z.record(z.string(), z.string()).optional(),
@@ -116,6 +158,8 @@ export const settingsSchema = z.object({
       worktree: z.union([z.boolean(), z.string()]).optional(),
       // create a tmux session for the worktree (requires --worktree) (v2.1.49)
       tmux: z.union([z.boolean(), z.string()]).optional(),
+      // thinking mode: enabled (= adaptive), adaptive, disabled (v2.1.61)
+      thinking: z.enum(["enabled", "adaptive", "disabled"]).optional(),
     })
     .optional(),
 
@@ -244,6 +288,14 @@ export const settingsSchema = z.object({
   allowManagedPermissionRulesOnly: z.boolean().optional(),
   // when set in managed settings, only managed MCP allowlist applies (v2.1.51)
   allowManagedMcpServersOnly: z.boolean().optional(),
+  // plugin enable/disable map: plugin-id@marketplace-id -> boolean | string[] (v2.1.61)
+  enabledPlugins: z.record(z.string(), z.union([z.array(z.string()), z.boolean(), z.undefined()])).optional(),
+  // additional marketplace sources for this repository (v2.1.61)
+  extraKnownMarketplaces: z.record(z.string(), marketplaceEntrySchema).optional(),
+  // enterprise blocklist of marketplace sources (v2.1.61)
+  blockedMarketplaces: z.array(marketplaceSourceSchema).optional(),
+  // enterprise strict allowlist of marketplace sources (v2.1.61)
+  strictKnownMarketplaces: z.array(marketplaceSourceSchema).optional(),
 
   permissions: z
     .object({
@@ -281,8 +333,22 @@ export const settingsSchema = z.object({
           allowedDomains: z.array(z.string()).optional(),
           httpProxyPort: z.number().optional(),
           socksProxyPort: z.number().optional(),
+          // when true in managed settings, only managed allowedDomains apply (v2.1.61)
+          allowManagedDomainsOnly: z.boolean().optional(),
         })
         .optional(),
+      // filesystem access control within the sandbox (v2.1.61)
+      filesystem: z
+        .object({
+          allowWrite: z.array(z.string()).optional(),
+          denyWrite: z.array(z.string()).optional(),
+          denyRead: z.array(z.string()).optional(),
+        })
+        .optional(),
+      // selectively ignore sandbox violations by process/pattern (v2.1.61)
+      ignoreViolations: z.record(z.string(), z.array(z.string())).optional(),
+      // custom ripgrep configuration (v2.1.61)
+      ripgrep: z.object({ command: z.string(), args: z.array(z.string()).optional() }).optional(),
       enableWeakerNestedSandbox: z.boolean().optional(),
     })
     .optional(),
