@@ -4,6 +4,7 @@ import type { PromptLayerData } from "@/config/helpers";
 import type { Context } from "@/context/Context";
 import { loadPromptFile, mergePrompts } from "@/config/layers";
 import { getPluginCommands } from "@/plugins/registry";
+import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 import { log } from "@/utils/log";
 
 const loadCommandsFromPath = async (
@@ -37,13 +38,7 @@ const loadCommandsFromPath = async (
 export const buildCommands = async (context: Context): Promise<Map<string, string>> => {
   const commandLayers = new Map<string, PromptLayerData[]>();
   const overrides = new Set<string>();
-  const launcherRoot = context.launcherDirectory;
-
-  // resolve config base directory - handle absolute paths (e.g., from CCC_CONFIG_DIR)
-  const configBase =
-    context.configDirectory.startsWith("/") ?
-      context.configDirectory
-    : join(launcherRoot, context.configDirectory);
+  const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
 
   // load global commands
   const globalPath = join(configBase, "global/commands");

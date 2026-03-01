@@ -5,6 +5,7 @@ import type { Context } from "@/context/Context";
 import type { HookDefinition, HooksConfiguration } from "@/types/hooks";
 import type { MCPServers } from "@/types/mcps";
 import { formatConfigError } from "@/utils/errors";
+import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 import { log } from "@/utils/log";
 
 export const mergeMCPs = (...layers: (MCPServers | undefined)[]): MCPServers => {
@@ -153,13 +154,7 @@ export const loadConfigLayer = async <T>(
   name: string | undefined,
   file: string,
 ) => {
-  const launcherRoot = context.launcherDirectory;
-
-  // resolve config base directory - handle absolute paths (e.g., from CCC_CONFIG_DIR)
-  const configBase =
-    context.configDirectory.startsWith("/") ?
-      context.configDirectory
-    : join(launcherRoot, context.configDirectory);
+  const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
 
   // compute config file path
   let configPath: string;

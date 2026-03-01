@@ -5,6 +5,7 @@ import type { ConfigModule } from "@/config/layers";
 import type { Context } from "@/context/Context";
 import type { SkillBundle, SkillDefinition, SkillFile } from "@/types/skills";
 import type { ConfigLayer } from "@/utils/errors";
+import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 import { formatConfigError } from "@/utils/errors";
 import { log } from "@/utils/log";
 
@@ -303,11 +304,7 @@ const loadSkillsFromPath = async (
 };
 
 export const buildSkills = async (context: Context): Promise<SkillBundle[]> => {
-  const launcherRoot = context.launcherDirectory;
-  const configBase =
-    context.configDirectory.startsWith("/") ?
-      context.configDirectory
-    : join(launcherRoot, context.configDirectory);
+  const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
 
   const skills = new Map<string, SkillBundle>();
 

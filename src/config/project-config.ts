@@ -6,6 +6,7 @@ import type { HooksConfiguration } from "@/types/hooks";
 import type { MCPServers } from "@/types/mcps";
 import type { PromptFunction } from "@/types/presets";
 import type { ProjectConfig, ProjectMetadata } from "@/types/project";
+import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 import { loadModuleDefault } from "@/utils/module-loader";
 import { expandPath } from "@/utils/path";
 
@@ -14,8 +15,7 @@ const __dirname = dirname(__filename);
 
 export const findProjectConfigDir = async (workingDir: string, configDirectory: string) => {
   const launcherRoot = dirname(dirname(__dirname));
-  // resolve config base directory - handle absolute paths (e.g., from CCC_CONFIG_DIR)
-  const configBase = configDirectory.startsWith("/") ? configDirectory : join(launcherRoot, configDirectory);
+  const configBase = resolveConfigDirectoryPath(launcherRoot, configDirectory);
   const projectsDir = join(configBase, "projects");
 
   if (!existsSync(projectsDir)) return null;

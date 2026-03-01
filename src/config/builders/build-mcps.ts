@@ -1,21 +1,16 @@
-import { isAbsolute, join, normalize, resolve } from "path";
+import { join } from "path";
 import type { Context } from "@/context/Context";
 import type { ClaudeMCPConfig, MCPServers } from "@/types/mcps";
 import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
 import { setInstanceId } from "@/mcps/mcp-generator";
 import { getPluginMCPs } from "@/plugins/registry";
-
-const toAbsoluteConfigDirectory = (launcherDirectory: string, configDirectory: string): string => {
-  const trimmed = configDirectory.trim();
-  if (trimmed.length === 0) return join(launcherDirectory, "config");
-  return normalize(isAbsolute(trimmed) ? trimmed : resolve(launcherDirectory, trimmed));
-};
+import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 
 const buildRunnerEnv = (context: Context, extraEnv?: Record<string, string>): Record<string, string> => {
   const env: Record<string, string> = {
     ...(extraEnv ?? {}),
     CCC_INSTANCE_ID: context.instanceId,
-    CCC_CONFIG_DIR: toAbsoluteConfigDirectory(context.launcherDirectory, context.configDirectory),
+    CCC_CONFIG_DIR: resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory),
   };
 
   if (process.env.DEBUG) {

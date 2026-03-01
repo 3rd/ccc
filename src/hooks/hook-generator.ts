@@ -1,6 +1,7 @@
-import { dirname, isAbsolute, join, normalize, resolve } from "path";
+import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import type { ClaudeHookInput, HookCommand, HookEventName, HookHandler, HookResponse } from "@/types/hooks";
+import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 import { log } from "@/utils/log";
 
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
@@ -27,14 +28,8 @@ const shQuote = (value: string): string => {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 };
 
-const toAbsoluteConfigDirectory = (configDirectory: string): string => {
-  const trimmed = configDirectory.trim();
-  if (trimmed.length === 0) return join(launcherRoot, "config");
-  return normalize(isAbsolute(trimmed) ? trimmed : resolve(launcherRoot, trimmed));
-};
-
 export const setInstanceId = (instanceId: string, configDirectory = "config") => {
-  const absoluteConfigDirectory = toAbsoluteConfigDirectory(configDirectory);
+  const absoluteConfigDirectory = resolveConfigDirectoryPath(launcherRoot, configDirectory);
   currentInstanceId = instanceId;
   currentConfigDirectory = absoluteConfigDirectory;
   log.debug("HOOKS", `Set instance ID: ${instanceId}, configDir=${absoluteConfigDirectory}`);

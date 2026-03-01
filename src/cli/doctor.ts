@@ -10,6 +10,7 @@ import type { SkillBundle } from "@/types/skills";
 import { buildPlugins } from "@/config/builders/build-plugins";
 import { loadConfigFromLayers, loadConfigLayer, loadPromptFile } from "@/config/layers";
 import { isHttpMCP, isSseMCP } from "@/types/mcps";
+import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 
 type LayerKind = "global" | "preset" | "project";
 
@@ -247,13 +248,9 @@ const collectLayeredHooks = async (context: Context): Promise<ItemTraces> => {
 };
 
 const collectLayeredSkills = async (context: Context): Promise<ItemTraces> => {
-  const launcherRoot = context.launcherDirectory;
   const items: ItemTraces = {};
 
-  const configBase =
-    context.configDirectory.startsWith("/") ?
-      context.configDirectory
-    : join(launcherRoot, context.configDirectory);
+  const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
 
   const globalDir = join(configBase, "global", "skills");
   const globalNames = listSkillNames(globalDir);
@@ -314,13 +311,9 @@ const listRuleNames = (dirPath: string | undefined): string[] => {
 };
 
 const collectLayeredRules = async (context: Context): Promise<ItemTraces> => {
-  const launcherRoot = context.launcherDirectory;
   const items: ItemTraces = {};
 
-  const configBase =
-    context.configDirectory.startsWith("/") ?
-      context.configDirectory
-    : join(launcherRoot, context.configDirectory);
+  const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
 
   const globalDir = join(configBase, "global", "rules");
   const globalNames = listRuleNames(globalDir);

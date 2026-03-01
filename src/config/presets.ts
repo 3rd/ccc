@@ -1,20 +1,12 @@
 import { existsSync, readdirSync } from "fs";
-import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { join } from "path";
 import type { Context } from "@/context/Context";
 import type { PresetConfig } from "@/types/presets";
+import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 import { loadModuleDefault } from "@/utils/module-loader";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
 const loadPreset = async (presetName: string, context: Context): Promise<PresetConfig | null> => {
-  const launcherRoot = dirname(dirname(__dirname));
-  // resolve config base directory - handle absolute paths (e.g., from CCC_CONFIG_DIR)
-  const configBase =
-    context.configDirectory.startsWith("/") ?
-      context.configDirectory
-    : join(launcherRoot, context.configDirectory);
+  const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
   const presetPath = join(configBase, "presets", presetName);
   const indexPath = join(presetPath, "index.ts");
 
@@ -63,12 +55,7 @@ export const loadPresets = async (context: Context) => {
   const presets: PresetConfig[] = [];
   const tags: string[] = [];
 
-  const launcherRoot = dirname(dirname(__dirname));
-  // resolve config base directory - handle absolute paths (e.g., from CCC_CONFIG_DIR)
-  const configBase =
-    context.configDirectory.startsWith("/") ?
-      context.configDirectory
-    : join(launcherRoot, context.configDirectory);
+  const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
   const presetsDir = join(configBase, "presets");
   if (!existsSync(presetsDir)) return { presets, tags };
 

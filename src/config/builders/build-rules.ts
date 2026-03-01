@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import type { Context } from "@/context/Context";
+import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 import { log } from "@/utils/log";
 
 const loadRulesFromPath = (dirPath: string): Map<string, string> => {
@@ -28,11 +29,7 @@ const loadRulesFromPath = (dirPath: string): Map<string, string> => {
 
 export const buildRules = async (context: Context): Promise<Map<string, string>> => {
   const rules = new Map<string, string>();
-  const launcherRoot = context.launcherDirectory;
-  const configBase =
-    context.configDirectory.startsWith("/") ?
-      context.configDirectory
-    : join(launcherRoot, context.configDirectory);
+  const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
 
   // load global rules
   const globalPath = join(configBase, "global/rules");

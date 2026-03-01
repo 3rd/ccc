@@ -4,6 +4,7 @@ import type { Context } from "@/context/Context";
 import type { PluginEnablementConfig } from "@/plugins/schema";
 import { loadConfigFromLayers } from "@/config/layers";
 import { type ClaudePluginsConfig, type PluginsConfig, validatePlugins } from "@/config/plugins";
+import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 import { log } from "@/utils/log";
 
 const mergePluginsConfig = (...layers: (PluginsConfig | undefined)[]): PluginsConfig => {
@@ -104,10 +105,7 @@ export const buildPlugins = async (context: Context): Promise<PluginsConfig> => 
   const merged = mergePluginsConfig(layers.global, ...layers.presets, layers.project);
   const validated = validatePlugins(merged);
 
-  const configBase =
-    context.configDirectory.startsWith("/") ?
-      context.configDirectory
-    : join(context.launcherDirectory, context.configDirectory);
+  const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
 
   const resolvedPluginDirs =
     validated.claude?.pluginDirs ? resolvePluginDirs(configBase, validated.claude.pluginDirs) : [];
