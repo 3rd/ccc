@@ -40,8 +40,8 @@ export type HookMatcherType =
   | "NotebookRead"
   | "Read"
   | "resume"
-  | "startup"
   | "Skill"
+  | "startup"
   | "Task"
   | "TaskCreate"
   | "TaskGet"
@@ -103,7 +103,7 @@ export interface HookAgent {
   statusMessage?: string;
 }
 
-export type HookEntry = HookCommand | HookPrompt | HookHttp | HookAgent;
+export type HookEntry = HookAgent | HookCommand | HookHttp | HookPrompt;
 
 export interface HookDefinition {
   matcher?: HookMatcherType;

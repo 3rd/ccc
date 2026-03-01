@@ -31,6 +31,10 @@ class Logger {
     this.isEnabled = Boolean(process.env.DEBUG);
   }
 
+  private syncEnabledFromEnv(): void {
+    this.isEnabled = Boolean(process.env.DEBUG);
+  }
+
   static getInstance(): Logger {
     if (!Logger.instance) {
       Logger.instance = new Logger();
@@ -39,6 +43,7 @@ class Logger {
   }
 
   init(projectPath: string, instanceId: string) {
+    this.syncEnabledFromEnv();
     if (!this.isEnabled) return;
 
     // get log path

@@ -24,6 +24,32 @@ import { setupVirtualFileSystem } from "@/utils/virtual-fs";
 
 type ResolveResult = { path: string; source: string };
 
+const hasLongFlag = (args: string[], flag: string): boolean => {
+  return args.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
+};
+
+const getLongFlagValue = (args: string[], flag: string): string | undefined => {
+  const eqPrefix = `${flag}=`;
+
+  for (let i = args.length - 1; i >= 0; i -= 1) {
+    const current = args[i];
+    if (!current) continue;
+
+    if (current.startsWith(eqPrefix)) {
+      const value = current.slice(eqPrefix.length);
+      return value.length > 0 ? value : undefined;
+    }
+
+    if (current === flag) {
+      const next = args[i + 1];
+      if (next && !next.startsWith("-")) return next;
+      return undefined;
+    }
+  }
+
+  return undefined;
+};
+
 const resolveClaudeCli = async (launcherRoot: string): Promise<ResolveResult> => {
   if (process.env.CLAUDE_PATH) {
     return { path: process.env.CLAUDE_PATH, source: "env override" };
@@ -62,9 +88,16 @@ const resolveClaudeCli = async (launcherRoot: string): Promise<ResolveResult> =>
 
 // eslint-disable-next-line sonarjs/cognitive-complexity
 const run = async () => {
+  const incomingArgs = process.argv.slice(2);
+  // only accept --debug=<value> form; bare --debug/-d always means "1"
+  const incomingDebugEqValue = incomingArgs.findLast((a) => a.startsWith("--debug="))?.slice("--debug=".length);
+  const incomingDebugEnabled = hasLongFlag(incomingArgs, "--debug") || incomingArgs.includes("-d");
+  if (!process.env.DEBUG && incomingDebugEnabled) {
+    process.env.DEBUG = incomingDebugEqValue || "1";
+  }
+
   const shouldEnableLogger = (): boolean => {
     const interactive = Boolean(process.stdout.isTTY);
-    const debug = Boolean(process.env.DEBUG);
     const args = process.argv;
     const quietFlags = [
       "--print-config",
@@ -78,10 +111,11 @@ const run = async () => {
       "--timing",
     ];
     const hasQuiet = quietFlags.some((f) => args.includes(f));
-    return interactive && !debug && !hasQuiet;
+    return interactive && !hasQuiet;
   };
 
-  const startup = createStartupLogger({ enabled: shouldEnableLogger() });
+  const startupMessagesEnabled = shouldEnableLogger();
+  const startup = createStartupLogger({ enabled: startupMessagesEnabled });
 
   // init context
   const ctxTask = startup.start("Resolve project context");
@@ -447,7 +481,7 @@ const run = async () => {
     disallowedTools?: string[];
     allowedTools?: string[];
     addDir?: string[];
-    permissionMode?: "default" | "acceptEdits" | "plan" | "bypassPermissions" | "delegate" | "dontAsk";
+    permissionMode?: "acceptEdits" | "bypassPermissions" | "default" | "delegate" | "dontAsk" | "plan";
     verbose?: boolean;
     debug?: boolean | string;
     chrome?: boolean;
@@ -472,7 +506,7 @@ const run = async () => {
     maxBudgetUsd?: number;
     dangerouslySkipPermissions?: boolean;
     sessionId?: string;
-    fromPr?: string | number;
+    fromPr?: number | string;
     teammateMode?: "auto" | "in-process" | "tmux";
     appendSystemPrompt?: string;
     appendSystemPromptFile?: string;
@@ -481,11 +515,11 @@ const run = async () => {
     noSessionPersistence?: boolean;
     permissionPromptTool?: string;
     includePartialMessages?: boolean;
-    inputFormat?: "text" | "stream-json";
+    inputFormat?: "stream-json" | "text";
     jsonSchema?: string;
     allowDangerouslySkipPermissions?: boolean;
     settings?: string;
-    effort?: "low" | "medium" | "high" | "max";
+    effort?: "high" | "low" | "max" | "medium";
     file?: string[];
     debugFile?: string;
     replayUserMessages?: boolean;
@@ -494,9 +528,14 @@ const run = async () => {
     // create a tmux session for the worktree (requires --worktree) (v2.1.49)
     tmux?: boolean | string;
     // thinking mode: enabled (= adaptive), adaptive, disabled (v2.1.61)
-    thinking?: "enabled" | "adaptive" | "disabled";
+    thinking?: "adaptive" | "disabled" | "enabled";
   };
   const settingsCli = (settings as { cli?: CliFlags }).cli || {};
+
+  // propagate settings.cli.debug to env if not already set (env > argv > settings)
+  if (!process.env.DEBUG && settingsCli.debug !== undefined) {
+    process.env.DEBUG = typeof settingsCli.debug === "string" ? settingsCli.debug : "1";
+  }
 
   const hasCliArg = (flag: string) => process.argv.includes(flag);
 
@@ -769,6 +808,26 @@ const run = async () => {
   log.debug("LAUNCHER", `Arguments: ${args.join(" ")}`);
   log.debug("LAUNCHER", `Additional args from CLI: ${process.argv.slice(2).join(" ") || "none"}`);
   log.info("LAUNCHER", `Log file: ${log.getLogPath()}`);
+
+  if (startupMessagesEnabled) {
+    const launchArgs = [...args, ...process.argv.slice(2)];
+    const printDebugPath = (label: string, value: string | null | undefined) => {
+      if (value) process.stdout.write(`${p.dim(`  ${label}:`)} ${value}\n`);
+    };
+
+    process.stdout.write(`${p.dim("  instance id:")} ${context.instanceId}\n`);
+    printDebugPath("ccc debug log", log.getLogPath());
+    const cccCacheDir = log.getCacheDir();
+    printDebugPath("ccc hooks log", cccCacheDir ? path.join(cccCacheDir, "hooks.jsonl") : null);
+
+    const explicitClaudeDebugFile = getLongFlagValue(launchArgs, "--debug-file");
+    if (explicitClaudeDebugFile) {
+      printDebugPath("claude debug file", explicitClaudeDebugFile);
+    } else if (hasLongFlag(launchArgs, "--debug") || hasLongFlag(launchArgs, "--enable-lsp-logging")) {
+      const claudeConfigDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
+      printDebugPath("claude debug directory", path.join(claudeConfigDir, "debug"));
+    }
+  }
 
   // apply runtime patches to CLI file (ESM imports bypass VFS)
   let importPath = claudeModulePath;

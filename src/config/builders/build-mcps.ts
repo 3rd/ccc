@@ -1,9 +1,29 @@
-import { join } from "path";
+import { isAbsolute, join, normalize, resolve } from "path";
 import type { Context } from "@/context/Context";
 import type { ClaudeMCPConfig, MCPServers } from "@/types/mcps";
 import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
 import { setInstanceId } from "@/mcps/mcp-generator";
 import { getPluginMCPs } from "@/plugins/registry";
+
+const toAbsoluteConfigDirectory = (launcherDirectory: string, configDirectory: string): string => {
+  const trimmed = configDirectory.trim();
+  if (trimmed.length === 0) return join(launcherDirectory, "config");
+  return normalize(isAbsolute(trimmed) ? trimmed : resolve(launcherDirectory, trimmed));
+};
+
+const buildRunnerEnv = (context: Context, extraEnv?: Record<string, string>): Record<string, string> => {
+  const env: Record<string, string> = {
+    ...(extraEnv ?? {}),
+    CCC_INSTANCE_ID: context.instanceId,
+    CCC_CONFIG_DIR: toAbsoluteConfigDirectory(context.launcherDirectory, context.configDirectory),
+  };
+
+  if (process.env.DEBUG) {
+    env.DEBUG = process.env.DEBUG;
+  }
+
+  return env;
+};
 
 const processExternalMCP = (
   config: ClaudeMCPConfig & { filter?: unknown; autoEnable?: string; headersHelper?: string },
@@ -13,17 +33,11 @@ const processExternalMCP = (
   // external MCP with filter -> use runner
   if (config.filter && typeof config.filter === "function") {
     const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
-    const env: Record<string, string> = {
-      CCC_INSTANCE_ID: context.instanceId,
-    };
-
-    if ("env" in config && config.env) {
-      Object.assign(env, config.env);
-    }
+    const env = buildRunnerEnv(context, "env" in config ? config.env : undefined);
 
     const result: ClaudeMCPConfig = {
       type: "stdio" as const,
-      command: "tsx",
+      command: "bun",
       args: [runnerPath, "mcp", name],
       env,
     };
@@ -52,11 +66,9 @@ export const buildMCPs = async (context: Context): Promise<Record<string, Claude
       const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
       processed[name] = {
         type: "stdio",
-        command: "tsx",
+        command: "bun",
         args: [runnerPath, "mcp", name],
-        env: {
-          CCC_INSTANCE_ID: context.instanceId,
-        },
+        env: buildRunnerEnv(context),
       };
     } else if (layerData.type === "http" || layerData.type === "sse" || layerData.type === "traditional") {
       const config = layerData.config;
@@ -74,11 +86,9 @@ export const buildMCPs = async (context: Context): Promise<Record<string, Claude
       const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
       processed[name] = {
         type: "stdio",
-        command: "tsx",
+        command: "bun",
         args: [runnerPath, "mcp", name],
-        env: {
-          CCC_INSTANCE_ID: context.instanceId,
-        },
+        env: buildRunnerEnv(context),
       };
     } else if (layerData.type === "http" || layerData.type === "sse" || layerData.type === "traditional") {
       const config = layerData.config;

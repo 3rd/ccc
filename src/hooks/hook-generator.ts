@@ -1,5 +1,4 @@
-import { createHash } from "crypto";
-import { dirname, join } from "path";
+import { dirname, isAbsolute, join, normalize, resolve } from "path";
 import { fileURLToPath } from "url";
 import type { ClaudeHookInput, HookCommand, HookEventName, HookHandler, HookResponse } from "@/types/hooks";
 import { log } from "@/utils/log";
@@ -9,24 +8,36 @@ type RuntimeHookHandler = (input: ClaudeHookInput) => Promise<HookResponse | voi
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const launcherRoot = dirname(dirname(__dirname));
 
 const hooksMap = new Map<string, RuntimeHookHandler>();
+let currentInstanceId: string | undefined;
+let currentConfigDirectory: string | undefined;
 
 export const getHook = (id: string) => hooksMap.get(id);
 
-const generateHookId = <E extends HookEventName>(eventName: E, stableId: string) => {
-  const hash = createHash("sha256");
-  hash.update(eventName);
-  hash.update(stableId);
-  return `hook_${eventName}_${stableId}`;
-};
+const generateHookId = <E extends HookEventName>(eventName: E, stableId: string) =>
+  `hook_${eventName}_${stableId}`;
 
 const getRunnerPath = () => {
   return join(dirname(__dirname), "cli", "runner.ts");
 };
 
+const shQuote = (value: string): string => {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+};
+
+const toAbsoluteConfigDirectory = (configDirectory: string): string => {
+  const trimmed = configDirectory.trim();
+  if (trimmed.length === 0) return join(launcherRoot, "config");
+  return normalize(isAbsolute(trimmed) ? trimmed : resolve(launcherRoot, trimmed));
+};
+
 export const setInstanceId = (instanceId: string, configDirectory = "config") => {
-  log.debug("HOOKS", `Set instance ID: ${instanceId}, configDir=${configDirectory}`);
+  const absoluteConfigDirectory = toAbsoluteConfigDirectory(configDirectory);
+  currentInstanceId = instanceId;
+  currentConfigDirectory = absoluteConfigDirectory;
+  log.debug("HOOKS", `Set instance ID: ${instanceId}, configDir=${absoluteConfigDirectory}`);
 };
 
 export interface CreateHookOptions<E extends HookEventName> {
@@ -43,13 +54,20 @@ export const createHook = <E extends HookEventName>(options: CreateHookOptions<E
 
   hooksMap.set(hookId, handler as RuntimeHookHandler);
 
-  const runnerPath = getRunnerPath();
-  const cmd = `tsx ${runnerPath} hook ${hookId}`;
-
   return {
     type: "command",
     get command() {
-      return cmd;
+      const runnerPath = getRunnerPath();
+      const envPrefix = [
+        process.env.DEBUG ? `DEBUG=${shQuote(process.env.DEBUG)}` : "",
+        currentInstanceId ? `CCC_INSTANCE_ID=${shQuote(currentInstanceId)}` : "",
+        currentConfigDirectory ? `CCC_CONFIG_DIR=${shQuote(currentConfigDirectory)}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      const prefix = envPrefix.length > 0 ? `${envPrefix} ` : "";
+      return `${prefix}bun ${shQuote(runnerPath)} hook ${hookId}`;
     },
     timeout,
     once,

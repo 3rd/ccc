@@ -3,6 +3,8 @@ import { existsSync, readdirSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { getHook } from "@/hooks/hook-generator";
+import { eventRecorder } from "@/hooks/event-recorder";
+import type { ClaudeHookInput } from "@/types/hooks";
 import type { MCPServers } from "@/types/mcps";
 import { buildPlugins } from "@/config/builders/build-plugins";
 import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
@@ -16,13 +18,21 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const launcherRoot = dirname(dirname(__dirname));
 
-const resolveConfigDirectory = (): "config" | "dev-config" => {
+const resolveConfigDirectory = (): string => {
+  const override = process.env.CCC_CONFIG_DIR?.trim();
+  if (override) {
+    if (existsSync(override)) return override;
+    const maybeRelative = join(launcherRoot, override);
+    if (existsSync(maybeRelative)) return maybeRelative;
+  }
+
   const dev = join(launcherRoot, "dev-config");
-  return existsSync(dev) ? "dev-config" : "config";
+  if (existsSync(dev)) return dev;
+  return join(launcherRoot, "config");
 };
 
 const discover = (kind: "hooks" | "mcps"): string[] => {
-  const cfgDir = join(launcherRoot, resolveConfigDirectory());
+  const cfgDir = resolveConfigDirectory();
   const out: string[] = [];
 
   const pushIf = (p: string) => {
@@ -72,11 +82,44 @@ const loadCCCPlugins = async (context: Context) => {
 };
 
 const runHook = async (id: string) => {
+  const inputJson = await readStdin();
+  if (!inputJson) {
+    console.error("No input received on stdin");
+    process.exit(2);
+  }
+
+  let input: ClaudeHookInput;
+  try {
+    const parsed: unknown = JSON.parse(inputJson);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("hook_event_name" in parsed) ||
+      !("session_id" in parsed) ||
+      !("cwd" in parsed)
+    ) {
+      console.error("Invalid hook input shape:", parsed);
+      process.exit(2);
+    }
+    input = parsed as ClaudeHookInput;
+  } catch (error) {
+    console.error("Invalid hook input JSON:", error);
+    process.exit(2);
+  }
+
+  // Critical: bind hook runner to a stable instance id before loading plugins.
+  // Prefer launcher-provided CCC_INSTANCE_ID (passed via hook command env).
+  // Fallback to hook input session_id only when env is absent.
+  if (!process.env.CCC_INSTANCE_ID && typeof input.session_id === "string" && input.session_id.length > 0) {
+    process.env.CCC_INSTANCE_ID = input.session_id;
+  }
+
   // import all hooks configs to register handlers
   for (const href of discover("hooks")) await import(href);
 
   // also load CCC plugin hooks
-  const context = new Context(process.cwd());
+  const contextCwd = typeof input.cwd === "string" && input.cwd.length > 0 ? input.cwd : process.cwd();
+  const context = new Context(contextCwd);
   await context.init();
   const loadedPlugins = await loadCCCPlugins(context);
   context.loadedPlugins = loadedPlugins;
@@ -94,18 +137,18 @@ const runHook = async (id: string) => {
     process.exit(2);
   }
 
-  const inputJson = await readStdin();
-  if (!inputJson) {
-    console.error("No input received on stdin");
-    process.exit(2);
+  try {
+    const result = await Promise.resolve(fn(input));
+    eventRecorder.recordHookCall(id, input, result);
+    if (result) {
+      const json = JSON.stringify(result);
+      process.stdout.write(`${json}\n`);
+    }
+    process.exit(0);
+  } catch (error) {
+    eventRecorder.recordHookCall(id, input, undefined, error);
+    throw error;
   }
-  const input = JSON.parse(inputJson);
-  const result = await Promise.resolve(fn(input));
-  if (result) {
-    const json = JSON.stringify(result);
-    process.stdout.write(`${json}\n`);
-  }
-  process.exit(0);
 };
 
 const runMCP = async (mcpName: string) => {

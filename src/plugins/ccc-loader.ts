@@ -1,4 +1,4 @@
-import { join } from "path";
+import { isAbsolute, join } from "path";
 import type { Context } from "@/context/Context";
 import type { PluginEnablementConfig } from "@/plugins/schema";
 import type { LoadedPlugin } from "@/plugins/types";
@@ -16,7 +16,11 @@ export const loadCCCPluginsFromConfig = async (
   enablement: PluginEnablementConfig = {},
 ): Promise<CCCPluginLoadResult> => {
   const pluginDirs = getDefaultPluginDirs(context.launcherDirectory, context.project.rootDirectory);
-  pluginDirs.push(join(context.launcherDirectory, context.configDirectory, "plugins"));
+  const configPluginsDir =
+    isAbsolute(context.configDirectory) ?
+      join(context.configDirectory, "plugins")
+    : join(context.launcherDirectory, context.configDirectory, "plugins");
+  pluginDirs.push(configPluginsDir);
 
   const discovered = discoverPlugins(pluginDirs);
   const sorted = sortByDependencies(discovered.plugins);
