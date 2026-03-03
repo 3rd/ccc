@@ -2,6 +2,7 @@ export type HookEventName =
   | "ConfigChange"
   | "Elicitation"
   | "ElicitationResult"
+  | "InstructionsLoaded"
   | "Notification"
   | "PermissionRequest"
   | "PostToolUse"
@@ -64,6 +65,8 @@ export interface HookCommand {
   statusMessage?: string;
   // run in background without blocking (v2.1.63)
   async?: boolean;
+  // run in background, wake model on exit code 2 (blocking error); implies async (v2.1.64)
+  asyncRewake?: boolean;
 }
 
 export interface HookPrompt {
@@ -112,18 +115,23 @@ export interface HookDefinition {
 
 export type HooksConfiguration = Partial<Record<HookEventName, HookDefinition[]>>;
 
-export type PermissionMode = "acceptEdits" | "bypassPermissions" | "default" | "delegate" | "dontAsk" | "plan";
+export type PermissionMode = "acceptEdits" | "bypassPermissions" | "default" | "dontAsk" | "plan";
 
 interface BaseHookInput {
   session_id: string;
   transcript_path: string;
   cwd: string;
   permission_mode: PermissionMode;
+  // present when hook fires from within a subagent (v2.1.64)
+  agent_id?: string;
+  // present when hook fires from subagent or main thread of --agent session (v2.1.64)
+  agent_type?: string;
 }
 
 export interface PreToolUseHookInput extends BaseHookInput {
   hook_event_name: "PreToolUse";
   tool_name: string;
+  // CLI types this as `unknown`; narrowed here since tool inputs are always objects
   tool_input: Record<string, unknown>;
   tool_use_id: string;
 }
@@ -131,16 +139,17 @@ export interface PreToolUseHookInput extends BaseHookInput {
 export interface PostToolUseHookInput extends BaseHookInput {
   hook_event_name: "PostToolUse";
   tool_name: string;
+  // CLI types this as `unknown`; narrowed here since tool inputs are always objects
   tool_input: Record<string, unknown>;
-  tool_response: Record<string, unknown>;
+  tool_response: unknown;
   tool_use_id: string;
 }
 
 export interface PermissionRequestHookInput extends BaseHookInput {
   hook_event_name: "PermissionRequest";
   tool_name: string;
+  // CLI types this as `unknown`; narrowed here since tool inputs are always objects
   tool_input: Record<string, unknown>;
-  tool_use_id: string;
   permission_suggestions?: Record<string, unknown>[];
 }
 
@@ -178,7 +187,13 @@ export interface SubagentStopHookInput extends BaseHookInput {
   last_assistant_message?: string;
 }
 
-export type NotificationType = "auth_success" | "elicitation_dialog" | "idle_prompt" | "permission_prompt";
+export type NotificationType =
+  | "auth_success"
+  | "elicitation_complete"
+  | "elicitation_dialog"
+  | "elicitation_response"
+  | "idle_prompt"
+  | "permission_prompt";
 
 export interface NotificationHookInput extends BaseHookInput {
   hook_event_name: "Notification";
@@ -235,17 +250,46 @@ export interface WorktreeRemoveHookInput extends BaseHookInput {
   worktree_path: string;
 }
 
+export type InstructionsMemoryType = "Local" | "Managed" | "Project" | "User";
+
+export type InstructionsLoadReason = "include" | "nested_traversal" | "path_glob_match" | "session_start";
+
+export interface InstructionsLoadedHookInput extends BaseHookInput {
+  hook_event_name: "InstructionsLoaded";
+  file_path: string;
+  memory_type: InstructionsMemoryType;
+  load_reason: InstructionsLoadReason;
+  // glob patterns from paths: frontmatter that matched (v2.1.64)
+  globs?: string[];
+  // file Claude touched that caused the load (v2.1.64)
+  trigger_file_path?: string;
+  // file that @-included this one (v2.1.64)
+  parent_file_path?: string;
+}
+
 export interface ElicitationHookInput extends BaseHookInput {
   hook_event_name: "Elicitation";
+  mcp_server_name: string;
+  message: string;
+  mode?: "form" | "url";
+  url?: string;
+  elicitation_id?: string;
+  requested_schema?: Record<string, unknown>;
 }
 
 export interface ElicitationResultHookInput extends BaseHookInput {
   hook_event_name: "ElicitationResult";
+  mcp_server_name: string;
+  elicitation_id?: string;
+  mode?: "form" | "url";
+  action: "accept" | "cancel" | "decline";
+  content?: Record<string, unknown>;
 }
 
 export interface PostToolUseFailureHookInput extends BaseHookInput {
   hook_event_name: "PostToolUseFailure";
   tool_name: string;
+  // CLI types this as `unknown`; narrowed here since tool inputs are always objects
   tool_input: Record<string, unknown>;
   tool_use_id: string;
   error: string;
@@ -256,6 +300,7 @@ export type ClaudeHookInput =
   | ConfigChangeHookInput
   | ElicitationHookInput
   | ElicitationResultHookInput
+  | InstructionsLoadedHookInput
   | NotificationHookInput
   | PermissionRequestHookInput
   | PostToolUseFailureHookInput
@@ -301,18 +346,26 @@ export interface PostToolUseHookResponse extends BaseHookResponse {
   hookSpecificOutput?: {
     hookEventName: "PostToolUse";
     additionalContext?: string;
+    // override MCP tool output (v2.1.64)
+    updatedMCPToolOutput?: unknown;
   };
 }
 
 export interface PermissionRequestHookResponse extends BaseHookResponse {
   hookSpecificOutput?: {
     hookEventName: "PermissionRequest";
-    decision?: {
-      behavior: "allow" | "deny";
-      updatedInput?: Record<string, unknown>;
-      message?: string;
-      interrupt?: boolean;
-    };
+    decision?:
+      | {
+          behavior: "allow";
+          updatedInput?: Record<string, unknown>;
+          // updated permission suggestions (v2.1.64)
+          updatedPermissions?: Record<string, unknown>[];
+        }
+      | {
+          behavior: "deny";
+          message?: string;
+          interrupt?: boolean;
+        };
   };
 }
 
@@ -342,7 +395,12 @@ export interface SubagentStopHookResponse extends BaseHookResponse {
   reason?: string;
 }
 
-export interface NotificationHookResponse extends BaseHookResponse {}
+export interface NotificationHookResponse extends BaseHookResponse {
+  hookSpecificOutput?: {
+    hookEventName: "Notification";
+    additionalContext?: string;
+  };
+}
 
 export interface PreCompactHookResponse extends BaseHookResponse {}
 
@@ -355,9 +413,19 @@ export interface PostToolUseFailureHookResponse extends BaseHookResponse {
   };
 }
 
-export interface SetupHookResponse extends BaseHookResponse {}
+export interface SetupHookResponse extends BaseHookResponse {
+  hookSpecificOutput?: {
+    hookEventName: "Setup";
+    additionalContext?: string;
+  };
+}
 
-export interface SubagentStartHookResponse extends BaseHookResponse {}
+export interface SubagentStartHookResponse extends BaseHookResponse {
+  hookSpecificOutput?: {
+    hookEventName: "SubagentStart";
+    additionalContext?: string;
+  };
+}
 
 export interface TeammateIdleHookResponse extends BaseHookResponse {}
 
@@ -369,14 +437,29 @@ export interface WorktreeCreateHookResponse extends BaseHookResponse {}
 
 export interface WorktreeRemoveHookResponse extends BaseHookResponse {}
 
-export interface ElicitationHookResponse extends BaseHookResponse {}
+export interface InstructionsLoadedHookResponse extends BaseHookResponse {}
 
-export interface ElicitationResultHookResponse extends BaseHookResponse {}
+export interface ElicitationHookResponse extends BaseHookResponse {
+  hookSpecificOutput?: {
+    hookEventName: "Elicitation";
+    action?: "accept" | "cancel" | "decline";
+    content?: Record<string, unknown>;
+  };
+}
+
+export interface ElicitationResultHookResponse extends BaseHookResponse {
+  hookSpecificOutput?: {
+    hookEventName: "ElicitationResult";
+    action?: "accept" | "cancel" | "decline";
+    content?: Record<string, unknown>;
+  };
+}
 
 export type HookResponse =
   | ConfigChangeHookResponse
   | ElicitationHookResponse
   | ElicitationResultHookResponse
+  | InstructionsLoadedHookResponse
   | NotificationHookResponse
   | PermissionRequestHookResponse
   | PostToolUseFailureHookResponse
@@ -467,6 +550,10 @@ export interface HookEventMap {
   WorktreeRemove: {
     input: WorktreeRemoveHookInput;
     response: WorktreeRemoveHookResponse | void;
+  };
+  InstructionsLoaded: {
+    input: InstructionsLoadedHookInput;
+    response: InstructionsLoadedHookResponse | void;
   };
   Elicitation: {
     input: ElicitationHookInput;

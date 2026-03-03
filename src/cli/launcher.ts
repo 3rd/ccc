@@ -481,7 +481,7 @@ const run = async () => {
     disallowedTools?: string[];
     allowedTools?: string[];
     addDir?: string[];
-    permissionMode?: "acceptEdits" | "bypassPermissions" | "default" | "delegate" | "dontAsk" | "plan";
+    permissionMode?: "acceptEdits" | "bypassPermissions" | "default" | "dontAsk" | "plan";
     verbose?: boolean;
     debug?: boolean | string;
     chrome?: boolean;

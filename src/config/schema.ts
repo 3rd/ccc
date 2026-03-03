@@ -9,6 +9,8 @@ export const agentDefinitionSchema = z.object({
   skills: z.array(z.string()).optional(),
   mcpServers: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])).optional(),
   maxTurns: z.number().optional(),
+  // critical reminder added to system prompt (v2.1.64)
+  criticalSystemReminder_EXPERIMENTAL: z.string().optional(),
 });
 
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
@@ -25,16 +27,26 @@ const marketplaceSourceSchema = z.discriminatedUnion("source", [
     repo: z.string(),
     ref: z.string().optional(),
     path: z.string().optional(),
+    // directories to include via git sparse-checkout (v2.1.64)
+    sparsePaths: z.array(z.string()).optional(),
   }),
   z.object({
     source: z.literal("git"),
     url: z.string(),
     ref: z.string().optional(),
     path: z.string().optional(),
+    // directories to include via git sparse-checkout (v2.1.64)
+    sparsePaths: z.array(z.string()).optional(),
   }),
   z.object({
     source: z.literal("npm"),
     package: z.string(),
+  }),
+  z.object({
+    source: z.literal("pip"),
+    package: z.string(),
+    version: z.string().optional(),
+    registry: z.string().optional(),
   }),
   z.object({
     source: z.literal("file"),
@@ -48,11 +60,25 @@ const marketplaceSourceSchema = z.discriminatedUnion("source", [
     source: z.literal("hostPattern"),
     hostPattern: z.string(),
   }),
+  // filesystem path pattern for marketplace trust (v2.1.64)
+  z.object({
+    source: z.literal("pathPattern"),
+    pathPattern: z.string(),
+  }),
+  // sparse-checkout a subdirectory from a git repo (v2.1.64)
+  z.object({
+    source: z.literal("git-subdir"),
+    url: z.string(),
+    path: z.string(),
+    ref: z.string().optional(),
+    sha: z.string().optional(),
+  }),
 ]);
 
 const marketplaceEntrySchema = z.object({
   source: marketplaceSourceSchema,
   installLocation: z.string().optional(),
+  autoUpdate: z.boolean().optional(),
 });
 
 // https://docs.anthropic.com/en/docs/claude-code/settings
@@ -71,7 +97,7 @@ export const settingsSchema = z.object({
       // additional working directories for Claude to access
       addDir: z.array(z.string()).optional(),
       // permission mode to start in: "default", "acceptEdits", "plan", "bypassPermissions"
-      permissionMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions", "delegate", "dontAsk"]).optional(),
+      permissionMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk"]).optional(),
       // enable verbose logging
       verbose: z.boolean().optional(),
       // enable debug mode with optional category filter (e.g., "api,hooks" or "!statsig")
@@ -300,6 +326,12 @@ export const settingsSchema = z.object({
   blockedMarketplaces: z.array(marketplaceSourceSchema).optional(),
   // enterprise strict allowlist of marketplace sources (v2.1.61)
   strictKnownMarketplaces: z.array(marketplaceSourceSchema).optional(),
+  // include built-in git commit/PR workflow instructions in system prompt (v2.1.64)
+  includeGitInstructions: z.boolean().optional(),
+  // show thinking summaries in transcript view (ctrl+o) (v2.1.64)
+  showThinkingSummaries: z.boolean().optional(),
+  // custom message appended to plugin trust warning; policy/managed settings only (v2.1.64)
+  pluginTrustMessage: z.string().optional(),
 
   permissions: z
     .object({
@@ -307,7 +339,7 @@ export const settingsSchema = z.object({
       deny: z.array(z.string()).optional(),
       ask: z.array(z.string()).optional(),
       additionalDirectories: z.array(z.string()).optional(),
-      defaultMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions", "delegate", "dontAsk"]).optional(),
+      defaultMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk"]).optional(),
       disableBypassPermissionsMode: z.literal("disable").optional(),
     })
     .optional(),
@@ -354,6 +386,8 @@ export const settingsSchema = z.object({
       // custom ripgrep configuration (v2.1.61)
       ripgrep: z.object({ command: z.string(), args: z.array(z.string()).optional() }).optional(),
       enableWeakerNestedSandbox: z.boolean().optional(),
+      // weaker network isolation for sandbox (v2.1.64)
+      enableWeakerNetworkIsolation: z.boolean().optional(),
     })
     .optional(),
 
