@@ -60,19 +60,6 @@ const marketplaceSourceSchema = z.discriminatedUnion("source", [
     source: z.literal("hostPattern"),
     hostPattern: z.string(),
   }),
-  // filesystem path pattern for marketplace trust (v2.1.64)
-  z.object({
-    source: z.literal("pathPattern"),
-    pathPattern: z.string(),
-  }),
-  // sparse-checkout a subdirectory from a git repo (v2.1.64)
-  z.object({
-    source: z.literal("git-subdir"),
-    url: z.string(),
-    path: z.string(),
-    ref: z.string().optional(),
-    sha: z.string().optional(),
-  }),
 ]);
 
 const marketplaceEntrySchema = z.object({
@@ -326,12 +313,20 @@ export const settingsSchema = z.object({
   blockedMarketplaces: z.array(marketplaceSourceSchema).optional(),
   // enterprise strict allowlist of marketplace sources (v2.1.61)
   strictKnownMarketplaces: z.array(marketplaceSourceSchema).optional(),
-  // include built-in git commit/PR workflow instructions in system prompt (v2.1.64)
-  includeGitInstructions: z.boolean().optional(),
-  // show thinking summaries in transcript view (ctrl+o) (v2.1.64)
-  showThinkingSummaries: z.boolean().optional(),
-  // custom message appended to plugin trust warning; policy/managed settings only (v2.1.64)
-  pluginTrustMessage: z.string().optional(),
+  // enable auto-compact when context is running low (v2.1.65)
+  autoCompactEnabled: z.boolean().optional(),
+  // enable file checkpointing for undo/redo (v2.1.65)
+  fileCheckpointingEnabled: z.boolean().optional(),
+  // disable LSP recommendation prompts (v2.1.65)
+  lspRecommendationDisabled: z.boolean().optional(),
+  // show permission explainer UI (v2.1.65)
+  permissionExplainerEnabled: z.boolean().optional(),
+  // show PR status footer in terminal (v2.1.65)
+  prStatusFooterEnabled: z.boolean().optional(),
+  // default-enable Claude in Chrome extension (v2.1.65)
+  claudeInChromeDefaultEnabled: z.boolean().optional(),
+  // enable the todo/task feature in UI (v2.1.65)
+  todoFeatureEnabled: z.boolean().optional(),
 
   permissions: z
     .object({

@@ -193,7 +193,9 @@ export type NotificationType =
   | "elicitation_dialog"
   | "elicitation_response"
   | "idle_prompt"
-  | "permission_prompt";
+  | "permission_prompt"
+  // teammate permission prompt forwarded from a worker (v2.1.65)
+  | "worker_permission_prompt";
 
 export interface NotificationHookInput extends BaseHookInput {
   hook_event_name: "Notification";
