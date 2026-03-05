@@ -60,6 +60,19 @@ const marketplaceSourceSchema = z.discriminatedUnion("source", [
     source: z.literal("hostPattern"),
     hostPattern: z.string(),
   }),
+  // subdirectory within a git repo (v2.1.69)
+  z.object({
+    source: z.literal("git-subdir"),
+    url: z.string(),
+    path: z.string(),
+    ref: z.string().optional(),
+    sha: z.string().optional(),
+  }),
+  // regex path pattern matching for strict marketplace allowlists (v2.1.69)
+  z.object({
+    source: z.literal("pathPattern"),
+    pathPattern: z.string(),
+  }),
 ]);
 
 const marketplaceEntrySchema = z.object({
@@ -327,6 +340,12 @@ export const settingsSchema = z.object({
   claudeInChromeDefaultEnabled: z.boolean().optional(),
   // enable the todo/task feature in UI (v2.1.65)
   todoFeatureEnabled: z.boolean().optional(),
+  // control whether git commit/PR workflow instructions are included (v2.1.69)
+  includeGitInstructions: z.boolean().optional(),
+  // show thinking summaries in transcript view (ctrl+o) (v2.1.69)
+  showThinkingSummaries: z.boolean().optional(),
+  // organization-specific trust message shown in plugin dialogs (v2.1.69, managed settings)
+  pluginTrustMessage: z.string().optional(),
 
   permissions: z
     .object({

@@ -2,6 +2,7 @@ export type HookEventName =
   | "ConfigChange"
   | "Elicitation"
   | "ElicitationResult"
+  | "InstructionsLoaded"
   | "Notification"
   | "PermissionRequest"
   | "PostToolUse"
@@ -251,6 +252,23 @@ export interface WorktreeRemoveHookInput extends BaseHookInput {
   worktree_path: string;
 }
 
+export type InstructionsMemoryType = "Local" | "Managed" | "Project" | "User";
+
+export type InstructionsLoadReason = "include" | "nested_traversal" | "path_glob_match" | "session_start";
+
+export interface InstructionsLoadedHookInput extends BaseHookInput {
+  hook_event_name: "InstructionsLoaded";
+  file_path: string;
+  memory_type: InstructionsMemoryType;
+  load_reason: InstructionsLoadReason;
+  // glob patterns from paths: frontmatter that matched (v2.1.64)
+  globs?: string[];
+  // file Claude touched that caused the load (v2.1.64)
+  trigger_file_path?: string;
+  // file that @-included this one (v2.1.64)
+  parent_file_path?: string;
+}
+
 export interface ElicitationHookInput extends BaseHookInput {
   hook_event_name: "Elicitation";
   mcp_server_name: string;
@@ -284,6 +302,7 @@ export type ClaudeHookInput =
   | ConfigChangeHookInput
   | ElicitationHookInput
   | ElicitationResultHookInput
+  | InstructionsLoadedHookInput
   | NotificationHookInput
   | PermissionRequestHookInput
   | PostToolUseFailureHookInput
@@ -420,6 +439,7 @@ export interface WorktreeCreateHookResponse extends BaseHookResponse {}
 
 export interface WorktreeRemoveHookResponse extends BaseHookResponse {}
 
+export interface InstructionsLoadedHookResponse extends BaseHookResponse {}
 
 export interface ElicitationHookResponse extends BaseHookResponse {
   hookSpecificOutput?: {
@@ -441,6 +461,7 @@ export type HookResponse =
   | ConfigChangeHookResponse
   | ElicitationHookResponse
   | ElicitationResultHookResponse
+  | InstructionsLoadedHookResponse
   | NotificationHookResponse
   | PermissionRequestHookResponse
   | PostToolUseFailureHookResponse
@@ -531,6 +552,10 @@ export interface HookEventMap {
   WorktreeRemove: {
     input: WorktreeRemoveHookInput;
     response: WorktreeRemoveHookResponse | void;
+  };
+  InstructionsLoaded: {
+    input: InstructionsLoadedHookInput;
+    response: InstructionsLoadedHookResponse | void;
   };
   Elicitation: {
     input: ElicitationHookInput;
