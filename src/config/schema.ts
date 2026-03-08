@@ -97,7 +97,7 @@ export const settingsSchema = z.object({
       // additional working directories for Claude to access
       addDir: z.array(z.string()).optional(),
       // permission mode to start in: "default", "acceptEdits", "plan", "bypassPermissions"
-      permissionMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk"]).optional(),
+      permissionMode: z.enum(["default", "acceptEdits", "auto", "plan", "bypassPermissions", "dontAsk"]).optional(),
       // enable verbose logging
       verbose: z.boolean().optional(),
       // enable debug mode with optional category filter (e.g., "api,hooks" or "!statsig")
@@ -346,6 +346,16 @@ export const settingsSchema = z.object({
   showThinkingSummaries: z.boolean().optional(),
   // organization-specific trust message shown in plugin dialogs (v2.1.69, managed settings)
   pluginTrustMessage: z.string().optional(),
+  // whether user has accepted auto mode opt-in dialog (v2.1.71)
+  skipAutoPermissionPrompt: z.boolean().optional(),
+  // auto mode classifier rules (v2.1.71)
+  autoMode: z
+    .object({
+      allow: z.array(z.string()).optional(),
+      deny: z.array(z.string()).optional(),
+      environment: z.array(z.string()).optional(),
+    })
+    .optional(),
 
   permissions: z
     .object({
@@ -353,8 +363,10 @@ export const settingsSchema = z.object({
       deny: z.array(z.string()).optional(),
       ask: z.array(z.string()).optional(),
       additionalDirectories: z.array(z.string()).optional(),
-      defaultMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk"]).optional(),
+      defaultMode: z.enum(["default", "acceptEdits", "auto", "plan", "bypassPermissions", "dontAsk"]).optional(),
       disableBypassPermissionsMode: z.literal("disable").optional(),
+      // disable auto mode (v2.1.71, managed settings)
+      disableAutoMode: z.enum(["disable"]).optional(),
     })
     .optional(),
 

@@ -28,6 +28,9 @@ export type HookMatcherType =
   | "Bash"
   | "clear"
   | "compact"
+  | "CronCreate"
+  | "CronDelete"
+  | "CronList"
   | "Edit"
   | "EnterPlanMode"
   | "EnterWorktree"
@@ -115,7 +118,7 @@ export interface HookDefinition {
 
 export type HooksConfiguration = Partial<Record<HookEventName, HookDefinition[]>>;
 
-export type PermissionMode = "acceptEdits" | "bypassPermissions" | "default" | "dontAsk" | "plan";
+export type PermissionMode = "acceptEdits" | "auto" | "bypassPermissions" | "default" | "dontAsk" | "plan";
 
 interface BaseHookInput {
   session_id: string;
