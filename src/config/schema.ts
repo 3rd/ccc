@@ -290,6 +290,8 @@ export const settingsSchema = z.object({
   minimumVersion: z.string().optional(),
   // allowlist of models users can select (v2.1.51)
   availableModels: z.array(z.string()).optional(),
+  // override mapping from Anthropic model ID to provider-specific model ID (v2.1.73)
+  modelOverrides: z.record(z.string(), z.string()).optional(),
   // glob patterns of CLAUDE.md files to exclude from loading (v2.1.51)
   claudeMdExcludes: z.array(z.string()).optional(),
   // remote session configuration (v2.1.51)
