@@ -35,6 +35,7 @@ export type HookMatcherType =
   | "EnterPlanMode"
   | "EnterWorktree"
   | "ExitPlanMode"
+  | "ExitWorktree"
   | "Glob"
   | "Grep"
   | "LSP"
