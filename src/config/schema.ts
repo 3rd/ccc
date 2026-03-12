@@ -276,6 +276,8 @@ export const settingsSchema = z.object({
   pluginConfigs: z.record(z.string(), z.unknown()).optional(),
   // enable/disable auto-memory for the project (v2.1.51)
   autoMemoryEnabled: z.boolean().optional(),
+  // custom directory for storing auto-memory files (v2.1.74)
+  autoMemoryDirectory: z.string().optional(),
   // enable voice mode (hold Space to dictate) (v2.1.59)
   voiceEnabled: z.boolean().optional(),
   // skip confirmation dialog for dangerous mode (v2.1.59)
