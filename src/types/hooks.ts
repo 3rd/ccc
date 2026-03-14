@@ -7,6 +7,7 @@ export type HookEventName =
   | "PermissionRequest"
   | "PostToolUse"
   | "PostToolUseFailure"
+  | "PostCompact"
   | "PreCompact"
   | "PreToolUse"
   | "SessionEnd"
@@ -214,6 +215,12 @@ export interface PreCompactHookInput extends BaseHookInput {
   custom_instructions: string | null;
 }
 
+export interface PostCompactHookInput extends BaseHookInput {
+  hook_event_name: "PostCompact";
+  trigger: "auto" | "manual";
+  compact_summary: string;
+}
+
 export interface SetupHookInput extends BaseHookInput {
   hook_event_name: "Setup";
   trigger: "init" | "maintenance";
@@ -309,6 +316,7 @@ export type ClaudeHookInput =
   | InstructionsLoadedHookInput
   | NotificationHookInput
   | PermissionRequestHookInput
+  | PostCompactHookInput
   | PostToolUseFailureHookInput
   | PostToolUseHookInput
   | PreCompactHookInput
@@ -410,6 +418,8 @@ export interface NotificationHookResponse extends BaseHookResponse {
 
 export interface PreCompactHookResponse extends BaseHookResponse {}
 
+export interface PostCompactHookResponse extends BaseHookResponse {}
+
 export interface SessionEndHookResponse extends BaseHookResponse {}
 
 export interface PostToolUseFailureHookResponse extends BaseHookResponse {
@@ -468,6 +478,7 @@ export type HookResponse =
   | InstructionsLoadedHookResponse
   | NotificationHookResponse
   | PermissionRequestHookResponse
+  | PostCompactHookResponse
   | PostToolUseFailureHookResponse
   | PostToolUseHookResponse
   | PreCompactHookResponse
@@ -540,6 +551,10 @@ export interface HookEventMap {
   Notification: {
     input: NotificationHookInput;
     response: NotificationHookResponse | void;
+  };
+  PostCompact: {
+    input: PostCompactHookInput;
+    response: PostCompactHookResponse | void;
   };
   PreCompact: {
     input: PreCompactHookInput;

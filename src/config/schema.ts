@@ -307,6 +307,8 @@ export const settingsSchema = z.object({
         sshHost: z.string(),
         sshPort: z.number().optional(),
         sshIdentityFile: z.string().optional(),
+        // default working directory on the remote host (v2.1.76)
+        startDirectory: z.string().optional(),
       }),
     )
     .optional(),
@@ -330,6 +332,8 @@ export const settingsSchema = z.object({
   blockedMarketplaces: z.array(marketplaceSourceSchema).optional(),
   // enterprise strict allowlist of marketplace sources (v2.1.61)
   strictKnownMarketplaces: z.array(marketplaceSourceSchema).optional(),
+  // rate (0-1) for session quality survey prompts; enterprise admins only (v2.1.76)
+  feedbackSurveyRate: z.number().min(0).max(1).optional(),
   // enable auto-compact when context is running low (v2.1.65)
   autoCompactEnabled: z.boolean().optional(),
   // enable file checkpointing for undo/redo (v2.1.65)
@@ -382,6 +386,8 @@ export const settingsSchema = z.object({
     .object({
       // directories to symlink from main repo to worktrees to avoid disk bloat
       symlinkDirectories: z.array(z.string()).optional(),
+      // directories to include via git sparse-checkout for large monorepos (v2.1.76)
+      sparsePaths: z.array(z.string()).optional(),
     })
     .optional(),
 

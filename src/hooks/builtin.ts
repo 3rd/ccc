@@ -18,6 +18,7 @@ const builtins: BuiltinCommands = {
     id: "builtin-recorder",
     handler: eventRecorder.record,
   }),
+  PostCompact: createHook({ event: "PostCompact", id: "builtin-recorder", handler: eventRecorder.record }),
   PreCompact: createHook({ event: "PreCompact", id: "builtin-recorder", handler: eventRecorder.record }),
   PreToolUse: createHook({ event: "PreToolUse", id: "builtin-recorder", handler: eventRecorder.record }),
   SessionEnd: createHook({ event: "SessionEnd", id: "builtin-recorder", handler: eventRecorder.record }),
