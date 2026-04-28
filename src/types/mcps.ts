@@ -11,6 +11,8 @@ export interface StdioMCPConfig {
   env?: Record<string, string>;
   filter?: MCPToolFilter;
   autoEnable?: string;
+  // always include this server's tools in the prompt; never defer behind tool search (v2.1.121)
+  alwaysLoad?: boolean;
 }
 
 export interface HttpMCPConfig {
@@ -20,6 +22,7 @@ export interface HttpMCPConfig {
   headersHelper?: string;
   filter?: MCPToolFilter;
   autoEnable?: string;
+  alwaysLoad?: boolean;
 }
 
 export interface SseMCPConfig {
@@ -29,6 +32,7 @@ export interface SseMCPConfig {
   headersHelper?: string;
   filter?: MCPToolFilter;
   autoEnable?: string;
+  alwaysLoad?: boolean;
 }
 
 export type ClaudeMCPConfig = HttpMCPConfig | SseMCPConfig | StdioMCPConfig;

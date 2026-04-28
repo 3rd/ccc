@@ -502,7 +502,9 @@ export interface PostToolUseHookResponse extends BaseHookResponse {
   hookSpecificOutput?: {
     hookEventName: "PostToolUse";
     additionalContext?: string;
-    // override MCP tool output (v2.1.64)
+    // override tool output for any tool (v2.1.121)
+    updatedToolOutput?: unknown;
+    // override MCP tool output (v2.1.64); prefer updatedToolOutput which works for all tools
     updatedMCPToolOutput?: unknown;
   };
 }

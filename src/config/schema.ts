@@ -239,6 +239,8 @@ const baseSettingsSchema = z.object({
   autoUpdatesChannel: z.enum(["stable", "latest"]).optional(),
   // disable all hooks globally
   disableAllHooks: z.boolean().optional(),
+  // disable the background-agents fleet (v2.1.121)
+  disableBackgroundAgents: z.boolean().optional(),
   // disable inline shell execution in skills and custom slash commands (v2.1.91)
   disableSkillShellExecution: z.boolean().optional(),
   // default shell for ! commands: bash (default) or powershell (v2.1.85)
