@@ -12,7 +12,6 @@ describe("applyBuiltInPatches", () => {
     expect(next.missed).toEqual([
       "growthbook-sync-flag-override",
       "disable-find-grep-shadow",
-      "fix-remote-session-stub",
     ]);
   });
 
@@ -26,29 +25,7 @@ describe("applyBuiltInPatches", () => {
       '"security-review" => "zsecurityreview"',
       "growthbook-sync-flag-override",
       "disable-find-grep-shadow",
-      "fix-remote-session-stub",
     ]);
-  });
-
-  test("fix-remote-session-stub adds missing onSessionRestored and ownsInput", () => {
-    const stub =
-      "function RW4(H){return{onBeforeQuery:async()=>!0,onTurnComplete:async()=>{},render:()=>null}}";
-    const next = applyBuiltInPatches(stub);
-
-    expect(next.content).toContain("onSessionRestored:()=>{}");
-    expect(next.content).toContain("ownsInput:!1");
-    expect(next.content).toContain("function RW4(H){return{");
-    expect(next.applied).toContain("fix-remote-session-stub");
-  });
-
-  test("fix-remote-session-stub matches alternate minified function names", () => {
-    const stub =
-      "function $aB(q){return{onBeforeQuery:async()=>!0,onTurnComplete:async()=>{},render:()=>null}}";
-    const next = applyBuiltInPatches(stub);
-
-    expect(next.content).toContain("function $aB(q){return{");
-    expect(next.content).toContain("onSessionRestored:()=>{}");
-    expect(next.content).toContain("ownsInput:!1");
   });
 });
 

@@ -59,31 +59,6 @@ const disableFindGrepShadow: RuntimePatch = {
   },
 };
 
-// extend the local fallback for the remote-session helper (RW4 in 2.1.119)
-// with the two properties the REPL destructures from it: `onSessionRestored`
-// and `ownsInput`. the stub returned only {onBeforeQuery, onTurnComplete,
-// render}, so on `claude --continue` the REPL mount-effect calls the
-// destructured `onSessionRestored(initialMessages)` and crashes with
-// "UKH is not a function" (UKH = the minified destructure target).
-//
-// without --continue, initialMessages is empty, the branch is skipped, and the
-// bug is invisible — that's why upstream missed it.
-//
-// anchor on the literal stub body. the function name rotates per build, but
-// the three property names and their no-op shapes are stable.
-const fixRemoteSessionStub: RuntimePatch = {
-  name: "fix-remote-session-stub",
-  fn: (content) => {
-    const re =
-      /function ([\w$]+)\(([\w$]*)\)\{return\{onBeforeQuery:async\(\)=>!0,onTurnComplete:async\(\)=>\{\},render:\(\)=>null\}\}/;
-    return content.replace(
-      re,
-      (_match, fn, arg) =>
-        `function ${fn}(${arg}){return{onBeforeQuery:async()=>!0,onTurnComplete:async()=>{},onSessionRestored:()=>{},render:()=>null,ownsInput:!1}}`,
-    );
-  },
-};
-
 // built-in string replacements
 const builtInStringPatches: RuntimePatch[] = [
   // disable unwanted features
@@ -91,7 +66,6 @@ const builtInStringPatches: RuntimePatch[] = [
 
   growthbookSyncFlagOverride,
   disableFindGrepShadow,
-  fixRemoteSessionStub,
 ];
 
 const labelFor = (patch: RuntimePatch) =>
