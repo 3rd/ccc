@@ -461,6 +461,12 @@ const baseSettingsSchema = z.object({
   // (HKLM + C:/Program Files/ClaudeCode via DrvFs + HKCU); requires double
   // opt-in (admin + user) and has no effect on native Windows (v2.1.118)
   wslInheritsWindowsSettings: z.boolean().optional(),
+  // @internal keep working until PR is ready to merge, a cron/Monitor is armed
+  // to resume later, or hands a self-contained next step (v2.1.124)
+  doneMeansMerged: z.boolean().optional(),
+  // require explicit approval before SendMessage can reach a peer session on
+  // another machine via Remote Control (v2.1.124)
+  isolatePeerMachines: z.boolean().optional(),
 
   permissions: z
     .object({
