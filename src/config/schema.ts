@@ -467,6 +467,10 @@ const baseSettingsSchema = z.object({
   // require explicit approval before SendMessage can reach a peer session on
   // another machine via Remote Control (v2.1.124)
   isolatePeerMachines: z.boolean().optional(),
+  // disable Remote Control (claude.ai/code, `claude remote-control`,
+  // `--remote-control`/`--rc`, auto-start, in-session toggle); typically
+  // set in managed settings (v2.1.128)
+  disableRemoteControl: z.boolean().optional(),
 
   permissions: z
     .object({

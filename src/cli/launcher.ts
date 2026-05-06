@@ -17,6 +17,7 @@ import { buildSkills } from "@/config/builders/build-skills";
 import { stripProfileFromArgv } from "@/config/builders/resolve-profile";
 import { dumpConfig } from "@/config/dump-config";
 import { Context } from "@/context/Context";
+import { applyNativeCertEnvDefaults } from "@/native/cert-env";
 import { resolveCliForLaunch } from "@/native/resolver";
 import { applyBuiltInPatches, applyUserPatches, type RuntimePatch } from "@/patches/cli-patches";
 import { getPluginInfo, loadCCCPluginsFromConfig } from "@/plugins";
@@ -505,6 +506,13 @@ const run = async () => {
       if (process.env.USE_BUILTIN_RIPGREP === undefined) {
         process.env.USE_BUILTIN_RIPGREP = "0";
         log.debug("LAUNCHER", "Native mode: set USE_BUILTIN_RIPGREP=0 (using system ripgrep)");
+      }
+      const certEnv = applyNativeCertEnvDefaults();
+      if (certEnv) {
+        log.debug(
+          "LAUNCHER",
+          `Native mode: SSL_CERT_DIR=${certEnv.certDir ?? "(unset)"} SSL_CERT_FILE=${certEnv.certFile ?? "(unset)"}`,
+        );
       }
       // anchor the cached bundle's createRequire() on the wrapper's package.json so
       // its Node fallback paths (require("yaml"), require("undici"), ...) resolve
