@@ -77,7 +77,19 @@ const PREAMBLE = [
   "  return __baseRequire(specifier);",
   "}",
   "",
+  "function __cccRequireDefault(specifier) {",
+  "  try {",
+  "    const mod = __baseRequire(specifier);",
+  "    return mod?.default ?? mod;",
+  "  } catch {",
+  "    return null;",
+  "  }",
+  "}",
+  "const __cccStringWidthPackage = __cccRequireDefault(\"string-width\");",
+  "const __cccStripAnsiPackage = __cccRequireDefault(\"strip-ansi\");",
+  "const __cccWrapAnsiPackage = __cccRequireDefault(\"wrap-ansi\");",
   "function __cccStringWidth(value) {",
+  "  if (typeof __cccStringWidthPackage === \"function\") return __cccStringWidthPackage(String(value));",
   "  let width = 0;",
   "  for (const char of String(value)) {",
   "    const code = char.codePointAt(0) ?? 0;",
@@ -98,11 +110,13 @@ const PREAMBLE = [
   "  return Buffer.from(String(data));",
   "}",
   "function __cccStripAnsi(value) {",
+  "  if (typeof __cccStripAnsiPackage === \"function\") return __cccStripAnsiPackage(String(value));",
   "  return String(value).replace(/\\x1B(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~]|\\][^\\x07]*(?:\\x07|\\x1B\\\\))/g, \"\");",
   "}",
-  "function __cccWrapAnsi(value, columns) {",
+  "function __cccWrapAnsi(value, columns, options) {",
   "  const text = String(value);",
   "  if (!Number.isFinite(columns) || columns <= 0) return text;",
+  "  if (typeof __cccWrapAnsiPackage === \"function\") return __cccWrapAnsiPackage(text, columns, options);",
   "  const lines = [];",
   "  for (const line of text.split(\"\\n\")) {",
   "    let current = \"\";",
@@ -317,6 +331,8 @@ const PREAMBLE = [
   "  listen: __cccListen,",
   "};",
   "globalThis.__cccBun ??= __cccBun;",
+  "globalThis.Bun ??= globalThis.__cccBun;",
+  "var Bun = globalThis.Bun;",
   'const __module = typeof module !== "undefined" ? module : { exports: {} };',
   "const __exports = __module.exports;",
   "",
@@ -348,7 +364,7 @@ const TRANSPILER_POLYFILL = [
 
 const BUN_STRING_WIDTH_RE = /function ([\w$]+)\(([\w$]+)\)\{return Bun\.stringWidth\(\2,[\w$]+\)\}/;
 const buildStringWidthReplacement = (fn: string, value: string) =>
-  `function ${fn}(${value}){let _=0;for(let A of String(${value})){let z=A.codePointAt(0)??0;if(z===0)continue;if(z<32||(z>=127&&z<160))continue;_+=z>=4352&&z<=4447||z>=9001&&z<=9002||z>=11904&&z<=42191||z>=44032&&z<=55203||z>=63744&&z<=64255||z>=65040&&z<=65049||z>=65072&&z<=65131||z>=65281&&z<=65376||z>=65504&&z<=65510||z>=127744&&z<=129791||z>=131072&&z<=196607?2:1}return _}`;
+  `function ${fn}(${value}){return __cccStringWidth(${value})}`;
 
 const BUN_DOT_RE = /\bBun\./g;
 const GLOBAL_THIS_BUN_RE = /\bglobalThis\.Bun\b/g;

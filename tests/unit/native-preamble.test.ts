@@ -23,10 +23,10 @@ describe("wrapForNode", () => {
     const wrapped = wrapForNode(raw);
 
     expect(wrapped).not.toContain("Bun.stringWidth");
-    expect(wrapped).toContain("function w8(H)");
+    expect(wrapped).toContain("function w8(H){return __cccStringWidth(H)}");
   });
 
-  test("replaces unguarded Bun APIs without defining global Bun", () => {
+  test("replaces unguarded Bun APIs and exposes the Bun compatibility global", () => {
     const raw = Buffer.from(
       [
         "// @bun @bytecode @bun-cjs",
@@ -61,10 +61,11 @@ describe("wrapForNode", () => {
     expect(wrapped).toContain("new __cccBun.Terminal");
     expect(wrapped).toContain("__cccBun.listen");
     expect(wrapped).toContain("globalThis.__cccBun ??= __cccBun");
+    expect(wrapped).toContain("globalThis.Bun ??= globalThis.__cccBun");
+    expect(wrapped).toContain("var Bun = globalThis.Bun");
     expect(wrapped).toContain('if (typeof globalThis.__cccBun < "u") return globalThis.__cccBun.which');
     expect(wrapped).toContain('if (typeof Bun > "u") return null;');
     expect(wrapped).not.toMatch(/\bBun\./);
-    expect(wrapped).not.toContain("globalThis.Bun");
   });
 
   test("adds Bun spawn terminal and listen compatibility shims", () => {
