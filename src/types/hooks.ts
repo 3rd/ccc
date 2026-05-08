@@ -176,6 +176,8 @@ interface BaseHookInput {
   agent_id?: string;
   // present when hook fires from subagent or main thread of --agent session (v2.1.64)
   agent_type?: string;
+  // active reasoning effort level; also exposed as $CLAUDE_EFFORT (v2.1.133)
+  effort?: { level: string };
 }
 
 export interface PreToolUseHookInput extends BaseHookInput {

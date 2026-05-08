@@ -505,6 +505,8 @@ const baseSettingsSchema = z.object({
       symlinkDirectories: z.array(z.string()).optional(),
       // directories to include via git sparse-checkout for large monorepos (v2.1.76)
       sparsePaths: z.array(z.string()).optional(),
+      // which ref new worktrees branch from: 'fresh' uses origin/<default>, 'head' uses local HEAD (v2.1.133)
+      baseRef: z.enum(["fresh", "head"]).optional(),
     })
     .optional(),
 
@@ -551,8 +553,15 @@ const baseSettingsSchema = z.object({
       enableWeakerNetworkIsolation: z.boolean().optional(),
       // exit with error when sandbox is enabled but cannot start (v2.1.83)
       failIfUnavailable: z.boolean().optional(),
+      // Linux/WSL only: absolute path to the bwrap (bubblewrap) binary; managed-only (v2.1.133)
+      bwrapPath: z.string().optional(),
+      // Linux/WSL only: absolute path to the socat binary used for sandbox network proxy; managed-only (v2.1.133)
+      socatPath: z.string().optional(),
     })
     .optional(),
+
+  // controls how the SDK parent tier (Options.managedSettings / --managed-settings) layers under the admin tier (v2.1.133)
+  parentSettingsBehavior: z.enum(["first-wins", "merge"]).optional(),
 
   // runtime patches applied to claude cli
   patches: z.array(runtimePatchSchema).optional(),
