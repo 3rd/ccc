@@ -447,11 +447,12 @@ const baseSettingsSchema = z.object({
   disableDeepLinkRegistration: z.enum(["disable"]).optional(),
   // whether plan mode uses auto mode semantics (v2.1.85, default true)
   useAutoModeDuringPlan: z.boolean().optional(),
-  // auto mode classifier rules (v2.1.71)
+  // auto mode classifier rules (v2.1.71, hard_deny v2.1.136)
   autoMode: z
     .object({
       allow: z.array(z.string()).optional(),
       soft_deny: z.array(z.string()).optional(),
+      hard_deny: z.array(z.string()).optional(),
       environment: z.array(z.string()).optional(),
     })
     .optional(),
@@ -471,6 +472,19 @@ const baseSettingsSchema = z.object({
   // `--remote-control`/`--rc`, auto-start, in-session toggle); typically
   // set in managed settings (v2.1.128)
   disableRemoteControl: z.boolean().optional(),
+  // executable that computes managed settings at startup; honored only from
+  // admin-controlled policy sources (v2.1.136)
+  policyHelper: z
+    .object({
+      // absolute path to the helper executable
+      path: z.string(),
+      timeoutMs: z.number().int().min(1000).optional(),
+      // 0 disables refresh; otherwise minimum 60_000 ms
+      refreshIntervalMs: z
+        .union([z.literal(0), z.number().int().min(60000)])
+        .optional(),
+    })
+    .optional(),
 
   permissions: z
     .object({
