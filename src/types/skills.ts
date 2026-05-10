@@ -6,9 +6,19 @@ export interface SkillFile {
   content: string;
 }
 
+export type SkillLayerMode = "append" | "override";
+
+export interface SkillLayerTrace {
+  layer: "global" | "preset" | "project";
+  name?: string;
+  mode: SkillLayerMode;
+}
+
 export interface SkillBundle {
   name: string;
   files: SkillFile[];
+  mode?: SkillLayerMode;
+  trace?: SkillLayerTrace[];
 }
 
 export interface SkillDefinition {
@@ -16,6 +26,8 @@ export interface SkillDefinition {
   name?: string;
   /** Required description used for skill discovery. */
   description: string;
+  /** How this skill layer combines with earlier matching skill names. */
+  mode?: SkillLayerMode;
   /** Markdown instructions content (body of SKILL.md). */
   content: string;
   /** Optional model override for this skill. */

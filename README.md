@@ -395,6 +395,8 @@ Use $ARGUMENTS to accept parameters.
 }));
 ```
 
+Skill layers are resolved global, then preset, then project. A structured skill may set `mode: "append"` to append its `SKILL.md` body to an earlier skill with the same name while keeping the base skill metadata; omitted mode means override.
+
 ## Hooks
 
 Event handlers that run at specific Claude events. See `config/global/hooks.ts` for examples:

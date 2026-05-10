@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { basename, dirname, join } from "path";
 import { buildLaunchSpec } from "@/cli/launcher-wrapper";
 import { assertExitCode, assertStderrEmpty, assertStdoutContains } from "../utils/assertions";
 import { LAUNCHER_ROOT, runCCC } from "../utils/test-runner";
@@ -125,7 +125,8 @@ describe("launcher", () => {
       assertStdoutContains(result.stdout, "Agents:");
 
       const runnerPath = readFileSync(runnerPathFile, "utf8");
-      expect(runnerPath).toContain("/tmp/ccc-doru-");
+      expect(dirname(runnerPath)).toBe(tmpdir());
+      expect(basename(runnerPath)).toStartWith("ccc-doru-");
       expect(existsSync(runnerPath)).toBe(false);
     } finally {
       rmSync(fakeBinDir, { force: true, recursive: true });

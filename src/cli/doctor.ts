@@ -6,21 +6,18 @@ import type { PluginsConfig } from "@/config/plugins";
 import type { Context } from "@/context/Context";
 import type { HookCommand } from "@/types/hooks";
 import type { ClaudeMCPConfig } from "@/types/mcps";
-import type { SkillBundle } from "@/types/skills";
+import type { SkillBundle, SkillLayerMode } from "@/types/skills";
 import { buildPlugins } from "@/config/builders/build-plugins";
 import { loadConfigFromLayers, loadConfigLayer, loadPromptFile } from "@/config/layers";
 import { isHttpMCP, isSseMCP } from "@/types/mcps";
 import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 
-const SKILL_MD = "SKILL.md";
-const SKILL_TS = "SKILL.ts";
-
 type LayerKind = "global" | "preset" | "project";
 
 interface TraceEntry {
   layer: LayerKind;
-  name?: string; // preset/project name
-  mode: "append" | "override";
+  name?: string;
+  mode: SkillLayerMode;
 }
 
 interface PromptTraces {
@@ -65,20 +62,6 @@ const listItemNames = (dirPath: string | undefined) => {
     }
   }
   return Array.from(names).sort();
-};
-
-const listSkillNames = (dirPath: string | undefined) => {
-  if (!dirPath || !existsSync(dirPath)) return [];
-  const entries = readdirSync(dirPath, { withFileTypes: true });
-  const names: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const skillDir = join(dirPath, entry.name);
-    if (existsSync(join(skillDir, SKILL_TS)) || existsSync(join(skillDir, SKILL_MD))) {
-      names.push(entry.name);
-    }
-  }
-  return names.sort();
 };
 
 const collectPromptTrace = async (
@@ -286,48 +269,11 @@ const collectLayeredProfiles = async (context: Context): Promise<ItemTraces> => 
   return items;
 };
 
-const collectLayeredSkills = async (context: Context): Promise<ItemTraces> => {
+const collectBuiltSkills = (skills: SkillBundle[] | undefined): ItemTraces => {
   const items: ItemTraces = {};
-
-  const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
-
-  const globalDir = join(configBase, "global", "skills");
-  const globalNames = listSkillNames(globalDir);
-
-  const presetEntries = context.project.presets.map((preset) => {
-    return {
-      name: preset.name,
-      dir: join(configBase, "presets", preset.name, "skills"),
-    };
-  });
-  const presetNameMap = new Map<string, string[]>();
-  for (const entry of presetEntries) presetNameMap.set(entry.name, listSkillNames(entry.dir));
-
-  const projectDir =
-    context.project.projectConfig ?
-      join(configBase, "projects", context.project.projectConfig.name, "skills")
-    : undefined;
-  const projectNames = listSkillNames(projectDir);
-
-  const allNames = new Set<string>([...globalNames, ...projectNames]);
-  for (const pn of presetEntries) {
-    for (const n of presetNameMap.get(pn.name) || []) allNames.add(n);
+  for (const skill of skills ?? []) {
+    items[skill.name] = skill.trace ?? [];
   }
-
-  for (const name of Array.from(allNames).sort()) {
-    const seq: TraceEntry[] = [];
-    if (globalNames.includes(name)) seq.push({ layer: "global", mode: "override" });
-    for (const entry of presetEntries) {
-      if ((presetNameMap.get(entry.name) || []).includes(name)) {
-        seq.push({ layer: "preset", name: entry.name, mode: "override" });
-      }
-    }
-    if (projectNames.includes(name) && context.project.projectConfig) {
-      seq.push({ layer: "project", name: context.project.projectConfig.name, mode: "override" });
-    }
-    items[name] = seq;
-  }
-
   return items;
 };
 
@@ -623,7 +569,7 @@ export const runDoctor = async (
   const rules = await collectLayeredRules(context);
   const hooks = await collectLayeredHooks(context);
   const mcps = await collectLayeredMCPs(context, artifacts.mcps);
-  const skills = await collectLayeredSkills(context);
+  const skills = collectBuiltSkills(artifacts.skills);
   const profiles = await collectLayeredProfiles(context);
   const pluginReport = await collectLayeredPlugins(context);
 

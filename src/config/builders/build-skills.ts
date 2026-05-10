@@ -3,7 +3,13 @@ import * as path from "path";
 import { join, relative } from "path";
 import type { ConfigModule } from "@/config/layers";
 import type { Context } from "@/context/Context";
-import type { SkillBundle, SkillDefinition, SkillFile } from "@/types/skills";
+import type {
+  SkillBundle,
+  SkillDefinition,
+  SkillFile,
+  SkillLayerMode,
+  SkillLayerTrace,
+} from "@/types/skills";
 import type { ConfigLayer } from "@/utils/errors";
 import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 import { formatConfigError } from "@/utils/errors";
@@ -113,6 +119,66 @@ const renderFrontmatter = (data: Record<string, unknown>) => {
   return lines.join("\n");
 };
 
+const normalizeSkillMode = (
+  mode: SkillDefinition["mode"],
+  skillName: string,
+  skillPath: string,
+): SkillLayerMode | null => {
+  if (mode === undefined) return "override";
+  if (mode === "append" || mode === "override") return mode;
+
+  log.warn("SKILLS", `Skill ${skillName} has invalid mode in ${skillPath}`);
+  return null;
+};
+
+const stripFrontmatter = (content: string) => {
+  const lines = content.split(/\r?\n/u);
+  if (lines[0] !== "---") return content.trim();
+
+  const endIndex = lines.findIndex((line, index) => index > 0 && line === "---");
+  if (endIndex === -1) return content.trim();
+
+  return lines.slice(endIndex + 1).join("\n").trim();
+};
+
+const toFileMap = (files: SkillFile[]) =>
+  new Map(files.map((file) => [file.relativePath, file.content]));
+
+const createSkillTrace = (
+  layer: ConfigLayer,
+  layerName: string | undefined,
+  mode: SkillLayerMode,
+): SkillLayerTrace => {
+  return layerName ? { layer, name: layerName, mode } : { layer, mode };
+};
+
+const appendSkillBundle = (base: SkillBundle, append: SkillBundle): SkillBundle => {
+  const fileMap = toFileMap(base.files);
+  const baseSkill = fileMap.get(SKILL_MD);
+  const appendSkill = append.files.find((file) => file.relativePath === SKILL_MD)?.content;
+
+  if (baseSkill && appendSkill) {
+    const appendBody = stripFrontmatter(appendSkill);
+    if (appendBody) fileMap.set(SKILL_MD, `${baseSkill.trimEnd()}\n\n${appendBody}\n`);
+  }
+
+  for (const file of append.files) {
+    if (file.relativePath === SKILL_MD) continue;
+    fileMap.set(file.relativePath, file.content);
+  }
+
+  const files = Array.from(fileMap.entries()).map(([relativePath, content]) => {
+    return { relativePath, content };
+  });
+
+  return {
+    name: base.name,
+    files,
+    mode: base.mode,
+    trace: [...(base.trace ?? []), ...(append.trace ?? [])],
+  };
+};
+
 const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string, skillPath: string) => {
   const resolvedName =
     definition.name && definition.name !== skillName ? skillName : (definition.name ?? skillName);
@@ -134,6 +200,9 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
     return null;
   }
 
+  const mode = normalizeSkillMode(definition.mode, skillName, skillPath);
+  if (!mode) return null;
+
   const reserved = new Set([
     "agent",
     "allowed-tools",
@@ -142,6 +211,7 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
     "disable-model-invocation",
     "effort",
     "hooks",
+    "mode",
     "model",
     "name",
     "user-invocable",
@@ -188,7 +258,7 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
   const frontmatterText = renderFrontmatter(frontmatter);
   const skillMarkdown = `---\n${frontmatterText}\n---\n\n${content}\n`;
 
-  return { name: resolvedName, content: skillMarkdown, files: definition.files ?? [] };
+  return { name: resolvedName, content: skillMarkdown, files: definition.files ?? [], mode };
 };
 
 const loadSkillFromTs = async (
@@ -245,7 +315,12 @@ const loadSkillFromTs = async (
       };
     });
 
-    return { name: skillName, files };
+    return {
+      name: skillName,
+      files,
+      mode: normalized.mode,
+      trace: [createSkillTrace(layer, layerName, normalized.mode)],
+    };
   } catch (error) {
     const msg = formatConfigError(error, layer, layerName, skillTsPath);
     log.error("SKILLS", msg);
@@ -276,7 +351,12 @@ const loadSkillFromDir = async (
   }
 
   const files = readSkillFiles(skillDir);
-  return { name: skillName, files };
+  return {
+    name: skillName,
+    files,
+    mode: "override",
+    trace: [createSkillTrace(layer, layerName, "override")],
+  };
 };
 
 const loadSkillsFromPath = async (
@@ -316,8 +396,19 @@ export const buildSkills = async (context: Context): Promise<SkillBundle[]> => {
 
   const applyLayer = (layerName: string, layerSkills: Map<string, SkillBundle>) => {
     for (const [name, bundle] of layerSkills) {
-      if (skills.has(name)) {
+      const existing = skills.get(name);
+      if (existing && bundle.mode === "append") {
+        skills.set(name, appendSkillBundle(existing, bundle));
+        continue;
+      }
+
+      if (existing) {
         log.warn("SKILLS", `Skill override detected (${layerName}): ${name}`);
+        skills.set(name, {
+          ...bundle,
+          trace: [...(existing.trace ?? []), ...(bundle.trace ?? [])],
+        });
+        continue;
       }
       skills.set(name, bundle);
     }
