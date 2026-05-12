@@ -78,6 +78,12 @@ export type HookMatcherType =
 export interface HookCommand {
   type: "command";
   command: string;
+  // argument list for exec form: when present, `command` is resolved as an
+  // executable and spawned directly with these arguments (no shell). path
+  // placeholders like ${CLAUDE_PLUGIN_ROOT} are substituted per-element as plain
+  // strings, so paths with quotes, $, or backticks never reach a shell parser.
+  // when absent, `command` runs through a shell (v2.1.139)
+  args?: string[];
   // shell interpreter: 'bash' uses $SHELL, 'powershell' uses pwsh (v2.1.81)
   shell?: "bash" | "powershell";
   timeout?: number;
@@ -104,6 +110,9 @@ export interface HookPrompt {
   if?: string;
   // model to use for prompt evaluation (v2.1.63)
   model?: string;
+  // sets continue value for decision:"block" when ok is false (default false ends turn).
+  // on PostToolUse, the reason is fed back to Claude and the turn continues (v2.1.139)
+  continueOnBlock?: boolean;
   // custom spinner status message while hook runs (v2.1.63)
   statusMessage?: string;
 }

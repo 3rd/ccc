@@ -239,8 +239,10 @@ const baseSettingsSchema = z.object({
   autoUpdatesChannel: z.enum(["stable", "latest"]).optional(),
   // disable all hooks globally
   disableAllHooks: z.boolean().optional(),
-  // disable the background-agents fleet (v2.1.121)
-  disableBackgroundAgents: z.boolean().optional(),
+  // disable agent view (`claude agents`, `--bg`, /background, the on-demand daemon)
+  // typically set in managed settings; equivalent to CLAUDE_CODE_DISABLE_AGENT_VIEW=1
+  // (renamed from disableBackgroundAgents in v2.1.139)
+  disableAgentView: z.boolean().optional(),
   // disable inline shell execution in skills and custom slash commands (v2.1.91)
   disableSkillShellExecution: z.boolean().optional(),
   // default shell for ! commands: bash (default) or powershell (v2.1.85)
@@ -367,6 +369,9 @@ const baseSettingsSchema = z.object({
   modelOverrides: z.record(z.string(), z.string()).optional(),
   // glob patterns of CLAUDE.md files to exclude from loading (v2.1.51)
   claudeMdExcludes: z.array(z.string()).optional(),
+  // CLAUDE.md-style instructions injected as organization-managed memory
+  // only honored from managed/policy settings
+  claudeMd: z.string().optional(),
   // remote session configuration (v2.1.51)
   remote: z.object({ defaultEnvironmentId: z.string().optional() }).optional(),
   // SSH remote environment configurations (v2.1.59)
