@@ -490,6 +490,8 @@ interface BaseHookResponse {
   stopReason?: string;
   suppressOutput?: boolean;
   systemMessage?: string;
+  // terminal escape sequence (OSC 0/1/2/9/99/777, BEL) for desktop notifications and window titles (v2.1.141)
+  terminalSequence?: string;
 }
 
 export interface PreToolUseHookResponse extends BaseHookResponse {
