@@ -1775,6 +1775,7 @@ export const setupVirtualFileSystem = (args: {
   agents?: Map<string, string>;
   skills?: SkillBundle[];
   rules?: Map<string, string>;
+  outputStyles?: Map<string, string>;
   workingDirectory?: string;
   disableParentClaudeMds?: boolean;
 }) => {
@@ -1785,6 +1786,7 @@ export const setupVirtualFileSystem = (args: {
   const agentsPath = path.normalize(path.resolve(os.homedir(), ".claude", "agents"));
   const skillsPath = path.normalize(path.resolve(os.homedir(), ".claude", "skills"));
   const rulesPath = path.normalize(path.resolve(os.homedir(), ".claude", "rules"));
+  const outputStylesPath = path.normalize(path.resolve(os.homedir(), ".claude", "output-styles"));
 
   log.vfs("Initializing virtual filesystem");
 
@@ -1860,6 +1862,17 @@ export const setupVirtualFileSystem = (args: {
     }
   } else {
     log.vfs("No rules provided");
+  }
+
+  // log output styles
+  log.vfs(`Output styles path: ${outputStylesPath}`);
+  if (args.outputStyles) {
+    log.vfs(`Output styles to inject: ${args.outputStyles.size} files`);
+    for (const [filename, content] of args.outputStyles) {
+      log.vfs(`  - ${filename} (${content.length} chars)`);
+    }
+  } else {
+    log.vfs("No output styles provided");
   }
 
   // filter out cli-only flags (they are passed as args, not written to settings.json)
@@ -1996,6 +2009,22 @@ export const setupVirtualFileSystem = (args: {
 
     log.vfs("Rules written to virtual volume");
     log.vfs(`Virtual directory contents: ${vol.readdirSync(rulesPath)}`);
+  }
+
+  // add output styles to virtual volume if provided
+  const virtualOutputStyleFiles: string[] = [];
+  if (args.outputStyles) {
+    vol.mkdirSync(outputStylesPath, { recursive: true });
+    virtualRoots.add(outputStylesPath);
+
+    for (const [filename, content] of args.outputStyles) {
+      const filePath = path.join(outputStylesPath, filename);
+      vol.writeFileSync(filePath, content);
+      virtualOutputStyleFiles.push(filename);
+    }
+
+    log.vfs("Output styles written to virtual volume");
+    log.vfs(`Virtual directory contents: ${vol.readdirSync(outputStylesPath)}`);
   }
 
   // ensure files exists - workaround for discovery issues

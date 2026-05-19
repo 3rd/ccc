@@ -11,6 +11,7 @@ import { buildAgents } from "@/config/builders/build-agents";
 import { buildCommands } from "@/config/builders/build-commands";
 import { buildMCPs } from "@/config/builders/build-mcps";
 import { buildPlugins } from "@/config/builders/build-plugins";
+import { buildOutputStyles } from "@/config/builders/build-output-styles";
 import { buildRules } from "@/config/builders/build-rules";
 import { buildSettings, buildSystemPrompt, buildUserPrompt } from "@/config/builders/build-settings";
 import { buildSkills } from "@/config/builders/build-skills";
@@ -246,7 +247,8 @@ const run = async () => {
   const agentsPromise = startup.run("Build agents", () => buildAgents(context));
   const skillsPromise = startup.run("Build skills", () => buildSkills(context));
   const rulesPromise = startup.run("Build rules", () => buildRules(context));
-  const [settings, systemPrompt, userPrompt, commands, agents, skills, rules] = await Promise.all([
+  const outputStylesPromise = startup.run("Build output styles", () => buildOutputStyles(context));
+  const [settings, systemPrompt, userPrompt, commands, agents, skills, rules, outputStyles] = await Promise.all([
     settingsPromise,
     systemPromptPromise,
     userPromptPromise,
@@ -254,6 +256,7 @@ const run = async () => {
     agentsPromise,
     skillsPromise,
     rulesPromise,
+    outputStylesPromise,
   ]);
 
   const settingsWithPlugins = {
@@ -367,6 +370,8 @@ const run = async () => {
     console.log(Array.from(agents.keys()));
     console.log(p.blue("\nRules:"));
     console.log(Array.from(rules.keys()));
+    console.log(p.blue("\nOutput styles:"));
+    console.log(Array.from(outputStyles.keys()));
     console.log(p.blue("\nMCPs:"));
     console.log(mcps);
     console.log(p.blue("\nCCC Plugins:"));
@@ -493,6 +498,10 @@ const run = async () => {
   );
   log.debug("BUILD-SUMMARY", `  Agents: ${agents.size} files (${Array.from(agents.keys()).join(", ")})`);
   log.debug("BUILD-SUMMARY", `  Rules: ${rules.size} files (${Array.from(rules.keys()).join(", ")})`);
+  log.debug(
+    "BUILD-SUMMARY",
+    `  Output styles: ${outputStyles.size} files (${Array.from(outputStyles.keys()).join(", ")})`,
+  );
   log.debug("BUILD-SUMMARY", `  MCPs: ${Object.keys(mcps || {}).join(", ") || "none"}`);
 
   // resolve claude cli path first (needed for runtime patches in VFS)
@@ -557,6 +566,7 @@ const run = async () => {
       agents,
       skills,
       rules,
+      outputStyles,
       workingDirectory: context.workingDirectory,
       disableParentClaudeMds: context.project.projectConfig?.disableParentClaudeMds,
     });
