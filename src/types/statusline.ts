@@ -10,6 +10,14 @@ export type StatusLineInput = {
     project_dir: string;
     // directories added via /add-dir (v2.1.47)
     added_dirs: string[];
+    // present when cwd is in a linked git worktree
+    git_worktree?: string;
+    // repository identity from the origin remote (v2.1.145)
+    repo?: {
+      host: string;
+      owner: string;
+      name: string;
+    };
   };
   model: {
     id: string;
@@ -53,7 +61,7 @@ export type StatusLineInput = {
   exceeds_200k_tokens: boolean;
   // only present when vim mode is enabled
   vim?: {
-    mode: "INSERT" | "NORMAL";
+    mode: "INSERT" | "NORMAL" | "VISUAL" | "VISUAL LINE";
   };
   // main thread agent type name (from --agent flag or agent type)
   agent_type?: string;
@@ -64,6 +72,12 @@ export type StatusLineInput = {
   // only present in remote mode
   remote?: {
     session_id: string;
+  };
+  // open PR for the current branch; mirrors the footer PR badge (v2.1.145)
+  pr?: {
+    number: number;
+    url: string;
+    review_state?: "approved" | "changes_requested" | "draft" | "pending";
   };
   // only present when running in a git worktree
   worktree?: {

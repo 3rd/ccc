@@ -270,11 +270,49 @@ export interface SessionEndHookInput extends BaseHookInput {
   reason: "bypass_permissions_disabled" | "clear" | "logout" | "other" | "prompt_input_exit" | "resume";
 }
 
+// in-flight background work (running/pending or backgrounded) registered in the
+// session, surfaced on Stop and SubagentStop so hooks can distinguish "done" from
+// "waiting for background work" (v2.1.145)
+export interface BackgroundTask {
+  id: string;
+  // task-type label: "shell" | "subagent" | "monitor" | "workflow" | unknown
+  type: string;
+  status: string;
+  // free-text description; capped at 1000 chars with a "… [+N chars]" marker
+  description: string;
+  // only present for "shell" tasks; capped at 1000 chars
+  command?: string;
+  // only present for "subagent" tasks
+  agent_type?: string;
+  // only present for "monitor" / "MCP task" tasks
+  server?: string;
+  // only present for "monitor" / "MCP task" tasks
+  tool?: string;
+  // only present for "workflow" tasks
+  name?: string;
+}
+
+// session-scoped cron task (CronCreate, ScheduleWakeup, /loop) that will wake
+// this session later, surfaced on Stop and SubagentStop (v2.1.145)
+export interface SessionCron {
+  id: string;
+  // cron expression, e.g. "0 9 * * 1-5"
+  schedule: string;
+  // false for one-shot wakeups whose cron encodes a single fire time
+  recurring: boolean;
+  // capped at 1000 chars with a "… [+N chars]" marker
+  prompt: string;
+}
+
 export interface StopHookInput extends BaseHookInput {
   hook_event_name: "Stop";
   stop_hook_active: boolean;
   // text content of the last assistant message before stopping (v2.1.47)
   last_assistant_message?: string;
+  // in-flight background work; empty array when nothing is in flight (v2.1.145)
+  background_tasks?: BackgroundTask[];
+  // pending session-scoped cron wakeups; empty array when none (v2.1.145)
+  session_crons?: SessionCron[];
 }
 
 export type StopFailureError =
@@ -302,6 +340,10 @@ export interface SubagentStopHookInput extends BaseHookInput {
   agent_type: string;
   // text content of the last assistant message before stopping (v2.1.47)
   last_assistant_message?: string;
+  // in-flight background work; empty array when nothing is in flight (v2.1.145)
+  background_tasks?: BackgroundTask[];
+  // pending session-scoped cron wakeups; empty array when none (v2.1.145)
+  session_crons?: SessionCron[];
 }
 
 export type NotificationType =
