@@ -25,6 +25,18 @@ export const agentDefinitionSchema = z.object({
     .optional(),
   // run agent in an isolated git worktree that is auto-cleaned when done (v2.1.89)
   isolation: z.enum(["worktree"]).optional(),
+  // per-agent hooks: same shape as settings.hooks (event name → array of matchers)
+  hooks: z
+    .record(
+      z.string(),
+      z.array(
+        z.object({
+          matcher: z.string().optional(),
+          hooks: z.array(z.record(z.string(), z.unknown())),
+        }),
+      ),
+    )
+    .optional(),
 });
 
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
