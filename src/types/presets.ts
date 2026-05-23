@@ -13,4 +13,9 @@ export interface PresetConfig {
   userPrompt?: PromptFunction;
   hooks?: HooksConfiguration;
   mcps?: MCPServers;
+  /**
+   * Build-time gate. When `false`, CCC skips this preset before evaluating
+   * its matcher or loading any of its components. Defaults to `true`.
+   */
+  enabled?: boolean;
 }

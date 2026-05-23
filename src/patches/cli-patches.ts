@@ -21,15 +21,15 @@ const growthbookSyncFlagOverride: RuntimePatch = {
   fn: (content) => {
     if (content.includes("__cccFeatureFlags")) return content;
     const re =
-      /function ([\w$]+)\(([\w$]+),([\w$]+)\)\{(?=let [\w$]+=[\w$]+\(\);if\([\w$]+&&\2 in [\w$]+\)return [\w$]+\[\2\];)(?=[^]{0,800}?cachedGrowthBookFeatures)/;
-    return content.replace(
-      re,
-      (match, _fn, flag, _dflt) =>
+      /function ([\w$]+)\(([\w$]+),([\w$]+)\){(?=let [\w$]+=[\w$]+\(\);if\([\w$]+&&\2 in [\w$]+\)return [\w$]+\[\2];)(?=[^]{0,800}?cachedGrowthBookFeatures)/;
+    return content.replace(re, (match, _fn, flag, _dflt) => {
+      return (
         `${match}let __cccFF=globalThis.__cccFeatureFlags;` +
         `if(__cccFF&&Object.prototype.hasOwnProperty.call(__cccFF,${flag})){` +
         `if(process.env.CCC_DEBUG_FEATURE_FLAGS)console.error("[ccc] featureFlag "+${flag}+" -> "+JSON.stringify(__cccFF[${flag}]));` +
-        `return __cccFF[${flag}];}`,
-    );
+        `return __cccFF[${flag}];}`
+      );
+    });
   },
 };
 
@@ -50,7 +50,7 @@ const disableFindGrepShadow: RuntimePatch = {
   name: "disable-find-grep-shadow",
   fn: (content) => {
     const re =
-      /function ([\w$]+)\(\)\{if\(![\w$]+\(\)\)return null;return\["unalias find 2>\/dev\/null \|\| true","unalias grep 2>\/dev\/null \|\| true"/;
+      /function ([\w$]+)\(\){if\(![\w$]+\(\)\)return null;return\["unalias find 2>\/dev\/null \|\| true","unalias grep 2>\/dev\/null \|\| true"/;
     return content.replace(
       re,
       (_match, fn) =>

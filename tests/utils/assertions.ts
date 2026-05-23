@@ -88,6 +88,20 @@ export const assertAgentsInclude = (stdout: string, agentName: string) => {
   expect(agentsMatch[1]).toContain(agentName);
 };
 
+export const assertWorkflowsInclude = (stdout: string, workflowName: string) => {
+  // look for workflows array in --print-config output
+  const workflowsMatch = /Workflows:\s*\n\s*\[([\S\s]*?)]/.exec(stdout);
+  const workflowsList = workflowsMatch?.[1];
+  if (!workflowsList) {
+    throw new Error("Could not find Workflows section in output");
+  }
+  const workflows = workflowsList
+    .split(",")
+    .map((entry) => entry.trim().replace(/^['"]|['"]$/gu, ""))
+    .filter(Boolean);
+  expect(workflows).toContain(workflowName);
+};
+
 export const assertPresetMatched = (stdout: string, presetName: string) => {
   // look for preset in context output
   expect(stdout).toContain(presetName);

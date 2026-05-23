@@ -54,6 +54,20 @@ const readDoctorSkillTrace = (stdout: string, skillName: string): DoctorTrace[] 
   return trace;
 };
 
+const readDoctorWorkflowTrace = (stdout: string, workflowName: string): DoctorTrace[] => {
+  const report: unknown = JSON.parse(stdout);
+  if (!isRecord(report) || !isRecord(report.workflows)) {
+    throw new Error("Expected doctor workflows report");
+  }
+
+  const trace = report.workflows[workflowName];
+  if (!Array.isArray(trace) || !trace.every(isDoctorTrace)) {
+    throw new Error(`Expected doctor trace for ${workflowName}`);
+  }
+
+  return trace;
+};
+
 describe("config resolution", () => {
   test("loads global settings from minimal config", async () => {
     const result = await runCCC({
@@ -157,6 +171,20 @@ describe("config resolution", () => {
     ]);
     expect(readDoctorSkillTrace(result.stdout, "ts-precedence")).toEqual([
       { layer: "global", mode: "append" },
+    ]);
+  });
+
+  test("doctor reports built workflow layer traces", async () => {
+    const result = await runCCC({
+      projectDir: "typescript-basic",
+      configFixture: "workflow-layering",
+      args: ["--doctor", "--json"],
+    });
+
+    assertExitCode(result.exitCode, 0);
+    expect(readDoctorWorkflowTrace(result.stdout, "inline-triage")).toEqual([
+      { layer: "global", mode: "override" },
+      { layer: "preset", name: "typescript", mode: "override" },
     ]);
   });
 });

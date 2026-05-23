@@ -50,7 +50,21 @@ const loadSinglePlugin = async (
   // create plugin context
   const pluginContext = createPluginContext(context, manifest, root, settings, definition.stateType);
 
-  // register for inter-plugin communication
+  // honor the plugin's own enabled gate — disabled plugins do NOT register
+  // for inter-plugin lookup, do NOT fire onLoad, and every registry getter
+  // short-circuits because `enabled: false`. They behave as if absent.
+  if (definition.enabled === false) {
+    return {
+      manifest,
+      root,
+      definition,
+      enabled: false,
+      settings,
+      context: pluginContext,
+    };
+  }
+
+  // register for inter-plugin communication (enabled plugins only)
   registerPluginContext(manifest.name, pluginContext);
 
   // emit onLoad

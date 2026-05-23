@@ -87,6 +87,8 @@ const monkeyPatchFS = ({
   skillsPath,
   virtualSkills,
   rulesPath,
+  outputStylesPath,
+  workflowsPath,
   virtualRoots,
   volPromises,
 }: {
@@ -100,6 +102,8 @@ const monkeyPatchFS = ({
   skillsPath?: string;
   virtualSkills?: string[];
   rulesPath?: string;
+  outputStylesPath?: string;
+  workflowsPath?: string;
   virtualRoots: Set<string>;
   volPromises: typeof fsDefault.promises;
 }) => {
@@ -107,6 +111,55 @@ const monkeyPatchFS = ({
   const normalizedAgentsPath = agentsPath ? path.normalize(path.resolve(agentsPath)) : undefined;
   const normalizedSkillsPath = skillsPath ? path.normalize(path.resolve(skillsPath)) : undefined;
   const normalizedRulesPath = rulesPath ? path.normalize(path.resolve(rulesPath)) : undefined;
+  const normalizedOutputStylesPath =
+    outputStylesPath ? path.normalize(path.resolve(outputStylesPath)) : undefined;
+  const normalizedWorkflowsPath = workflowsPath ? path.normalize(path.resolve(workflowsPath)) : undefined;
+  type VirtualCategoryLabel = "agents" | "commands" | "output-styles" | "rules" | "skills" | "workflows";
+  interface VirtualCategory {
+    label: VirtualCategoryLabel;
+    root: string;
+    recursiveRead: boolean;
+    writeBlock: boolean;
+  }
+
+  const virtualCategories = [
+    normalizedCommandsPath && {
+      label: "commands",
+      root: normalizedCommandsPath,
+      recursiveRead: false,
+      writeBlock: true,
+    },
+    normalizedAgentsPath && {
+      label: "agents",
+      root: normalizedAgentsPath,
+      recursiveRead: false,
+      writeBlock: true,
+    },
+    normalizedSkillsPath && {
+      label: "skills",
+      root: normalizedSkillsPath,
+      recursiveRead: false,
+      writeBlock: true,
+    },
+    normalizedRulesPath && {
+      label: "rules",
+      root: normalizedRulesPath,
+      recursiveRead: true,
+      writeBlock: true,
+    },
+    normalizedOutputStylesPath && {
+      label: "output-styles",
+      root: normalizedOutputStylesPath,
+      recursiveRead: false,
+      writeBlock: true,
+    },
+    normalizedWorkflowsPath && {
+      label: "workflows",
+      root: normalizedWorkflowsPath,
+      recursiveRead: false,
+      writeBlock: true,
+    },
+  ].filter((c): c is VirtualCategory => Boolean(c));
 
   const normalizeArgPath = (arg: string) => {
     if (arg.startsWith(`~${path.sep}`)) {
@@ -115,11 +168,35 @@ const monkeyPatchFS = ({
     return arg;
   };
 
-  const isSkillsRootArg = (arg: string) => {
-    if (!normalizedSkillsPath) return false;
-    const normalized = path.normalize(path.resolve(normalizeArgPath(arg)));
-    return normalized === normalizedSkillsPath;
+  const normalizedArg = (filePath: unknown) => {
+    if (typeof filePath !== "string") return null;
+    return path.normalize(path.resolve(normalizeArgPath(filePath)));
   };
+
+  const findVirtualCategory = (filePath: unknown) => {
+    const normalized = normalizedArg(filePath);
+    if (!normalized) return null;
+    for (const category of virtualCategories) {
+      const isRoot =
+        normalized === category.root ||
+        normalized === category.root + path.sep ||
+        category.root === normalized + path.sep;
+      if (isRoot) return { category, normalized, isRoot: true };
+      if (normalized.startsWith(category.root + path.sep)) {
+        return { category, normalized, isRoot: false };
+      }
+    }
+    return null;
+  };
+
+  const isCategoryRoot = (label: VirtualCategoryLabel, filePath: unknown) => {
+    const match = findVirtualCategory(filePath);
+    const result = Boolean(match && match.category.label === label && match.isRoot);
+    if (result) log.vfs(`is${label}Path: "${filePath}" => true (normalized: "${match!.normalized}")`);
+    return result;
+  };
+
+  const isSkillsRootArg = (arg: string) => isCategoryRoot("skills", normalizeArgPath(arg));
 
   const virtualFileDescriptors = new Map<
     number,
@@ -159,82 +236,6 @@ const monkeyPatchFS = ({
     return vol.readFileSync(virtualPath, options as Parameters<typeof vol.readFileSync>[1]);
   };
 
-  const isCommandsPath = (filePath: unknown) => {
-    if (!normalizedCommandsPath || typeof filePath !== "string") return false;
-    const normalized = path.normalize(path.resolve(filePath));
-    const result =
-      normalized === normalizedCommandsPath ||
-      normalized === normalizedCommandsPath + path.sep ||
-      normalizedCommandsPath === normalized + path.sep;
-    if (result) log.vfs(`isCommandsPath: "${filePath}" => true (normalized: "${normalized}")`);
-    return result;
-  };
-
-  const isCommandsChild = (filePath: unknown) => {
-    if (!normalizedCommandsPath || typeof filePath !== "string") return false;
-    const normalized = path.normalize(path.resolve(filePath));
-    const result = normalized.startsWith(normalizedCommandsPath + path.sep);
-    if (result) log.vfs(`isCommandsChild: "${filePath}" => true`);
-    return result;
-  };
-
-  const isAgentsPath = (filePath: unknown) => {
-    if (!normalizedAgentsPath || typeof filePath !== "string") return false;
-    const normalized = path.normalize(path.resolve(filePath));
-    const result =
-      normalized === normalizedAgentsPath ||
-      normalized === normalizedAgentsPath + path.sep ||
-      normalizedAgentsPath === normalized + path.sep;
-    if (result) log.vfs(`isAgentsPath: "${filePath}" => true (normalized: "${normalized}")`);
-    return result;
-  };
-
-  const isAgentsChild = (filePath: unknown) => {
-    if (!normalizedAgentsPath || typeof filePath !== "string") return false;
-    const normalized = path.normalize(path.resolve(filePath));
-    const result = normalized.startsWith(normalizedAgentsPath + path.sep);
-    if (result) log.vfs(`isAgentsChild: "${filePath}" => true`);
-    return result;
-  };
-
-  const isSkillsPath = (filePath: unknown) => {
-    if (!normalizedSkillsPath || typeof filePath !== "string") return false;
-    const normalized = path.normalize(path.resolve(filePath));
-    const result =
-      normalized === normalizedSkillsPath ||
-      normalized === normalizedSkillsPath + path.sep ||
-      normalizedSkillsPath === normalized + path.sep;
-    if (result) log.vfs(`isSkillsPath: "${filePath}" => true (normalized: "${normalized}")`);
-    return result;
-  };
-
-  const isSkillsChild = (filePath: unknown) => {
-    if (!normalizedSkillsPath || typeof filePath !== "string") return false;
-    const normalized = path.normalize(path.resolve(filePath));
-    const result = normalized.startsWith(normalizedSkillsPath + path.sep);
-    if (result) log.vfs(`isSkillsChild: "${filePath}" => true`);
-    return result;
-  };
-
-  const isRulesPath = (filePath: unknown) => {
-    if (!normalizedRulesPath || typeof filePath !== "string") return false;
-    const normalized = path.normalize(path.resolve(filePath));
-    const result =
-      normalized === normalizedRulesPath ||
-      normalized === normalizedRulesPath + path.sep ||
-      normalizedRulesPath === normalized + path.sep;
-    if (result) log.vfs(`isRulesPath: "${filePath}" => true (normalized: "${normalized}")`);
-    return result;
-  };
-
-  const isRulesChild = (filePath: unknown) => {
-    if (!normalizedRulesPath || typeof filePath !== "string") return false;
-    const normalized = path.normalize(path.resolve(filePath));
-    const result = normalized.startsWith(normalizedRulesPath + path.sep);
-    if (result) log.vfs(`isRulesChild: "${filePath}" => true`);
-    return result;
-  };
-
   const isVirtualRoot = (filePath: string) => {
     const normalized = path.normalize(path.resolve(filePath));
     for (const root of virtualRoots) {
@@ -244,16 +245,7 @@ const monkeyPatchFS = ({
   };
 
   const resolveVirtualPath = (filePath: string) => {
-    if (
-      isCommandsPath(filePath) ||
-      isCommandsChild(filePath) ||
-      isAgentsPath(filePath) ||
-      isAgentsChild(filePath) ||
-      isSkillsPath(filePath) ||
-      isSkillsChild(filePath) ||
-      isRulesPath(filePath) ||
-      isRulesChild(filePath)
-    ) {
+    if (findVirtualCategory(filePath)) {
       return path.normalize(path.resolve(filePath));
     }
     const mapped = mapToVirtualPath(filePath);
@@ -373,15 +365,9 @@ const monkeyPatchFS = ({
     return Reflect.apply(origReadFileSync, this, [filePath, options]);
   } as typeof fsDefault.readFileSync;
   fsDefault.existsSync = function (filePath: PathLike): boolean {
-    if (
-      isCommandsPath(filePath) ||
-      isCommandsChild(filePath) ||
-      isAgentsPath(filePath) ||
-      isAgentsChild(filePath) ||
-      isRulesPath(filePath) ||
-      isRulesChild(filePath)
-    ) {
-      const result = vol.existsSync(filePath);
+    const virtualCategory = findVirtualCategory(filePath);
+    if (virtualCategory) {
+      const result = vol.existsSync(virtualCategory.normalized);
       log.vfs(`existsSync("${filePath}") => ${result} (virtual only)`);
       return result;
     }
@@ -395,17 +381,11 @@ const monkeyPatchFS = ({
     if (typeof filePath === "string" && filePath.includes(".claude/commands")) {
       log.vfs(`statSync("${filePath}") called`);
     }
-    if (
-      isCommandsPath(filePath) ||
-      isCommandsChild(filePath) ||
-      isAgentsPath(filePath) ||
-      isAgentsChild(filePath) ||
-      isRulesPath(filePath) ||
-      isRulesChild(filePath)
-    ) {
+    const virtualCategory = findVirtualCategory(filePath);
+    if (virtualCategory) {
       try {
-        if (vol.existsSync(filePath)) {
-          return vol.statSync(filePath) as ReturnType<typeof fsDefault.statSync>;
+        if (vol.existsSync(virtualCategory.normalized)) {
+          return vol.statSync(virtualCategory.normalized) as ReturnType<typeof fsDefault.statSync>;
         }
       } catch {}
       const error = new Error(
@@ -466,63 +446,13 @@ const monkeyPatchFS = ({
   fsDefault.readdirSync = function (filePath: PathLike, options?: ReaddirSyncOptions) {
     type ReaddirResult = Buffer[] | Dirent[] | string[];
     log.vfs(`readdirSync("${filePath}") called`);
-    if (isCommandsPath(filePath)) {
-      log.vfs(`Commands dir read, yielding virtual files only`);
+    const virtualCategory = findVirtualCategory(filePath);
+    if (virtualCategory && (virtualCategory.isRoot || virtualCategory.category.recursiveRead)) {
+      log.vfs(`${virtualCategory.category.label} dir read, yielding virtual files only`);
       try {
-        if (vol.existsSync(filePath)) {
+        if (vol.existsSync(virtualCategory.normalized)) {
           const result = vol.readdirSync(
-            filePath,
-            options as Parameters<typeof vol.readdirSync>[1],
-          ) as ReaddirResult;
-          log.vfs(`readdirSync("${filePath}") => [${result}] (${result.length} files, virtual only)`);
-          return result;
-        }
-      } catch (error) {
-        log.vfs(`readdirSync("${filePath}") => ERROR: ${error}`);
-      }
-      log.vfs(`readdirSync("${filePath}") => [] (empty, virtual only)`);
-      return [];
-    }
-    if (isAgentsPath(filePath)) {
-      log.vfs(`Agents dir read, yielding virtual files only`);
-      try {
-        if (vol.existsSync(filePath)) {
-          const result = vol.readdirSync(
-            filePath,
-            options as Parameters<typeof vol.readdirSync>[1],
-          ) as ReaddirResult;
-          log.vfs(`readdirSync("${filePath}") => [${result}] (${result.length} files, virtual only)`);
-          return result;
-        }
-      } catch (error) {
-        log.vfs(`readdirSync("${filePath}") => ERROR: ${error}`);
-      }
-      log.vfs(`readdirSync("${filePath}") => [] (empty, virtual only)`);
-      return [];
-    }
-    if (isSkillsPath(filePath)) {
-      log.vfs(`Skills dir read, yielding virtual files only`);
-      try {
-        if (vol.existsSync(filePath)) {
-          const result = vol.readdirSync(
-            filePath,
-            options as Parameters<typeof vol.readdirSync>[1],
-          ) as ReaddirResult;
-          log.vfs(`readdirSync("${filePath}") => [${result}] (${result.length} files, virtual only)`);
-          return result;
-        }
-      } catch (error) {
-        log.vfs(`readdirSync("${filePath}") => ERROR: ${error}`);
-      }
-      log.vfs(`readdirSync("${filePath}") => [] (empty, virtual only)`);
-      return [];
-    }
-    if (isRulesPath(filePath) || isRulesChild(filePath)) {
-      log.vfs(`Rules dir read, yielding virtual files only`);
-      try {
-        if (vol.existsSync(filePath)) {
-          const result = vol.readdirSync(
-            filePath,
+            virtualCategory.normalized,
             options as Parameters<typeof vol.readdirSync>[1],
           ) as ReaddirResult;
           log.vfs(`readdirSync("${filePath}") => [${result}] (${result.length} files, virtual only)`);
@@ -652,17 +582,9 @@ const monkeyPatchFS = ({
     if (typeof filePath === "string" && filePath.includes(".claude")) {
       log.vfs(`opendirSync("${filePath}") called`);
     }
-    if (isCommandsPath(filePath)) {
-      return createVirtualDir(filePath, "commands");
-    }
-    if (isAgentsPath(filePath)) {
-      return createVirtualDir(filePath, "agents");
-    }
-    if (isSkillsPath(filePath)) {
-      return createVirtualDir(filePath, "skills");
-    }
-    if (isRulesPath(filePath) || isRulesChild(filePath)) {
-      return createVirtualDir(filePath, "rules");
+    const virtualCategory = findVirtualCategory(filePath);
+    if (virtualCategory && (virtualCategory.isRoot || virtualCategory.category.recursiveRead)) {
+      return createVirtualDir(virtualCategory.normalized, virtualCategory.category.label);
     }
     // @ts-expect-error
     return Reflect.apply(origOpendirSync, this, [filePath, options]);
@@ -701,20 +623,9 @@ const monkeyPatchFS = ({
       log.vfs(`WRITE BLOCKED: Protected file "${filePath}"`);
       return true;
     }
-    if (isCommandsPath(filePath) || isCommandsChild(filePath)) {
-      log.vfs(`WRITE BLOCKED: Commands directory "${filePath}"`);
-      return true;
-    }
-    if (isAgentsPath(filePath) || isAgentsChild(filePath)) {
-      log.vfs(`WRITE BLOCKED: Agents directory "${filePath}"`);
-      return true;
-    }
-    if (isSkillsPath(filePath) || isSkillsChild(filePath)) {
-      log.vfs(`WRITE BLOCKED: Skills directory "${filePath}"`);
-      return true;
-    }
-    if (isRulesPath(filePath) || isRulesChild(filePath)) {
-      log.vfs(`WRITE BLOCKED: Rules directory "${filePath}"`);
+    const virtualCategory = findVirtualCategory(filePath);
+    if (virtualCategory?.category.writeBlock) {
+      log.vfs(`WRITE BLOCKED: ${virtualCategory.category.label} directory "${filePath}"`);
       return true;
     }
 
@@ -726,6 +637,20 @@ const monkeyPatchFS = ({
     error.code = "EACCES";
     error.path = String(filePath);
     return error;
+  };
+
+  const isWriteFlag = (flags?: number | string | null) => {
+    if (typeof flags === "number") {
+      const writeFlags =
+        fsDefault.constants.O_WRONLY |
+        fsDefault.constants.O_RDWR |
+        fsDefault.constants.O_APPEND |
+        fsDefault.constants.O_TRUNC |
+        fsDefault.constants.O_CREAT;
+      return (flags & writeFlags) !== 0;
+    }
+    if (typeof flags !== "string") return false;
+    return flags.includes("+") || flags.startsWith("w") || flags.startsWith("a");
   };
 
   const origWriteFileSync = fsDefault.writeFileSync;
@@ -942,14 +867,7 @@ const monkeyPatchFS = ({
               }
             }
 
-            if (
-              isCommandsPath(filePath) ||
-              isCommandsChild(filePath) ||
-              isAgentsPath(filePath) ||
-              isAgentsChild(filePath) ||
-              isRulesPath(filePath) ||
-              isRulesChild(filePath)
-            ) {
+            if (findVirtualCategory(filePath)) {
               const error = new Error(
                 `ENOENT: no such file or directory, open '${filePath}'`,
               ) as NodeJS.ErrnoException;
@@ -970,15 +888,12 @@ const monkeyPatchFS = ({
       const origPromisesOpen = fsDefault.promises.open.bind(fsDefault.promises);
       Object.defineProperty(fsDefault.promises, "open", {
         async value(filePath: PathLike, flags?: number | string, mode?: number | string) {
+          if (isWriteFlag(flags) && isProtectedPath(filePath)) {
+            throw createPermissionError("open", String(filePath));
+          }
           if (typeof filePath === "string") {
             const virtualPath = resolveVirtualPath(filePath);
-            const mustVirtualize =
-              isCommandsPath(filePath) ||
-              isCommandsChild(filePath) ||
-              isAgentsPath(filePath) ||
-              isAgentsChild(filePath) ||
-              isRulesPath(filePath) ||
-              isRulesChild(filePath);
+            const mustVirtualize = Boolean(findVirtualCategory(filePath));
 
             if (virtualPath && (vol.existsSync(virtualPath) || mustVirtualize)) {
               if (mustVirtualize) {
@@ -1021,14 +936,7 @@ const monkeyPatchFS = ({
               }
             }
 
-            if (
-              isCommandsPath(filePath) ||
-              isCommandsChild(filePath) ||
-              isAgentsPath(filePath) ||
-              isAgentsChild(filePath) ||
-              isRulesPath(filePath) ||
-              isRulesChild(filePath)
-            ) {
+            if (findVirtualCategory(filePath)) {
               const error = new Error(
                 `ENOENT: no such file or directory, stat '${filePath}'`,
               ) as NodeJS.ErrnoException;
@@ -1279,8 +1187,10 @@ const monkeyPatchFS = ({
   const alreadyPatched = new Set([
     "existsSync",
     "lstatSync",
+    "open",
     "opendir",
     "opendirSync",
+    "openSync",
     "readdir",
     "readdirSync",
     "readFileSync",
@@ -1335,8 +1245,11 @@ const monkeyPatchFS = ({
     ) {
       if (typeof filePath === "string") {
         log.vfs(`openSync("${filePath}", flags=${flags}) called`);
-        const virtualPath = mapToVirtualPath(filePath);
+        if (isWriteFlag(flags) && isProtectedPath(filePath)) {
+          throw createPermissionError("open", String(filePath));
+        }
 
+        const virtualPath = resolveVirtualPath(filePath);
         if (virtualPath && vol.existsSync(virtualPath)) {
           try {
             const content = vol.readFileSync(virtualPath);
@@ -1356,6 +1269,15 @@ const monkeyPatchFS = ({
           }
         }
 
+        if (findVirtualCategory(filePath)) {
+          const error = new Error(
+            `ENOENT: no such file or directory, open '${filePath}'`,
+          ) as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          error.path = filePath;
+          throw error;
+        }
+
         if (filePath.includes(".claude/commands")) {
           log.vfs(`Commands dir open as file descriptor`);
         }
@@ -1364,6 +1286,52 @@ const monkeyPatchFS = ({
       log.vfs(`Opening real file: "${filePath}"`);
       return Reflect.apply(origOpenSync, this, [filePath, flags, mode]);
     };
+  }
+
+  if (fsDefault.open) {
+    const origOpen = fsDefault.open;
+    fsDefault.open = function (
+      this: typeof fsDefault,
+      filePath: PathLike,
+      flagsOrCallback: any,
+      modeOrCallback?: any,
+      callback?: any,
+    ) {
+      let flags = flagsOrCallback;
+      let mode = modeOrCallback;
+      let cb = callback;
+      if (typeof flagsOrCallback === "function") {
+        flags = "r";
+        mode = undefined;
+        cb = flagsOrCallback;
+      }
+      if (typeof modeOrCallback === "function") {
+        cb = modeOrCallback;
+        mode = undefined;
+      }
+      if (flags === undefined) {
+        flags = "r";
+      }
+      const finalCallback = cb || (() => {});
+
+      if (isWriteFlag(flags) && isProtectedPath(filePath)) {
+        const error = createPermissionError("open", String(filePath));
+        process.nextTick(() => finalCallback(error));
+        return;
+      }
+
+      if (typeof filePath === "string" && resolveVirtualPath(filePath)) {
+        try {
+          const fd = fsDefault.openSync(filePath, flags, mode);
+          process.nextTick(() => finalCallback(null, fd));
+        } catch (error) {
+          process.nextTick(() => finalCallback(error as NodeJS.ErrnoException));
+        }
+        return;
+      }
+
+      return Reflect.apply(origOpen, this, [filePath, flags, mode, finalCallback]);
+    } as typeof fsDefault.open;
   }
 
   if (fsDefault.readSync) {
@@ -1542,19 +1510,10 @@ const monkeyPatchFS = ({
       options?: BufferEncoding | { encoding?: BufferEncoding | null },
     ) {
       if (typeof filePath === "string") {
-        // for virtual paths, return as-is to prevent resolution to real filesystem
-        if (
-          isCommandsPath(filePath) ||
-          isCommandsChild(filePath) ||
-          isAgentsPath(filePath) ||
-          isAgentsChild(filePath) ||
-          isSkillsPath(filePath) ||
-          isSkillsChild(filePath) ||
-          isRulesPath(filePath) ||
-          isRulesChild(filePath)
-        ) {
+        const virtualCategory = findVirtualCategory(filePath);
+        if (virtualCategory) {
           log.vfs(`realpathSync("${filePath}") => returning as-is (virtual)`);
-          return path.normalize(path.resolve(filePath));
+          return virtualCategory.normalized;
         }
         if (filePath.includes(".claude")) {
           log.vfs(`realpathSync("${filePath}") called`);
@@ -1776,6 +1735,7 @@ export const setupVirtualFileSystem = (args: {
   skills?: SkillBundle[];
   rules?: Map<string, string>;
   outputStyles?: Map<string, string>;
+  workflows?: Map<string, string>;
   workingDirectory?: string;
   disableParentClaudeMds?: boolean;
 }) => {
@@ -1787,6 +1747,7 @@ export const setupVirtualFileSystem = (args: {
   const skillsPath = path.normalize(path.resolve(os.homedir(), ".claude", "skills"));
   const rulesPath = path.normalize(path.resolve(os.homedir(), ".claude", "rules"));
   const outputStylesPath = path.normalize(path.resolve(os.homedir(), ".claude", "output-styles"));
+  const workflowsPath = path.normalize(path.resolve(os.homedir(), ".claude", "workflows"));
 
   log.vfs("Initializing virtual filesystem");
 
@@ -1798,7 +1759,6 @@ export const setupVirtualFileSystem = (args: {
     log.vfs("No virtual .claude.json override provided");
   }
 
-  // log settings
   log.vfs("Injecting settings.json:");
   log.vfs(`  Path: ${settingsJsonPath}`);
   const settingsKeys = Object.keys(args.settings);
@@ -1812,7 +1772,6 @@ export const setupVirtualFileSystem = (args: {
     }
   }
 
-  // log user prompt
   const userPromptFirstLine = args.userPrompt.split("\n")[0] || "";
   log.vfs(
     `Injecting user prompt: "${userPromptFirstLine.slice(0, 80)}${userPromptFirstLine.length > 80 ? "..." : ""}"`,
@@ -1820,7 +1779,6 @@ export const setupVirtualFileSystem = (args: {
   log.vfs(`  Path: ${claudeMdPath}`);
   log.vfs(`  Length: ${args.userPrompt.length} chars, ${args.userPrompt.split("\n").length} lines`);
 
-  // log commands
   log.vfs(`Commands path: ${commandsPath}`);
   if (args.commands) {
     log.vfs(`Commands to inject: ${args.commands.size} files`);
@@ -1831,7 +1789,6 @@ export const setupVirtualFileSystem = (args: {
     log.vfs("No commands provided");
   }
 
-  // log agents
   log.vfs(`Agents path: ${agentsPath}`);
   if (args.agents) {
     log.vfs(`Agents to inject: ${args.agents.size} files`);
@@ -1842,7 +1799,6 @@ export const setupVirtualFileSystem = (args: {
     log.vfs("No agents provided");
   }
 
-  // log skills
   log.vfs(`Skills path: ${skillsPath}`);
   if (args.skills) {
     log.vfs(`Skills to inject: ${args.skills.length} skill(s)`);
@@ -1853,7 +1809,6 @@ export const setupVirtualFileSystem = (args: {
     log.vfs("No skills provided");
   }
 
-  // log rules
   log.vfs(`Rules path: ${rulesPath}`);
   if (args.rules) {
     log.vfs(`Rules to inject: ${args.rules.size} files`);
@@ -1864,7 +1819,6 @@ export const setupVirtualFileSystem = (args: {
     log.vfs("No rules provided");
   }
 
-  // log output styles
   log.vfs(`Output styles path: ${outputStylesPath}`);
   if (args.outputStyles) {
     log.vfs(`Output styles to inject: ${args.outputStyles.size} files`);
@@ -1873,6 +1827,16 @@ export const setupVirtualFileSystem = (args: {
     }
   } else {
     log.vfs("No output styles provided");
+  }
+
+  log.vfs(`Workflows path: ${workflowsPath}`);
+  if (args.workflows) {
+    log.vfs(`Workflows to inject: ${args.workflows.size} files`);
+    for (const [filename, content] of args.workflows) {
+      log.vfs(`  - ${filename} (${content.length} chars)`);
+    }
+  } else {
+    log.vfs("No workflows provided");
   }
 
   // filter out cli-only flags (they are passed as args, not written to settings.json)
@@ -1894,9 +1858,9 @@ export const setupVirtualFileSystem = (args: {
 
   // merge featureFlags into ~/.claude.json's cachedGrowthBookFeatures
   const featureFlags =
-    rawFeatureFlags && typeof rawFeatureFlags === "object" && !Array.isArray(rawFeatureFlags)
-      ? (rawFeatureFlags as Record<string, unknown>)
-      : undefined;
+    rawFeatureFlags && typeof rawFeatureFlags === "object" && !Array.isArray(rawFeatureFlags) ?
+      (rawFeatureFlags as Record<string, unknown>)
+    : undefined;
   let effectiveClaudeStateJson = args.claudeStateJson;
   if (featureFlags && Object.keys(featureFlags).length > 0) {
     log.vfs(`Injecting featureFlags into cachedGrowthBookFeatures: ${Object.keys(featureFlags).join(", ")}`);
@@ -1904,16 +1868,18 @@ export const setupVirtualFileSystem = (args: {
       const parsed = effectiveClaudeStateJson ? JSON.parse(effectiveClaudeStateJson) : {};
       const base = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
       const existing =
-        base.cachedGrowthBookFeatures && typeof base.cachedGrowthBookFeatures === "object"
-          ? base.cachedGrowthBookFeatures
-          : {};
+        base.cachedGrowthBookFeatures && typeof base.cachedGrowthBookFeatures === "object" ?
+          base.cachedGrowthBookFeatures
+        : {};
       const merged = {
         ...base,
         cachedGrowthBookFeatures: { ...existing, ...featureFlags },
       };
       effectiveClaudeStateJson = `${JSON.stringify(merged, null, 2)}\n`;
     } catch (error) {
-      log.vfs(`Failed to merge featureFlags into .claude.json: ${error instanceof Error ? error.message : error}`);
+      log.vfs(
+        `Failed to merge featureFlags into .claude.json: ${error instanceof Error ? error.message : error}`,
+      );
     }
   }
   if (filteredSettings.env && typeof filteredSettings.env === "object") {
@@ -1939,10 +1905,8 @@ export const setupVirtualFileSystem = (args: {
   const volPromises = memfs.promises as unknown as typeof fsDefault.promises;
   const virtualRoots = new Set<string>([agentsPath, commandsPath]);
 
-  // add commands to virtual volume if provided
   const virtualCommandFiles: string[] = [];
   if (args.commands) {
-    // ensure commands directory exists in virtual volume
     vol.mkdirSync(commandsPath, { recursive: true });
 
     for (const [filename, content] of args.commands) {
@@ -1955,10 +1919,8 @@ export const setupVirtualFileSystem = (args: {
     log.vfs(`Virtual directory contents: ${vol.readdirSync(commandsPath)}`);
   }
 
-  // add agents to virtual volume if provided
   const virtualAgentFiles: string[] = [];
   if (args.agents) {
-    // ensure agents directory exists in virtual volume
     vol.mkdirSync(agentsPath, { recursive: true });
 
     for (const [filename, content] of args.agents) {
@@ -1971,7 +1933,6 @@ export const setupVirtualFileSystem = (args: {
     log.vfs(`Virtual directory contents: ${vol.readdirSync(agentsPath)}`);
   }
 
-  // add skills to virtual volume if provided
   const virtualSkillDirs: string[] = [];
   if (args.skills) {
     vol.mkdirSync(skillsPath, { recursive: true });
@@ -1993,7 +1954,6 @@ export const setupVirtualFileSystem = (args: {
     log.vfs(`Virtual directory contents: ${vol.readdirSync(skillsPath)}`);
   }
 
-  // add rules to virtual volume if provided
   const virtualRuleFiles: string[] = [];
   if (args.rules) {
     vol.mkdirSync(rulesPath, { recursive: true });
@@ -2001,7 +1961,6 @@ export const setupVirtualFileSystem = (args: {
 
     for (const [filename, content] of args.rules) {
       const filePath = path.join(rulesPath, filename);
-      // handle subdirectories in rule paths
       vol.mkdirSync(path.dirname(filePath), { recursive: true });
       vol.writeFileSync(filePath, content);
       virtualRuleFiles.push(filename);
@@ -2011,7 +1970,6 @@ export const setupVirtualFileSystem = (args: {
     log.vfs(`Virtual directory contents: ${vol.readdirSync(rulesPath)}`);
   }
 
-  // add output styles to virtual volume if provided
   const virtualOutputStyleFiles: string[] = [];
   if (args.outputStyles) {
     vol.mkdirSync(outputStylesPath, { recursive: true });
@@ -2025,6 +1983,21 @@ export const setupVirtualFileSystem = (args: {
 
     log.vfs("Output styles written to virtual volume");
     log.vfs(`Virtual directory contents: ${vol.readdirSync(outputStylesPath)}`);
+  }
+
+  const virtualWorkflowFiles: string[] = [];
+  if (args.workflows) {
+    vol.mkdirSync(workflowsPath, { recursive: true });
+    virtualRoots.add(workflowsPath);
+
+    for (const [filename, content] of args.workflows) {
+      const filePath = path.join(workflowsPath, filename);
+      vol.writeFileSync(filePath, content);
+      virtualWorkflowFiles.push(filename);
+    }
+
+    log.vfs("Workflows written to virtual volume");
+    log.vfs(`Virtual directory contents: ${vol.readdirSync(workflowsPath)}`);
   }
 
   // ensure files exists - workaround for discovery issues
@@ -2042,6 +2015,8 @@ export const setupVirtualFileSystem = (args: {
     skillsPath: args.skills ? skillsPath : undefined,
     virtualSkills: virtualSkillDirs,
     rulesPath: args.rules ? rulesPath : undefined,
+    outputStylesPath: args.outputStyles ? outputStylesPath : undefined,
+    workflowsPath: args.workflows ? workflowsPath : undefined,
     virtualRoots,
     volPromises,
   });

@@ -49,7 +49,7 @@ export interface SkillDefinition {
   /** Override effort level when this skill is invoked (v2.1.80). */
   effort?: "high" | "low" | "max" | "medium";
   /** Hook definitions scoped to this skill. */
-  hooks?: HooksConfiguration | Record<string, unknown>;
+  hooks?: HooksConfiguration;
   /**
    * Extra frontmatter fields to include verbatim.
    * Use this for advanced or future metadata not covered above.
@@ -57,6 +57,11 @@ export interface SkillDefinition {
   frontmatter?: Record<string, unknown>;
   /** Additional files to inject into the skill directory. */
   files?: SkillFile[];
+  /**
+   * Build-time gate. When `false`, CCC skips emitting this skill bundle.
+   * Defaults to `true`. Not written to SKILL.md frontmatter.
+   */
+  enabled?: boolean;
 }
 
 export type SkillDefinitionFactory = (context: Context) => Promise<SkillDefinition> | SkillDefinition;

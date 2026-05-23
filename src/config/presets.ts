@@ -19,6 +19,7 @@ const loadPreset = async (presetName: string, context: Context): Promise<PresetC
     // get matcher from preset/index.ts
     const presetModule = await import(indexPath);
     const loadedPresetConfig = presetModule.default as PresetConfig;
+    if (loadedPresetConfig.enabled === false) return null;
     if (!loadedPresetConfig.matcher) {
       console.warn(`Preset ${presetName} has no matcher function`);
       return null;

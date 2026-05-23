@@ -24,6 +24,8 @@ interface CacheMeta {
   preambleVersion: string;
 }
 
+type SemverParts = [major: number, minor: number, patch: number];
+
 const readMeta = (version: string): CacheMeta | null => {
   const p = metaFile(version);
   if (!fs.existsSync(p)) return null;
@@ -80,13 +82,14 @@ export const readCached = (version: string, binaryPath: string, currentPreambleV
   return p;
 };
 
+const parseSemverParts = (v: string): SemverParts => {
+  const [maj, min, pat] = v.split(".").map((n) => Number.parseInt(n) || 0);
+  return [maj ?? 0, min ?? 0, pat ?? 0];
+};
+
 const compareSemverDesc = (a: string, b: string) => {
-  const parts = (v: string): [number, number, number] => {
-    const [maj, min, pat] = v.split(".").map((n) => Number.parseInt(n) || 0);
-    return [maj ?? 0, min ?? 0, pat ?? 0];
-  };
-  const [a1, a2, a3] = parts(a);
-  const [b1, b2, b3] = parts(b);
+  const [a1, a2, a3] = parseSemverParts(a);
+  const [b1, b2, b3] = parseSemverParts(b);
   if (b1 !== a1) return b1 - a1;
   if (b2 !== a2) return b2 - a2;
   return b3 - a3;

@@ -14,6 +14,7 @@ import {
 } from "@/hooks/hook-generator";
 import type { ClaudeHookInput } from "@/types/hooks";
 import type { MCPServers } from "@/types/mcps";
+import { isMCPLayerDisabled } from "@/types/mcps";
 import { buildPlugins } from "@/config/builders/build-plugins";
 import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
 import { Context } from "@/context/Context";
@@ -469,7 +470,7 @@ const runMCP = async (mcpName: string) => {
   Object.assign(merged, pluginMCPs);
 
   const mcpConfig = merged[mcpName];
-  if (!mcpConfig) {
+  if (!mcpConfig || isMCPLayerDisabled(mcpConfig)) {
     console.error(`MCP not found: ${mcpName}`);
     process.exit(2);
   }
