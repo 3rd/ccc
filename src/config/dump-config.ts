@@ -16,6 +16,9 @@ export const dumpConfig = async (
     agents: Map<string, string>;
     mcps: Record<string, unknown>;
     skills?: SkillBundle[];
+    rules?: Map<string, string>;
+    outputStyles?: Map<string, string>;
+    workflows?: Map<string, string>;
   },
 ) => {
   const timestamp = new Date().toISOString();
@@ -27,6 +30,9 @@ export const dumpConfig = async (
     commands: config.commands,
     agents: config.agents,
     skills: config.skills,
+    rules: config.rules,
+    outputStyles: config.outputStyles,
+    workflows: config.workflows,
     workingDirectory: context.workingDirectory,
     disableParentClaudeMds: context.project.projectConfig?.disableParentClaudeMds,
   });
@@ -37,12 +43,18 @@ export const dumpConfig = async (
   const commandsPath = path.normalize(path.resolve(os.homedir(), ".claude", "commands"));
   const agentsPath = path.normalize(path.resolve(os.homedir(), ".claude", "agents"));
   const skillsPath = path.normalize(path.resolve(os.homedir(), ".claude", "skills"));
+  const rulesPath = path.normalize(path.resolve(os.homedir(), ".claude", "rules"));
+  const outputStylesPath = path.normalize(path.resolve(os.homedir(), ".claude", "output-styles"));
+  const workflowsPath = path.normalize(path.resolve(os.homedir(), ".claude", "workflows"));
 
   // create dump directory
   await fs.mkdir(dumpDir, { recursive: true });
   await fs.mkdir(path.join(dumpDir, "commands"), { recursive: true });
   await fs.mkdir(path.join(dumpDir, "agents"), { recursive: true });
   await fs.mkdir(path.join(dumpDir, "skills"), { recursive: true });
+  await fs.mkdir(path.join(dumpDir, "rules"), { recursive: true });
+  await fs.mkdir(path.join(dumpDir, "output-styles"), { recursive: true });
+  await fs.mkdir(path.join(dumpDir, "workflows"), { recursive: true });
 
   await fs.writeFile(path.join(dumpDir, "system.md"), config.systemPrompt, "utf8");
 
@@ -95,6 +107,31 @@ export const dumpConfig = async (
     copyDirRecursive(skillsPath, path.join(dumpDir, "skills"));
   }
 
+  // dump rules (may include subdirectories)
+  if (fsSync.existsSync(rulesPath)) {
+    copyDirRecursive(rulesPath, path.join(dumpDir, "rules"));
+  }
+
+  // dump output styles (flat .md)
+  if (fsSync.existsSync(outputStylesPath)) {
+    const outputStyleFiles = fsSync.readdirSync(outputStylesPath);
+    for (const filename of outputStyleFiles) {
+      const filePath = path.join(outputStylesPath, filename);
+      const content = fsSync.readFileSync(filePath, "utf8");
+      await fs.writeFile(path.join(dumpDir, "output-styles", filename), content, "utf8");
+    }
+  }
+
+  // dump workflows (flat .js)
+  if (fsSync.existsSync(workflowsPath)) {
+    const workflowFiles = fsSync.readdirSync(workflowsPath);
+    for (const filename of workflowFiles) {
+      const filePath = path.join(workflowsPath, filename);
+      const content = fsSync.readFileSync(filePath, "utf8");
+      await fs.writeFile(path.join(dumpDir, "workflows", filename), content, "utf8");
+    }
+  }
+
   // dump mcps
   await fs.writeFile(path.join(dumpDir, "mcps.json"), JSON.stringify(config.mcps, null, 2), "utf8");
 
@@ -114,6 +151,9 @@ export const dumpConfig = async (
           commandsPath,
           agentsPath,
           skillsPath,
+          rulesPath,
+          outputStylesPath,
+          workflowsPath,
         },
         project: {
           rootDirectory: context.project.rootDirectory,
@@ -125,9 +165,16 @@ export const dumpConfig = async (
           configCommands: config.commands?.size || 0,
           configAgents: config.agents?.size || 0,
           configSkills: config.skills?.length || 0,
+          configRules: config.rules?.size || 0,
+          configOutputStyles: config.outputStyles?.size || 0,
+          configWorkflows: config.workflows?.size || 0,
           vfsCommands: fsSync.existsSync(commandsPath) ? fsSync.readdirSync(commandsPath).length : 0,
           vfsAgents: fsSync.existsSync(agentsPath) ? fsSync.readdirSync(agentsPath).length : 0,
           vfsSkills: fsSync.existsSync(skillsPath) ? fsSync.readdirSync(skillsPath).length : 0,
+          vfsRules: fsSync.existsSync(rulesPath) ? fsSync.readdirSync(rulesPath).length : 0,
+          vfsOutputStyles:
+            fsSync.existsSync(outputStylesPath) ? fsSync.readdirSync(outputStylesPath).length : 0,
+          vfsWorkflows: fsSync.existsSync(workflowsPath) ? fsSync.readdirSync(workflowsPath).length : 0,
         },
       },
       null,

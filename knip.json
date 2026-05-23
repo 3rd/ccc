@@ -1,11 +1,27 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  "entry": ["src/cli/*.ts"],
-  "project": ["src/**/*.ts", "config/**/*.ts"],
-  "workspaces": {
-    ".": {
-      "entry": "src/cli/*.ts",
-      "project": ["src/**/*.ts", "config/**/*.ts"]
-    }
+  "entry": [
+    "src/cli/*.ts",
+    "src/tui/index.ts",
+    "src/tui/renderer.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.test.ts",
+    "tests/types/*.test-d.ts"
+  ],
+  "project": [
+    "src/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "paths": {
+    "@/*": ["./src/*"]
+  },
+  "ignore": ["tests/fixtures/**"],
+  "ignoreDependencies": ["dotenv", "tsx"],
+  "ignoreUnresolved": ["bun-types"],
+  "rules": {
+    "exports": "off",
+    "types": "off",
+    "duplicates": "off"
   }
 }

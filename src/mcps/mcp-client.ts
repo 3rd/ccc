@@ -43,6 +43,17 @@ const DEFAULT_RECONNECT_CONFIG: ReconnectConfig = {
   maxDelayMs: 30_000,
 };
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const MIN_REQUEST_TIMEOUT_MS = 1000;
+const MAX_REQUEST_TIMEOUT_MS = 2_147_483_647;
+
+const resolveRequestTimeoutMs = (config: ClaudeMCPConfig) => {
+  const envTimeoutMs = Number.parseInt(process.env.MCP_TOOL_TIMEOUT || "", 10);
+  const timeoutMs = config.timeout ?? (envTimeoutMs > 0 ? envTimeoutMs : undefined);
+  if (timeoutMs === undefined) return DEFAULT_REQUEST_TIMEOUT_MS;
+  return Math.min(Math.max(timeoutMs, MIN_REQUEST_TIMEOUT_MS), MAX_REQUEST_TIMEOUT_MS);
+};
+
 const isConnectionError = (error: Error) => {
   const connectionErrors = [
     "ECONNREFUSED",
@@ -68,7 +79,7 @@ export class MCPClient {
   private process?: ChildProcess;
   private eventSource?: EventSource;
   private buffer = "";
-  private readonly REQUEST_TIMEOUT = 30_000;
+  private readonly requestTimeoutMs: number;
   private readonly config: ClaudeMCPConfig;
 
   // reconnection state
@@ -85,6 +96,7 @@ export class MCPClient {
     notificationHandlers?: NotificationHandlers,
   ) {
     this.config = config;
+    this.requestTimeoutMs = resolveRequestTimeoutMs(config);
     this.reconnectConfig = { ...DEFAULT_RECONNECT_CONFIG, ...reconnectConfig };
     this.notificationHandlers = notificationHandlers;
   }
@@ -311,7 +323,7 @@ export class MCPClient {
       const timeoutId = setTimeout(() => {
         this.pendingRequests.delete(id);
         reject(new Error(`Request timeout: ${method}`));
-      }, this.REQUEST_TIMEOUT);
+      }, this.requestTimeoutMs);
 
       this.pendingRequests.set(id, {
         resolve: resolve as (value: unknown) => void,

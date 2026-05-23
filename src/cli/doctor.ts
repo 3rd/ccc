@@ -4,15 +4,21 @@ import p from "picoprint";
 import type { PromptLayerData } from "@/config/helpers";
 import type { PluginsConfig } from "@/config/plugins";
 import type { Context } from "@/context/Context";
-import type { HookCommand } from "@/types/hooks";
+import type { HooksConfiguration } from "@/types/hooks";
 import type { ClaudeMCPConfig } from "@/types/mcps";
 import type { SkillBundle, SkillLayerMode } from "@/types/skills";
+import type { WorkflowBuildResult } from "@/types/workflows";
 import { buildPlugins } from "@/config/builders/build-plugins";
-import { loadConfigFromLayers, loadConfigLayer, loadPromptFile } from "@/config/layers";
+import {
+  loadConfigFromLayers,
+  loadConfigLayer,
+  loadPromptFile,
+  normalizeHooksConfiguration,
+} from "@/config/layers";
 import { isHttpMCP, isSseMCP } from "@/types/mcps";
 import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 
-type LayerKind = "global" | "preset" | "project";
+type LayerKind = "global" | "plugin" | "preset" | "project";
 
 interface TraceEntry {
   layer: LayerKind;
@@ -38,6 +44,8 @@ export interface DoctorReport {
   commands: ItemTraces;
   agents: ItemTraces;
   rules: ItemTraces;
+  outputStyles: ItemTraces;
+  workflows: ItemTraces;
   mcps: Record<string, { type: "http" | "sse" | "stdio"; trace: TraceEntry[] }>;
   hooks: ItemTraces;
   plugins: {
@@ -192,45 +200,41 @@ const collectLayeredMCPs = async (
 const collectLayeredHooks = async (context: Context): Promise<ItemTraces> => {
   const items: ItemTraces = {};
 
-  // load hooks from all layers
-  const hookLayers = await loadConfigFromLayers<Record<string, HookCommand[]>>(context, "hooks.ts");
+  // load hooks from all layers. We use HooksConfiguration here so the
+  // normalizer can strip disabled definitions/entries before we decide
+  // whether a layer actually contributed anything for an event.
+  const hookLayers = await loadConfigFromLayers<HooksConfiguration>(context, "hooks.ts");
+
+  const eventTypesFor = (layer: HooksConfiguration | undefined): string[] => {
+    if (!layer) return [];
+    return Object.keys(normalizeHooksConfiguration(layer));
+  };
 
   // process global hooks
-  if (hookLayers.global) {
-    for (const [eventType, hooks] of Object.entries(hookLayers.global)) {
-      if (Array.isArray(hooks) && hooks.length > 0) {
-        items[eventType] = [{ layer: "global", mode: "override" }];
-      }
-    }
+  for (const eventType of eventTypesFor(hookLayers.global)) {
+    items[eventType] = [{ layer: "global", mode: "override" }];
   }
 
   // process preset hooks
   for (let i = 0; i < hookLayers.presets.length; i++) {
     const preset = context.project.presets[i];
     const presetHooks = hookLayers.presets[i];
-    if (presetHooks && preset) {
-      for (const [eventType, hooks] of Object.entries(presetHooks)) {
-        if (Array.isArray(hooks) && hooks.length > 0) {
-          if (!items[eventType]) {
-            items[eventType] = [];
-          }
-          // hooks are merged (appended) from presets
-          items[eventType].push({ layer: "preset", name: preset.name, mode: "append" });
-        }
-      }
+    if (!preset || !presetHooks) continue;
+    for (const eventType of eventTypesFor(presetHooks)) {
+      if (!items[eventType]) items[eventType] = [];
+      items[eventType].push({ layer: "preset", name: preset.name, mode: "append" });
     }
   }
 
   // process project hooks
   if (hookLayers.project && context.project.projectConfig) {
-    for (const [eventType, hooks] of Object.entries(hookLayers.project)) {
-      if (Array.isArray(hooks) && hooks.length > 0) {
-        if (!items[eventType]) {
-          items[eventType] = [];
-        }
-        // hooks are merged (appended) from project
-        items[eventType].push({ layer: "project", name: context.project.projectConfig.name, mode: "append" });
-      }
+    for (const eventType of eventTypesFor(hookLayers.project)) {
+      if (!items[eventType]) items[eventType] = [];
+      items[eventType].push({
+        layer: "project",
+        name: context.project.projectConfig.name,
+        mode: "append",
+      });
     }
   }
 
@@ -273,6 +277,78 @@ const collectBuiltSkills = (skills: SkillBundle[] | undefined): ItemTraces => {
   const items: ItemTraces = {};
   for (const skill of skills ?? []) {
     items[skill.name] = skill.trace ?? [];
+  }
+  return items;
+};
+
+const collectBuiltWorkflows = (workflows: WorkflowBuildResult | undefined): ItemTraces => {
+  const items: ItemTraces = {};
+  if (!workflows) return items;
+
+  for (const filename of workflows.files.keys()) {
+    const name = filename.endsWith(".js") ? filename.slice(0, -3) : filename;
+    items[name] = workflows.traces[filename] ?? [];
+  }
+
+  return items;
+};
+
+// per-category single-file-listings (last-write-wins or override semantics)
+const listFlatNames = (dirPath: string | undefined, extensions: string[]) => {
+  if (!dirPath || !existsSync(dirPath)) return [];
+  const files = readdirSync(dirPath);
+  const names = new Set<string>();
+  for (const f of files) {
+    if (f.startsWith(".")) continue;
+    for (const ext of extensions) {
+      if (f.endsWith(ext)) {
+        names.add(f.slice(0, -ext.length));
+        break;
+      }
+    }
+  }
+  return Array.from(names).sort();
+};
+
+const collectFlatLayered = (context: Context, category: string, extensions: string[]): ItemTraces => {
+  const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
+  const items: ItemTraces = {};
+
+  const globalDir = join(configBase, "global", category);
+  const globalNames = listFlatNames(globalDir, extensions);
+
+  const presetEntries = context.project.presets.map((preset) => {
+    return {
+      name: preset.name,
+      dir: join(configBase, "presets", preset.name, category),
+    };
+  });
+  const presetNameMap = new Map<string, string[]>();
+  for (const entry of presetEntries) presetNameMap.set(entry.name, listFlatNames(entry.dir, extensions));
+
+  const projectDir =
+    context.project.projectConfig ?
+      join(configBase, "projects", context.project.projectConfig.name, category)
+    : undefined;
+  const projectNames = listFlatNames(projectDir, extensions);
+
+  const allNames = new Set<string>([...globalNames, ...projectNames]);
+  for (const pn of presetEntries) {
+    for (const n of presetNameMap.get(pn.name) || []) allNames.add(n);
+  }
+
+  for (const name of Array.from(allNames).sort()) {
+    const seq: TraceEntry[] = [];
+    if (globalNames.includes(name)) seq.push({ layer: "global", mode: "override" });
+    for (const entry of presetEntries) {
+      if ((presetNameMap.get(entry.name) || []).includes(name)) {
+        seq.push({ layer: "preset", name: entry.name, mode: "override" });
+      }
+    }
+    if (projectNames.includes(name) && context.project.projectConfig) {
+      seq.push({ layer: "project", name: context.project.projectConfig.name, mode: "override" });
+    }
+    items[name] = seq;
   }
   return items;
 };
@@ -459,6 +535,24 @@ const printPretty = (report: DoctorReport) => {
     p(ruleNames.map((name) => ({ name, trace: fmtTrace(report.rules[name] || []) })));
   }
 
+  // output styles
+  p.color.bold.blue.log("\nOutput Styles:");
+  const outputStyleNames = Object.keys(report.outputStyles).sort();
+  if (outputStyleNames.length === 0) {
+    p.color.dim.log("(none)");
+  } else {
+    p(outputStyleNames.map((name) => ({ name, trace: fmtTrace(report.outputStyles[name] || []) })));
+  }
+
+  // workflows
+  p.color.bold.blue.log("\nWorkflows:");
+  const workflowNames = Object.keys(report.workflows).sort();
+  if (workflowNames.length === 0) {
+    p.color.dim.log("(none)");
+  } else {
+    p(workflowNames.map((name) => ({ name, trace: fmtTrace(report.workflows[name] || []) })));
+  }
+
   // MCPs
   p.color.bold.blue.log("\nMCPs:");
   const mcpNames = Object.keys(report.mcps).sort();
@@ -559,6 +653,8 @@ export const runDoctor = async (
     mcps: Record<string, ClaudeMCPConfig>;
     skills?: SkillBundle[];
     rules?: Map<string, string>;
+    outputStyles?: Map<string, string>;
+    workflows?: WorkflowBuildResult;
   },
   opts: { json?: boolean } = {},
 ) => {
@@ -567,6 +663,8 @@ export const runDoctor = async (
   const commands = await collectLayeredItems(context, "commands");
   const agents = await collectLayeredItems(context, "agents");
   const rules = await collectLayeredRules(context);
+  const outputStyles = collectFlatLayered(context, "output-styles", [".md"]);
+  const workflows = collectBuiltWorkflows(artifacts.workflows);
   const hooks = await collectLayeredHooks(context);
   const mcps = await collectLayeredMCPs(context, artifacts.mcps);
   const skills = collectBuiltSkills(artifacts.skills);
@@ -584,6 +682,8 @@ export const runDoctor = async (
     commands,
     agents,
     rules,
+    outputStyles,
+    workflows,
     mcps,
     hooks,
     plugins: {

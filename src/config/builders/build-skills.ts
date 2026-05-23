@@ -11,6 +11,7 @@ import type {
   SkillLayerTrace,
 } from "@/types/skills";
 import type { ConfigLayer } from "@/utils/errors";
+import { normalizeHooksConfiguration } from "@/config/layers";
 import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 import { formatConfigError } from "@/utils/errors";
 import { log } from "@/utils/log";
@@ -19,41 +20,6 @@ const SKILL_MD = "SKILL.md";
 const SKILL_TS = "SKILL.ts";
 
 const toPosixPath = (value: string) => value.split("\\").join("/");
-
-const normalizeRelativePath = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  const withoutLeading = trimmed.replace(/^\.[/\\]/, "");
-  const normalized = path.posix.normalize(toPosixPath(withoutLeading));
-  if (normalized === "." || normalized.startsWith("..") || path.isAbsolute(normalized)) {
-    return null;
-  }
-  return normalized;
-};
-
-const readSkillFiles = (skillDir: string, exclude: Set<string> = new Set()): SkillFile[] => {
-  const files: SkillFile[] = [];
-
-  const visit = (dirPath: string) => {
-    const entries = readdirSync(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
-      const entryPath = join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        visit(entryPath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      const content = readFileSync(entryPath, "utf8");
-      const relativePath = toPosixPath(relative(skillDir, entryPath));
-      if (exclude.has(relativePath)) continue;
-      files.push({ relativePath, content });
-    }
-  };
-
-  visit(skillDir);
-  return files;
-};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -70,9 +36,7 @@ const renderYamlScalar = (value: boolean | number | string | null) => {
 const renderYamlValue = (value: unknown, indent: number): string[] => {
   const pad = "  ".repeat(indent);
 
-  if (isScalar(value)) {
-    return [`${pad}${renderYamlScalar(value)}`];
-  }
+  if (isScalar(value)) return [`${pad}${renderYamlScalar(value)}`];
 
   if (Array.isArray(value)) {
     if (value.length === 0) return [`${pad}[]`];
@@ -119,6 +83,54 @@ const renderFrontmatter = (data: Record<string, unknown>) => {
   return lines.join("\n");
 };
 
+const stripFrontmatter = (content: string) => {
+  const lines = content.split(/\r?\n/u);
+  if (lines[0] !== "---") return content.trim();
+
+  const endIndex = lines.findIndex((line, index) => index > 0 && line === "---");
+  if (endIndex === -1) return content.trim();
+
+  return lines
+    .slice(endIndex + 1)
+    .join("\n")
+    .trim();
+};
+
+const normalizeRelativePath = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const withoutLeading = trimmed.replace(/^\.[/\\]/, "");
+  const normalized = path.posix.normalize(toPosixPath(withoutLeading));
+  if (normalized === "." || normalized.startsWith("..") || path.isAbsolute(normalized)) {
+    return null;
+  }
+  return normalized;
+};
+
+const readSkillFiles = (skillDir: string, exclude: Set<string> = new Set()): SkillFile[] => {
+  const files: SkillFile[] = [];
+
+  const visit = (dirPath: string) => {
+    const entries = readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        visit(entryPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const content = readFileSync(entryPath, "utf8");
+      const relativePath = toPosixPath(relative(skillDir, entryPath));
+      if (exclude.has(relativePath)) continue;
+      files.push({ relativePath, content });
+    }
+  };
+
+  visit(skillDir);
+  return files;
+};
+
 const normalizeSkillMode = (
   mode: SkillDefinition["mode"],
   skillName: string,
@@ -131,18 +143,7 @@ const normalizeSkillMode = (
   return null;
 };
 
-const stripFrontmatter = (content: string) => {
-  const lines = content.split(/\r?\n/u);
-  if (lines[0] !== "---") return content.trim();
-
-  const endIndex = lines.findIndex((line, index) => index > 0 && line === "---");
-  if (endIndex === -1) return content.trim();
-
-  return lines.slice(endIndex + 1).join("\n").trim();
-};
-
-const toFileMap = (files: SkillFile[]) =>
-  new Map(files.map((file) => [file.relativePath, file.content]));
+const toFileMap = (files: SkillFile[]) => new Map(files.map((file) => [file.relativePath, file.content]));
 
 const createSkillTrace = (
   layer: ConfigLayer,
@@ -239,7 +240,11 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
     frontmatter["disable-model-invocation"] = definition.disableModelInvocation;
   }
   if (definition.hooks !== undefined) {
-    frontmatter.hooks = definition.hooks;
+    // skill-level hooks serialize straight to YAML frontmatter, so mergeHooks
+    // never gets a chance to filter disabled entries and strip `enabled`
+    // flags. Do it here before emitting.
+    const normalized = normalizeHooksConfiguration(definition.hooks);
+    if (Object.keys(normalized).length > 0) frontmatter.hooks = normalized;
   }
   if (definition.effort) {
     frontmatter.effort = definition.effort;
@@ -275,6 +280,11 @@ const loadSkillFromTs = async (
     const exported = module.default;
     const definition =
       typeof exported === "function" ? await exported(context) : (exported as SkillDefinition);
+
+    if (definition.enabled === false) {
+      log.info("SKILLS", `${skillTsPath} is disabled (enabled: false); skipping.`);
+      return null;
+    }
 
     const normalized = normalizeSkillDefinition(definition, skillName, skillTsPath);
     if (!normalized) return null;

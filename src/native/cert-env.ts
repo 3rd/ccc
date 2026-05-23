@@ -1,11 +1,6 @@
 import { existsSync, statSync } from "fs";
 
-const CERT_ENV_KEYS = [
-  "SSL_CERT_DIR",
-  "SSL_CERT_FILE",
-  "NIX_SSL_CERT_FILE",
-  "NODE_EXTRA_CA_CERTS",
-] as const;
+const CERT_ENV_KEYS = ["SSL_CERT_DIR", "SSL_CERT_FILE", "NIX_SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"] as const;
 
 interface NativeCertEnvDefaults {
   certDir?: string;
@@ -19,7 +14,11 @@ const CERT_DIR_CANDIDATES: Partial<Record<NodeJS.Platform, string[]>> = {
 
 const CERT_FILE_CANDIDATES: Partial<Record<NodeJS.Platform, string[]>> = {
   linux: ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem"],
-  darwin: ["/etc/ssl/cert.pem", "/opt/homebrew/etc/ca-certificates/cert.pem", "/usr/local/etc/openssl@3/cert.pem"],
+  darwin: [
+    "/etc/ssl/cert.pem",
+    "/opt/homebrew/etc/ca-certificates/cert.pem",
+    "/usr/local/etc/openssl@3/cert.pem",
+  ],
 };
 
 const pathIsDirectory = (path: string) => {
@@ -36,7 +35,7 @@ const resolveNativeCertEnvDefaults = (
   pathExists: (path: string) => boolean = existsSync,
   directoryExists: (path: string) => boolean = pathIsDirectory,
 ): NativeCertEnvDefaults | null => {
-  if (CERT_ENV_KEYS.some((key) => Object.prototype.hasOwnProperty.call(env, key))) return null;
+  if (CERT_ENV_KEYS.some((key) => Object.hasOwn(env, key))) return null;
 
   const certDir = (CERT_DIR_CANDIDATES[platform] ?? []).find(directoryExists);
   const certFile = (CERT_FILE_CANDIDATES[platform] ?? []).find(pathExists);

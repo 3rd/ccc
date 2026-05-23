@@ -75,7 +75,16 @@ export type HookMatcherType =
   | "WebSearch"
   | "Write";
 
-export interface HookCommand {
+/**
+ * Build-time gate shared across hook entries and definitions. When `false`, CCC
+ * filters this entry/definition out before writing settings.json. Defaults to
+ * `true`. Not emitted into the final settings.
+ */
+export interface HookEnabledFlag {
+  enabled?: boolean;
+}
+
+export interface HookCommand extends HookEnabledFlag {
   type: "command";
   command: string;
   // argument list for exec form: when present, `command` is resolved as an
@@ -101,7 +110,7 @@ export interface HookCommand {
   asyncRewake?: boolean;
 }
 
-export interface HookPrompt {
+export interface HookPrompt extends HookEnabledFlag {
   type: "prompt";
   prompt: string;
   timeout?: number;
@@ -118,7 +127,7 @@ export interface HookPrompt {
 }
 
 // http hook: POST JSON to a URL and receive JSON response (v2.1.63)
-export interface HookHttp {
+export interface HookHttp extends HookEnabledFlag {
   type: "http";
   url: string;
   timeout?: number;
@@ -134,7 +143,7 @@ export interface HookHttp {
 }
 
 // agentic verifier hook: runs an agent to verify conditions (v2.1.63)
-export interface HookAgent {
+export interface HookAgent extends HookEnabledFlag {
   type: "agent";
   prompt: string;
   timeout?: number;
@@ -148,7 +157,7 @@ export interface HookAgent {
 }
 
 // mcp tool hook: invoke a tool on a configured MCP server (v2.1.118)
-export interface HookMcpTool {
+export interface HookMcpTool extends HookEnabledFlag {
   type: "mcp_tool";
   // name of an already-configured MCP server to invoke
   server: string;
@@ -167,7 +176,7 @@ export interface HookMcpTool {
 
 export type HookEntry = HookAgent | HookCommand | HookHttp | HookMcpTool | HookPrompt;
 
-export interface HookDefinition {
+export interface HookDefinition extends HookEnabledFlag {
   matcher?: HookMatcherType;
   hooks: HookEntry[];
 }

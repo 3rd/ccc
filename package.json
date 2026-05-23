@@ -16,7 +16,6 @@
   "devDependencies": {
     "@standard-schema/spec": "^1.0.0",
     "@types/bun": "latest",
-    "@types/eventsource": "^3.0.0",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^24.12.0",
     "knip": "^5.86.0",
@@ -27,7 +26,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.146",
+    "@anthropic-ai/claude-code": "2.1.150",
     "dotenv": "^17.3.1",
     "esbuild": "^0.28.0",
     "eventsource": "^4.1.0",
@@ -37,7 +36,6 @@
     "memfs": "^4.56.11",
     "picocolors": "^1.1.1",
     "picoprint": "^2.0.0",
-    "unionfs": "^4.6.0",
     "zod": "^4.3.6",
     "zx": "^8.8.5"
   }

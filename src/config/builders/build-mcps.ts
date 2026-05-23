@@ -4,6 +4,7 @@ import type { ClaudeMCPConfig, MCPServers } from "@/types/mcps";
 import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
 import { setInstanceId } from "@/mcps/mcp-generator";
 import { getPluginMCPs } from "@/plugins/registry";
+import { isMCPLayerDisabled } from "@/types/mcps";
 import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 
 const buildRunnerEnv = (context: Context, extraEnv?: Record<string, string>): Record<string, string> => {
@@ -44,8 +45,8 @@ const processExternalMCP = (
     return result;
   }
 
-  const { filter: _, ...configWithoutFilter } = config;
-  return configWithoutFilter;
+  const { filter: _filter, enabled: _enabled, ...configWithoutBuildTimeFields } = config;
+  return configWithoutBuildTimeFields;
 };
 
 export const buildMCPs = async (context: Context): Promise<Record<string, ClaudeMCPConfig>> => {
@@ -57,6 +58,8 @@ export const buildMCPs = async (context: Context): Promise<Record<string, Claude
   const processed: Record<string, ClaudeMCPConfig> = {};
 
   for (const [name, layerData] of Object.entries(merged)) {
+    if (isMCPLayerDisabled(layerData)) continue;
+
     if (layerData.type === "inline") {
       const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
       processed[name] = {
@@ -77,6 +80,8 @@ export const buildMCPs = async (context: Context): Promise<Record<string, Claude
   // add plugin MCPs
   const pluginMCPs = getPluginMCPs(context.loadedPlugins);
   for (const [name, layerData] of Object.entries(pluginMCPs)) {
+    if (isMCPLayerDisabled(layerData)) continue;
+
     if (layerData.type === "inline") {
       const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
       processed[name] = {

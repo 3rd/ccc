@@ -4,6 +4,7 @@ import {
   assertCommandsInclude,
   assertExitCode,
   assertStdoutContains,
+  assertWorkflowsInclude,
 } from "../utils/assertions";
 import { runCCC } from "../utils/test-runner";
 
@@ -53,5 +54,17 @@ describe("vfs injection", () => {
     // dynamic user prompt should include working directory
     assertStdoutContains(result.stdout, "Working directory:");
     assertStdoutContains(result.stdout, "typescript-basic");
+  });
+
+  test("injects inline and raw workflows from config", async () => {
+    const result = await runCCC({
+      projectDir: "typescript-basic",
+      configFixture: "workflow-layering",
+      args: ["--print-config"],
+    });
+
+    assertExitCode(result.exitCode, 0);
+    assertWorkflowsInclude(result.stdout, "inline-triage.js");
+    assertWorkflowsInclude(result.stdout, "raw-hello.js");
   });
 });

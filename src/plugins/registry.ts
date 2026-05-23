@@ -1,6 +1,19 @@
 import type { HooksConfiguration } from "@/types/hooks";
 import type { MCPServers } from "@/types/mcps";
-import type { AgentConfig, CommandConfig, LoadedPlugin, PluginInfo, PromptConfig } from "./types";
+import { normalizeHookDefinition } from "@/config/layers";
+import type {
+  AgentConfig,
+  CommandConfig,
+  LoadedPlugin,
+  PluginInfo,
+  PromptConfig,
+  WorkflowConfig,
+} from "./types";
+
+export interface PluginWorkflowEntry {
+  config: WorkflowConfig;
+  plugin: LoadedPlugin;
+}
 
 const namespace = (pluginName: string, componentName: string) => {
   return `${pluginName}:${componentName}`;
@@ -36,6 +49,21 @@ export const getPluginAgents = (plugins: LoadedPlugin[]): Record<string, AgentCo
   return agents;
 };
 
+export const getPluginWorkflows = (plugins: LoadedPlugin[]): Record<string, PluginWorkflowEntry> => {
+  const workflows: Record<string, PluginWorkflowEntry> = {};
+
+  for (const plugin of plugins) {
+    if (!plugin.enabled || !plugin.definition.workflows) continue;
+
+    const pluginWorkflows = plugin.definition.workflows(plugin.context);
+    for (const [name, config] of Object.entries(pluginWorkflows)) {
+      workflows[namespace(plugin.manifest.name, name)] = { config, plugin };
+    }
+  }
+
+  return workflows;
+};
+
 export const getPluginMCPs = (plugins: LoadedPlugin[]): MCPServers => {
   const mcps: MCPServers = {};
 
@@ -60,14 +88,21 @@ export const getPluginHooks = (plugins: LoadedPlugin[]): HooksConfiguration => {
     const pluginHooks = plugin.definition.hooks(plugin.context);
     for (const [event, definitions] of Object.entries(pluginHooks)) {
       const eventName = event as keyof HooksConfiguration;
-      if (!hooks[eventName]) {
-        hooks[eventName] = [];
+      for (const def of definitions ?? []) {
+        const normalized = normalizeHookDefinition(def);
+        if (!normalized) continue;
+        if (!hooks[eventName]) hooks[eventName] = [];
+        hooks[eventName]!.push(normalized);
       }
-      hooks[eventName]!.push(...(definitions ?? []));
     }
   }
 
   return hooks;
+};
+
+const isPromptDisabled = (prompt: PromptConfig): boolean => {
+  if (typeof prompt === "string") return false;
+  return prompt.enabled === false;
 };
 
 export const getPluginPrompts = (plugins: LoadedPlugin[]) => {
@@ -78,10 +113,10 @@ export const getPluginPrompts = (plugins: LoadedPlugin[]) => {
     if (!plugin.enabled || !plugin.definition.prompts) continue;
 
     const prompts = plugin.definition.prompts(plugin.context);
-    if (prompts.system) {
+    if (prompts.system && !isPromptDisabled(prompts.system)) {
       system.push(prompts.system);
     }
-    if (prompts.user) {
+    if (prompts.user && !isPromptDisabled(prompts.user)) {
       user.push(prompts.user);
     }
   }
@@ -93,37 +128,51 @@ export const getPluginInfo = (plugins: LoadedPlugin[]): PluginInfo[] => {
   return plugins.map((plugin) => {
     const commands: string[] = [];
     const agents: string[] = [];
+    const workflows: string[] = [];
     const mcps: string[] = [];
     const hookCounts: Record<string, number> = {};
     let hasSystemPrompt = false;
     let hasUserPrompt = false;
 
-    if (plugin.definition.commands) {
-      const pluginCommands = plugin.definition.commands(plugin.context);
-      commands.push(...Object.keys(pluginCommands).map((n) => namespace(plugin.manifest.name, n)));
-    }
-
-    if (plugin.definition.agents) {
-      const pluginAgents = plugin.definition.agents(plugin.context);
-      agents.push(...Object.keys(pluginAgents).map((n) => namespace(plugin.manifest.name, n)));
-    }
-
-    if (plugin.definition.mcps) {
-      const pluginMCPs = plugin.definition.mcps(plugin.context);
-      mcps.push(...Object.keys(pluginMCPs).map((n) => namespace(plugin.manifest.name, n)));
-    }
-
-    if (plugin.definition.hooks) {
-      const pluginHooks = plugin.definition.hooks(plugin.context);
-      for (const [event, definitions] of Object.entries(pluginHooks)) {
-        hookCounts[event] = definitions?.length ?? 0;
+    // disabled plugins report enabled: false with empty component lists. We
+    // never invoke their definition functions (which could throw or have side
+    // effects) — they act as if they're not contributing anything.
+    if (plugin.enabled) {
+      if (plugin.definition.commands) {
+        const pluginCommands = plugin.definition.commands(plugin.context);
+        commands.push(...Object.keys(pluginCommands).map((n) => namespace(plugin.manifest.name, n)));
       }
-    }
 
-    if (plugin.definition.prompts) {
-      const prompts = plugin.definition.prompts(plugin.context);
-      hasSystemPrompt = Boolean(prompts.system);
-      hasUserPrompt = Boolean(prompts.user);
+      if (plugin.definition.agents) {
+        const pluginAgents = plugin.definition.agents(plugin.context);
+        agents.push(...Object.keys(pluginAgents).map((n) => namespace(plugin.manifest.name, n)));
+      }
+
+      if (plugin.definition.workflows) {
+        const pluginWorkflows = plugin.definition.workflows(plugin.context);
+        workflows.push(...Object.keys(pluginWorkflows).map((n) => namespace(plugin.manifest.name, n)));
+      }
+
+      if (plugin.definition.mcps) {
+        const pluginMCPs = plugin.definition.mcps(plugin.context);
+        mcps.push(...Object.keys(pluginMCPs).map((n) => namespace(plugin.manifest.name, n)));
+      }
+
+      if (plugin.definition.hooks) {
+        const pluginHooks = plugin.definition.hooks(plugin.context);
+        for (const [event, definitions] of Object.entries(pluginHooks)) {
+          const surviving = (definitions ?? [])
+            .map((def) => normalizeHookDefinition(def))
+            .filter((def): def is NonNullable<typeof def> => def !== null);
+          if (surviving.length > 0) hookCounts[event] = surviving.length;
+        }
+      }
+
+      if (plugin.definition.prompts) {
+        const prompts = plugin.definition.prompts(plugin.context);
+        hasSystemPrompt = Boolean(prompts.system);
+        hasUserPrompt = Boolean(prompts.user);
+      }
     }
 
     return {
@@ -135,6 +184,7 @@ export const getPluginInfo = (plugins: LoadedPlugin[]): PluginInfo[] => {
       components: {
         commands,
         agents,
+        workflows,
         mcps,
         hooks: hookCounts,
         prompts: { system: hasSystemPrompt, user: hasUserPrompt },

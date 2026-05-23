@@ -298,6 +298,34 @@ const baseSettingsSchema = z.object({
     .optional(),
   // @internal session recap when returning after 5+ min; absent or true = enabled (v2.1.105)
   awaySummaryEnabled: z.boolean().optional(),
+  // @internal opt-in break reminder; dismissible nudge after sustained continuous use (v2.1.150)
+  breakReminder: z
+    .object({
+      enabled: z.boolean().optional(),
+      // minutes of continuous use before the reminder fires (default 120)
+      intervalMinutes: z.number().int().positive().optional(),
+      // minutes of inactivity that count as a break and reset the timer (default 15)
+      breakThresholdMinutes: z.number().int().positive().optional(),
+      // custom reminder text; rotating defaults when unset
+      message: z.string().optional(),
+    })
+    .optional(),
+  // @internal opt-in quiet hours; one soft nudge per session inside the window (v2.1.150)
+  quietHours: z
+    .object({
+      enabled: z.boolean().optional(),
+      // start of the quiet-hours window, 24-hour local time "HH:MM"
+      start: z
+        .string()
+        .regex(/^([01]?\d|2[0-3]):[0-5]\d$/)
+        .optional(),
+      // end of the quiet-hours window, 24-hour local time "HH:MM"; may be earlier than start for overnight
+      end: z
+        .string()
+        .regex(/^([01]?\d|2[0-3]):[0-5]\d$/)
+        .optional(),
+    })
+    .optional(),
   // terminal UI renderer: "fullscreen" uses the alt-screen flicker-free renderer (v2.1.110)
   tui: z.enum(["default", "fullscreen"]).optional(),
 
@@ -424,6 +452,9 @@ const baseSettingsSchema = z.object({
   allowManagedPermissionRulesOnly: z.boolean().optional(),
   // when set in managed settings, only managed MCP allowlist applies (v2.1.51)
   allowManagedMcpServersOnly: z.boolean().optional(),
+  // when true (managed settings only), claude.ai cloud MCP connectors load alongside managed-mcp.json
+  // instead of being suppressed by its exclusive-control lockdown (v2.1.149)
+  allowAllClaudeAiMcps: z.boolean().optional(),
   // plugin enable/disable map: plugin-id@marketplace-id -> boolean | string[] (v2.1.61)
   enabledPlugins: z.record(z.string(), z.union([z.array(z.string()), z.boolean(), z.undefined()])).optional(),
   // additional marketplace sources for this repository (v2.1.61)
@@ -497,9 +528,7 @@ const baseSettingsSchema = z.object({
       path: z.string(),
       timeoutMs: z.number().int().min(1000).optional(),
       // 0 disables refresh; otherwise minimum 60_000 ms
-      refreshIntervalMs: z
-        .union([z.literal(0), z.number().int().min(60000)])
-        .optional(),
+      refreshIntervalMs: z.union([z.literal(0), z.number().int().min(60_000)]).optional(),
     })
     .optional(),
 
