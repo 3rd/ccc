@@ -47,6 +47,13 @@ const builtins: BuiltinCommands = {
     batchable: true,
     handler: eventRecorder.record,
   }),
+  MessageDisplay: createHook({
+    event: "MessageDisplay",
+    id: "builtin-recorder",
+    source: "builtin",
+    batchable: true,
+    handler: eventRecorder.record,
+  }),
   Notification: createHook({
     event: "Notification",
     id: "builtin-recorder",
