@@ -38,6 +38,8 @@ export interface SkillDefinition {
   agent?: string;
   /** Tools allowed without prompting while the skill is active. */
   allowedTools?: string[] | string;
+  /** Tools removed from the model while this skill is active (v2.1.152). */
+  disallowedTools?: string[] | string;
   /** Controls whether the skill appears in the slash command menu. */
   userInvocable?: boolean;
   /** Blocks programmatic invocation via the Skill tool. */

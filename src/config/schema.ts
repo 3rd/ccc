@@ -520,6 +520,21 @@ const baseSettingsSchema = z.object({
   // `--remote-control`/`--rc`, auto-start, in-session toggle); typically
   // set in managed settings (v2.1.128)
   disableRemoteControl: z.boolean().optional(),
+  // disable the Workflows feature; also via CLAUDE_CODE_DISABLE_WORKFLOWS (v2.1.152)
+  disableWorkflows: z.boolean().optional(),
+  // enable or disable the Workflows feature for this user; unset = default by plan (v2.1.152)
+  enableWorkflows: z.boolean().optional(),
+  // enable the "workflow"/"workflows" keyword trigger; default true (v2.1.157)
+  workflowKeywordTriggerEnabled: z.boolean().optional(),
+  // marketplace names whose plugins may surface as contextual install suggestions;
+  // managed-settings only (v2.1.152)
+  pluginSuggestionMarketplaces: z.array(z.string()).optional(),
+  // enable ultracode for the session: xhigh effort plus standing dynamic-workflow
+  // orchestration; session-scoped (v2.1.154)
+  ultracode: z.boolean().optional(),
+  // @internal whether the user has accepted the multi-agent workflow usage warning (v2.1.152)
+  skipWorkflowUsageWarning: z.boolean().optional(),
+
   // executable that computes managed settings at startup; honored only from
   // admin-controlled policy sources (v2.1.136)
   policyHelper: z

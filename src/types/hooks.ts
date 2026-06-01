@@ -5,6 +5,7 @@ export type HookEventName =
   | "ElicitationResult"
   | "FileChanged"
   | "InstructionsLoaded"
+  | "MessageDisplay"
   | "Notification"
   | "PermissionDenied"
   | "PermissionRequest"
@@ -439,6 +440,27 @@ export interface WorktreeRemoveHookInput extends BaseHookInput {
   worktree_path: string;
 }
 
+// fires for each batch of newly completed lines while an assistant message
+// streams; display-only — the stored message and what the model sees are
+// untouched (v2.1.152)
+export interface MessageDisplayHookInput extends BaseHookInput {
+  hook_event_name: "MessageDisplay";
+  // UUID of the current turn
+  turn_id: string;
+  // UUID of the assistant message being displayed; stable across every flush
+  // of the same message. Not the API msg_… id.
+  message_id: string;
+  // zero-based index of this delta within the message; increments by one per flush
+  index: number;
+  // true on the message's last flush; exactly one flush per message has it
+  final: boolean;
+  // the newly completed lines since the prior flush. Always whole lines, except
+  // on the final flush which may end mid-line. The delta of the final flush is
+  // empty when the message ends on a newline; treat final as the end-of-message
+  // signal regardless.
+  delta: string;
+}
+
 // reactive environment management hooks (v2.1.83)
 export interface CwdChangedHookInput extends BaseHookInput {
   hook_event_name: "CwdChanged";
@@ -512,6 +534,7 @@ export type ClaudeHookInput =
   | ElicitationResultHookInput
   | FileChangedHookInput
   | InstructionsLoadedHookInput
+  | MessageDisplayHookInput
   | NotificationHookInput
   | PermissionDeniedHookInput
   | PermissionRequestHookInput
@@ -614,6 +637,8 @@ export interface UserPromptSubmitHookResponse extends BaseHookResponse {
     additionalContext?: string;
     // set the session title, same effect as /rename (v2.1.94)
     sessionTitle?: string;
+    // when decision is "block", omit the original prompt from the block message (v2.1.152)
+    suppressOriginalPrompt?: boolean;
   };
 }
 
@@ -629,8 +654,13 @@ export interface SessionStartHookResponse extends BaseHookResponse {
     hookEventName: "SessionStart";
     additionalContext?: string;
     initialUserMessage?: string;
+    // set the session title, same effect as /rename (v2.1.152)
+    sessionTitle?: string;
     // absolute paths to watch for FileChanged hooks (v2.1.83)
     watchPaths?: string[];
+    // re-scan skill and command directories after SessionStart hooks complete,
+    // so skills installed by the hook are available in the same session (v2.1.152)
+    reloadSkills?: boolean;
   };
 }
 
@@ -722,6 +752,17 @@ export interface FileChangedHookResponse extends BaseHookResponse {
   };
 }
 
+// display-only — replaces the delta on screen without changing the stored
+// message or what the model sees (v2.1.152)
+export interface MessageDisplayHookResponse extends BaseHookResponse {
+  hookSpecificOutput?: {
+    hookEventName: "MessageDisplay";
+    // text displayed in place of the delta; omit (or return the delta unchanged)
+    // to display the original
+    displayContent?: string;
+  };
+}
+
 export interface ElicitationHookResponse extends BaseHookResponse {
   hookSpecificOutput?: {
     hookEventName: "Elicitation";
@@ -745,6 +786,7 @@ export type HookResponse =
   | ElicitationResultHookResponse
   | FileChangedHookResponse
   | InstructionsLoadedHookResponse
+  | MessageDisplayHookResponse
   | NotificationHookResponse
   | PermissionDeniedHookResponse
   | PermissionRequestHookResponse
@@ -793,6 +835,10 @@ export interface HookEventMap {
   InstructionsLoaded: {
     input: InstructionsLoadedHookInput;
     response: InstructionsLoadedHookResponse | void;
+  };
+  MessageDisplay: {
+    input: MessageDisplayHookInput;
+    response: MessageDisplayHookResponse | void;
   };
   Notification: {
     input: NotificationHookInput;

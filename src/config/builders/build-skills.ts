@@ -233,6 +233,13 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
       log.warn("SKILLS", `Skill ${skillName} has invalid allowedTools in ${skillPath}`);
     }
   }
+  if (definition.disallowedTools !== undefined) {
+    if (typeof definition.disallowedTools === "string" || Array.isArray(definition.disallowedTools)) {
+      frontmatter["disallowed-tools"] = definition.disallowedTools;
+    } else {
+      log.warn("SKILLS", `Skill ${skillName} has invalid disallowedTools in ${skillPath}`);
+    }
+  }
   if (definition.userInvocable !== undefined) {
     frontmatter["user-invocable"] = definition.userInvocable;
   }

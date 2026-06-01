@@ -185,7 +185,23 @@ const PREAMBLE = [
   "class __cccTranspiler {",
   "  transformSync(code) {",
   '    const source = typeof code === "string" ? code : String(code);',
-  '    try { return __baseRequire("esbuild").transformSync(source, { loader: "js", target: "esnext", supported: { "top-level-await": false } }).code; } catch { return source; }',
+  "    let esbuild;",
+  '    try { esbuild = __baseRequire("esbuild"); } catch { return source; }',
+  '    const options = { loader: "js", target: "esnext", supported: { "top-level-await": false } };',
+  "    try {",
+  "      return esbuild.transformSync(source, options).code;",
+  "    } catch (error) {",
+  "      // top-level await is a syntax error in claude's repl (code runs via new vm.Script,",
+  "      // not as a module), so wrap it in an async IIFE. a multi-statement wrap resolves to",
+  "      // undefined and the repl falls back to resolving the `o` global.",
+  '      const isTopLevelAwait = error && Array.isArray(error.errors) && error.errors.some((e) => /top-level await/i.test((e && e.text) || ""));',
+  "      if (!isTopLevelAwait) return source;",
+  '      const trimmed = source.trim().replace(/;$/, "").trim();',
+  '      const startsStatement = /^(?:let|const|var|function|class|return|throw|if|for|while|switch|try|do|import|export|debugger)\\b/.test(trimmed);',
+  '      const single = trimmed.length > 0 && !startsStatement && !trimmed.includes("\\n") && !trimmed.includes(";");',
+  '      const wrapped = single ? "(async()=>(" + trimmed + "\\n))()" : "(async()=>{" + source + "\\n})()";',
+  "      try { return esbuild.transformSync(wrapped, options).code; } catch { return wrapped; }",
+  "    }",
   "  }",
   "  transform(code) { return Promise.resolve(this.transformSync(code)); }",
   "  scan() { return { imports: [], exports: [] }; }",
@@ -340,7 +356,9 @@ const PREAMBLE = [
 
 const ENTRY_INVOCATION = "\n__bun_entry(__exports, __require, __module, __filename__, __dirname__);\n";
 
-// Bun.Transpiler polyfill
+// Bun.Transpiler fallback for the `typeof Bun === "undefined"` branch only — dead
+// under CCC since the PREAMBLE always defines Bun. The live REPL transpiler is
+// `__cccTranspiler` above; keep top-level-await handling in sync across both.
 const TRANSPILER_BAIL = 'if(typeof Bun>"u")throw Error("unreachable: Bun required")';
 const TRANSPILER_POLYFILL = [
   'if(typeof Bun>"u")return ui$??=(()=>{',
