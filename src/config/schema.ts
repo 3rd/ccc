@@ -247,8 +247,8 @@ const baseSettingsSchema = z.object({
   plansDirectory: z.string().optional(),
   // reduce or disable UI animations (v2.1.30)
   prefersReducedMotion: z.boolean().optional(),
-  // release channel: stable (week-old, skips regressions) or latest (most recent)
-  autoUpdatesChannel: z.enum(["stable", "latest"]).optional(),
+  // release channel: stable (week-old, skips regressions), latest (most recent), or rc (release candidate)
+  autoUpdatesChannel: z.enum(["stable", "latest", "rc"]).optional(),
   // disable all hooks globally
   disableAllHooks: z.boolean().optional(),
   // disable agent view (`claude agents`, `--bg`, /background, the on-demand daemon)
@@ -355,7 +355,9 @@ const baseSettingsSchema = z.object({
   enabledMcpjsonServers: z.array(z.string()).optional(),
   // specific MCP servers from .mcp.json to reject
   disabledMcpjsonServers: z.array(z.string()).optional(),
-  forceLoginMethod: z.enum(["claudeai", "console"]).optional(),
+  forceLoginMethod: z.enum(["claudeai", "console", "gateway"]).optional(),
+  // @internal cloud gateway URL to pre-fill and auto-connect to during login, paired with forceLoginMethod: "gateway" (v2.1.162)
+  forceLoginGatewayUrl: z.string().optional(),
   // auto-select organization UUID during login (requires forceLoginMethod)
   forceLoginOrgUUID: z.string().optional(),
   // script to generate dynamic OpenTelemetry headers
@@ -676,6 +678,8 @@ const baseSettingsSchema = z.object({
   autoCompactEnabled: z.boolean().optional(), // default: true
   autoScrollEnabled: z.boolean().optional(), // default: true
   fileCheckpointingEnabled: z.boolean().optional(), // default: true
+  // auto-switch model when safety filters block a message; off may stop the chat instead (v2.1.160)
+  switchModelsOnFlag: z.boolean().optional(),
   showTurnDuration: z.boolean().optional(), // default: true
   showMessageTimestamps: z.boolean().optional(), // default: false
   terminalProgressBarEnabled: z.boolean().optional(), // default: true
