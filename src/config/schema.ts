@@ -282,6 +282,10 @@ const baseSettingsSchema = z.object({
 
   // blocks startup until remote managed settings are freshly fetched; exits on failure (v2.1.92)
   forceRemoteSettingsRefresh: z.boolean().optional(),
+  // managed-policy startup gate: exit if the running version is below this minimum (v2.1.163)
+  requiredMinimumVersion: z.string().optional(),
+  // managed-policy startup gate: exit if the running version is above this maximum (v2.1.163)
+  requiredMaximumVersion: z.string().optional(),
 
   // per-skill description character cap in the skill listing sent to Claude (default: 1536) (v2.1.105)
   skillListingMaxDescChars: z.number().int().positive().optional(),
