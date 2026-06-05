@@ -667,6 +667,11 @@ export interface SessionStartHookResponse extends BaseHookResponse {
 export interface StopHookResponse extends BaseHookResponse {
   decision?: "block";
   reason?: string;
+  // non-error feedback delivered to the model; the conversation continues so it can act on it (v2.1.163)
+  hookSpecificOutput?: {
+    hookEventName: "Stop";
+    additionalContext?: string;
+  };
 }
 
 // fire-and-forget — hook output and exit codes are ignored (v2.1.78)
@@ -675,6 +680,11 @@ export interface StopFailureHookResponse extends BaseHookResponse {}
 export interface SubagentStopHookResponse extends BaseHookResponse {
   decision?: "block";
   reason?: string;
+  // non-error feedback delivered to the subagent; the subagent continues so it can act on it (v2.1.163)
+  hookSpecificOutput?: {
+    hookEventName: "SubagentStop";
+    additionalContext?: string;
+  };
 }
 
 export interface NotificationHookResponse extends BaseHookResponse {
