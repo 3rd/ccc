@@ -257,6 +257,8 @@ const baseSettingsSchema = z.object({
   disableAgentView: z.boolean().optional(),
   // disable inline shell execution in skills and custom slash commands (v2.1.91)
   disableSkillShellExecution: z.boolean().optional(),
+  // remove bundled skills + workflows entirely (built-in slash commands stay typable but hidden from the model); plugins and .claude/ skills+commands unaffected; equivalent to CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1 (v2.1.170)
+  disableBundledSkills: z.boolean().optional(),
   // default shell for ! commands: bash (default) or powershell (v2.1.85)
   defaultShell: z.enum(["bash", "powershell"]).optional(),
   // customize spinner verbs (v2.1.23)
@@ -376,6 +378,8 @@ const baseSettingsSchema = z.object({
   // deprecated: use attribution instead
   includeCoAuthoredBy: z.boolean().optional(),
   model: z.union([z.enum(["auto", "default", "opus", "opusplan", "sonnet", "haiku"]), z.string()]).optional(),
+  // fallback models tried in order when the primary is overloaded/unavailable; "default" expands to the default model; CLI --fallback-model takes precedence (v2.1.170)
+  fallbackModel: z.array(z.string()).optional(),
   spinnerTipsEnabled: z.boolean().optional(),
   spinnerTipsOverride: z
     .object({
