@@ -334,6 +334,8 @@ const baseSettingsSchema = z.object({
     .optional(),
   // terminal UI renderer: "fullscreen" uses the alt-screen flicker-free renderer (v2.1.110)
   tui: z.enum(["default", "fullscreen"]).optional(),
+  // ramp mouse-wheel scroll speed during fast scrolls (fullscreen mode only) (v2.1.174)
+  wheelScrollAccelerationEnabled: z.boolean().optional(),
 
   // @internal voice handsfree settings; gated by VOICE_HANDSFREE feature flag (v2.1.92)
   voice: z
@@ -532,6 +534,8 @@ const baseSettingsSchema = z.object({
   disableRemoteControl: z.boolean().optional(),
   // disable the Workflows feature; also via CLAUDE_CODE_DISABLE_WORKFLOWS (v2.1.152)
   disableWorkflows: z.boolean().optional(),
+  // disable the Artifact tool; also via CLAUDE_CODE_DISABLE_ARTIFACT (v2.1.172, Frame renamed to Artifact)
+  disableArtifact: z.boolean().optional(),
   // enable or disable the Workflows feature for this user; unset = default by plan (v2.1.152)
   enableWorkflows: z.boolean().optional(),
   // enable the "workflow"/"workflows" keyword trigger; default true (v2.1.157)
