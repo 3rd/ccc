@@ -16,7 +16,7 @@ import { buildRules } from "@/config/builders/build-rules";
 import { buildSettings, buildSystemPrompt, buildUserPrompt } from "@/config/builders/build-settings";
 import { buildSkills } from "@/config/builders/build-skills";
 import { buildWorkflows } from "@/config/builders/build-workflows";
-import { stripProfileFromArgv } from "@/config/builders/resolve-profile";
+import { exportProfileEnv, stripProfileFromArgv } from "@/config/builders/resolve-profile";
 import { dumpConfig } from "@/config/dump-config";
 import { Context } from "@/context/Context";
 import { applyNativeCertEnvDefaults } from "@/native/cert-env";
@@ -262,6 +262,10 @@ const run = async () => {
       outputStylesPromise,
       workflowsPromise,
     ]);
+
+  // oauth credentials are resolved from real process env before settings.json env is
+  // applied, so a profile's token override must be promoted to process env pre-boot
+  if (settings._profileName) exportProfileEnv(settings._availableProfiles?.[settings._profileName]);
 
   const settingsWithPlugins = {
     ...settings,

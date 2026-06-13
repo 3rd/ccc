@@ -59,6 +59,20 @@ export const applyProfile = (
   return mergeSettings(baseSettings, profile) as Record<string, unknown>;
 };
 
+/**
+ * exports a profile's env block as real process env vars. claude resolves oauth
+ * credentials (CLAUDE_CODE_OAUTH_TOKEN) before applying settings.json env, so a
+ * token override that only lives in settings is silently ignored for auth.
+ */
+export const exportProfileEnv = (profile: Record<string, unknown> | undefined): void => {
+  if (!profile) return;
+  const env = profile.env;
+  if (env === null || typeof env !== "object" || Array.isArray(env)) return;
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === "string") process.env[key] = value;
+  }
+};
+
 /** returns a new argv with --profile and its value removed */
 export const stripProfileFromArgv = (argv: string[]) => {
   const result: string[] = [];
