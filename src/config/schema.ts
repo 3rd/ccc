@@ -282,6 +282,11 @@ const baseSettingsSchema = z.object({
   // auto-compact window size in tokens (v2.1.90)
   autoCompactWindow: z.number().int().min(100_000).max(1_000_000).optional(),
 
+  // @internal emit a <total_tokens>N tokens left</total_tokens> block in the system prompt
+  // and after each tool result; 'infinite' = Infinite, 'fixed' = 5000000, 'countdown' = live
+  // remaining context tokens; env CLAUDE_CODE_TOTAL_TOKENS_REMINDER overrides (v2.1.176)
+  totalTokensReminder: z.enum(["off", "infinite", "fixed", "countdown"]).optional(),
+
   // blocks startup until remote managed settings are freshly fetched; exits on failure (v2.1.92)
   forceRemoteSettingsRefresh: z.boolean().optional(),
   // managed-policy startup gate: exit if the running version is below this minimum (v2.1.163)
@@ -417,6 +422,9 @@ const baseSettingsSchema = z.object({
   minimumVersion: z.string().optional(),
   // allowlist of models users can select (v2.1.51)
   availableModels: z.array(z.string()).optional(),
+  // when true, also constrains Default model selection to availableModels; no effect
+  // when availableModels is unset/empty; typically managed settings (v2.1.175)
+  enforceAvailableModels: z.boolean().optional(),
   // override mapping from Anthropic model ID to provider-specific model ID (v2.1.73)
   modelOverrides: z.record(z.string(), z.string()).optional(),
   // glob patterns of CLAUDE.md files to exclude from loading (v2.1.51)
@@ -583,6 +591,8 @@ const baseSettingsSchema = z.object({
       padding: z.number().optional(),
       // re-run the status line command every N seconds in addition to event-driven updates (v2.1.97)
       refreshInterval: z.number().min(1).optional(),
+      // hide the built-in -- INSERT --/-- VISUAL -- indicator when the status line renders vim.mode itself
+      hideVimModeIndicator: z.boolean().optional(),
     })
     .optional(),
   fileSuggestion: z.object({ type: z.literal("command"), command: z.string() }).optional(),
@@ -596,6 +606,9 @@ const baseSettingsSchema = z.object({
       sparsePaths: z.array(z.string()).optional(),
       // which ref new worktrees branch from: 'fresh' uses origin/<default>, 'head' uses local HEAD (v2.1.133)
       baseRef: z.enum(["fresh", "head"]).optional(),
+      // background-session isolation: 'worktree' (default) blocks Edit/Write in the main checkout
+      // until EnterWorktree; 'none' lets background jobs edit the working copy directly
+      bgIsolation: z.enum(["worktree", "none"]).optional(),
     })
     .optional(),
 
@@ -619,6 +632,14 @@ const baseSettingsSchema = z.object({
           allowManagedDomainsOnly: z.boolean().optional(),
           // macOS only: additional XPC/Mach service names to allow looking up
           allowMachLookup: z.array(z.string()).optional(),
+          // [EXPERIMENTAL] in-process TLS termination so the per-request filter can see HTTPS bodies;
+          // provide a CA cert+key, or omit both for an ephemeral session cert
+          tlsTerminate: z
+            .object({
+              caCertPath: z.string().min(1).optional(),
+              caKeyPath: z.string().min(1).optional(),
+            })
+            .optional(),
         })
         .optional(),
       // filesystem access control within the sandbox (v2.1.61)
@@ -664,6 +685,26 @@ const baseSettingsSchema = z.object({
   // URL template for PR links in the footer badge and inline messages.
   // placeholders: {host} {owner} {repo} {number} {url} (v2.1.119)
   prUrlTemplate: z.string().optional(), // default: unset (falls back to github.com)
+
+  // extra clickable footer badges built from regex matches on turn output; read from
+  // user, flag, and managed settings only; at most 5 render (v2.1.176)
+  footerLinksRegexes: z
+    .array(
+      z.union([
+        z.object({
+          type: z.literal("regex"),
+          // regex matched against turn output (tool results and assistant text)
+          pattern: z.string(),
+          // link target; {name} placeholders filled from named capture groups
+          url: z.string(),
+          // badge text; defaults to the full match
+          label: z.string().optional(),
+        }),
+        // forward-compat: entries with other variants are preserved and skipped at runtime
+        z.object({ type: z.string() }),
+      ]),
+    )
+    .optional(),
 
   // background daemon cold-start behavior: 'transient' spawns one for this login session;
   // 'ask' offers to install a persistent service (v2.1.120)
