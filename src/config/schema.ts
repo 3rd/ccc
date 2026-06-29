@@ -23,8 +23,8 @@ export const agentDefinitionSchema = z.object({
   permissionMode: z
     .enum(["default", "acceptEdits", "auto", "plan", "bypassPermissions", "dontAsk"])
     .optional(),
-  // run agent in an isolated git worktree that is auto-cleaned when done (v2.1.89)
-  isolation: z.enum(["worktree"]).optional(),
+  // run agent in an isolated git worktree, or a remote CCR sandbox; auto-cleaned when done (worktree v2.1.89, remote v2.1.178)
+  isolation: z.enum(["worktree", "remote"]).optional(),
   // per-agent hooks: same shape as settings.hooks (event name → array of matchers)
   hooks: z
     .record(
@@ -180,8 +180,6 @@ const baseSettingsSchema = z.object({
       systemPrompt: z.string().optional(),
       // load system prompt from file
       systemPromptFile: z.string().optional(),
-      // enable MCP debug logging
-      mcpDebug: z.boolean().optional(),
       // output format: json, text, stream-json
       outputFormat: z.enum(["json", "text", "stream-json"]).optional(),
       // disable slash commands
@@ -194,8 +192,8 @@ const baseSettingsSchema = z.object({
       sessionId: z.string().optional(),
       // resume session linked to PR number or URL (v2.1.27)
       fromPr: z.union([z.string(), z.number()]).optional(),
-      // agent teams display mode (v2.1.32)
-      teammateMode: z.enum(["auto", "in-process", "tmux"]).optional(),
+      // agent teams display mode (v2.1.32, iterm2 v2.1.186)
+      teammateMode: z.enum(["auto", "in-process", "iterm2", "tmux"]).optional(),
       // append text to system prompt (works in both interactive and print modes)
       appendSystemPrompt: z.string().optional(),
       // load additional system prompt from file and append (print mode only)
@@ -380,11 +378,13 @@ const baseSettingsSchema = z.object({
     .object({
       commit: z.string().optional(),
       pr: z.string().optional(),
+      // append claude.ai session link trailer to commits/PRs from web or Remote Control sessions; default true (v2.1.183)
+      sessionUrl: z.boolean().optional(),
     })
     .optional(),
   // deprecated: use attribution instead
   includeCoAuthoredBy: z.boolean().optional(),
-  model: z.union([z.enum(["auto", "default", "opus", "opusplan", "sonnet", "haiku"]), z.string()]).optional(),
+  model: z.union([z.enum(["auto", "default", "opus", "opusplan", "sonnet", "haiku", "fable"]), z.string()]).optional(),
   // fallback models tried in order when the primary is overloaded/unavailable; "default" expands to the default model; CLI --fallback-model takes precedence (v2.1.170)
   fallbackModel: z.array(z.string()).optional(),
   spinnerTipsEnabled: z.boolean().optional(),
@@ -414,6 +414,9 @@ const baseSettingsSchema = z.object({
   skipDangerousModePermissionPrompt: z.boolean().optional(),
   // disable syntax highlighting in diffs (v2.1.51)
   syntaxHighlightingDisabled: z.boolean().optional(),
+  // render screen-reader friendly output (flat text, no decorative borders/animations);
+  // overridden by CLAUDE_AX_SCREEN_READER env and --ax-screen-reader flag (v2.1.181)
+  axScreenReader: z.boolean().optional(),
   // whether /rename updates terminal tab title (v2.1.51)
   terminalTitleFromRename: z.boolean().optional(),
   // enable/disable prompt suggestions (v2.1.51)
@@ -475,6 +478,9 @@ const baseSettingsSchema = z.object({
   // when true (managed settings only), claude.ai cloud MCP connectors load alongside managed-mcp.json
   // instead of being suppressed by its exclusive-control lockdown (v2.1.149)
   allowAllClaudeAiMcps: z.boolean().optional(),
+  // when true in any settings source, claude.ai MCP cloud connectors are not auto-fetched or
+  // connected; any-source-true wins (a project-level false cannot override a user-level true) (v2.1.182)
+  disableClaudeAiConnectors: z.boolean().optional(),
   // plugin enable/disable map: plugin-id@marketplace-id -> boolean | string[] (v2.1.61)
   enabledPlugins: z.record(z.string(), z.union([z.array(z.string()), z.boolean(), z.undefined()])).optional(),
   // additional marketplace sources for this repository (v2.1.61)
@@ -513,6 +519,9 @@ const baseSettingsSchema = z.object({
   allowedChannelPlugins: z.array(z.object({ marketplace: z.string(), plugin: z.string() })).optional(),
   // prevent claude-cli:// protocol handler registration (v2.1.83)
   disableDeepLinkRegistration: z.enum(["disable"]).optional(),
+  // managed-settings only: reject --plugin-dir/--plugin-url/--agents/non-sdk --mcp-config CLI flags at startup,
+  // closing the CLI-flag bypass of strictKnownMarketplaces; ignored in user/project/local settings (v2.1.193)
+  disableSideloadFlags: z.boolean().optional(),
   // whether plan mode uses auto mode semantics (v2.1.85, default true)
   useAutoModeDuringPlan: z.boolean().optional(),
   // auto mode classifier rules (v2.1.71, hard_deny v2.1.136)
@@ -522,6 +531,8 @@ const baseSettingsSchema = z.object({
       soft_deny: z.array(z.string()).optional(),
       hard_deny: z.array(z.string()).optional(),
       environment: z.array(z.string()).optional(),
+      // route every Bash/PowerShell command through the classifier (suspend allow rules) while auto mode is active (v2.1.193)
+      classifyAllShell: z.boolean().optional(),
     })
     .optional(),
   // name of a built-in or custom agent for the main thread (v2.1.85)
@@ -654,6 +665,15 @@ const baseSettingsSchema = z.object({
           allowManagedReadPathsOnly: z.boolean().optional(),
         })
         .optional(),
+      // protect credential files and secret env vars from sandboxed reads; only `deny` mode is supported (v2.1.187)
+      credentials: z
+        .object({
+          files: z.array(z.object({ path: z.string().min(1), mode: z.literal("deny") })).optional(),
+          envVars: z
+            .array(z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u), mode: z.literal("deny") }))
+            .optional(),
+        })
+        .optional(),
       // selectively ignore sandbox violations by process/pattern (v2.1.61)
       ignoreViolations: z.record(z.string(), z.array(z.string())).optional(),
       // custom ripgrep configuration (v2.1.61)
@@ -661,6 +681,9 @@ const baseSettingsSchema = z.object({
       enableWeakerNestedSandbox: z.boolean().optional(),
       // weaker network isolation for sandbox (v2.1.64)
       enableWeakerNetworkIsolation: z.boolean().optional(),
+      // macOS only: allow sandboxed commands to send Apple Events (open, osascript, browser auth);
+      // honored only from user/managed/CLI settings, not project settings (v2.1.181)
+      allowAppleEvents: z.boolean().optional(),
       // exit with error when sandbox is enabled but cannot start (v2.1.83)
       failIfUnavailable: z.boolean().optional(),
       // Linux/WSL only: absolute path to the bwrap (bubblewrap) binary; managed-only (v2.1.133)
@@ -729,6 +752,8 @@ const baseSettingsSchema = z.object({
     ])
     .optional(), // default: "auto"
   autoCompactEnabled: z.boolean().optional(), // default: true
+  // @internal precompute the compaction summary in the background before it is needed; only applies when auto-compact is on (v2.1.179)
+  precomputeCompactionEnabled: z.boolean().optional(),
   autoScrollEnabled: z.boolean().optional(), // default: true
   fileCheckpointingEnabled: z.boolean().optional(), // default: true
   // auto-switch model when safety filters block a message; off may stop the chat instead (v2.1.160)
@@ -737,7 +762,9 @@ const baseSettingsSchema = z.object({
   showMessageTimestamps: z.boolean().optional(), // default: false
   terminalProgressBarEnabled: z.boolean().optional(), // default: true
   todoFeatureEnabled: z.boolean().optional(), // default: true
-  teammateMode: z.enum(["auto", "tmux", "in-process"]).optional(), // default: "auto"
+  // whether Claude responds after an input-box `!` bash command runs; false adds output to context only (v2.1.186, default true)
+  respondToBashCommands: z.boolean().optional(),
+  teammateMode: z.enum(["auto", "tmux", "iterm2", "in-process"]).optional(), // default: "auto" (iterm2 v2.1.186)
   remoteControlAtStartup: z.boolean().optional(), // default: unset (tristate; undefined = "default")
   autoUploadSessions: z.boolean().optional(), // default: unset (server-controlled)
   inputNeededNotifEnabled: z.boolean().optional(), // default: unset (server-controlled)

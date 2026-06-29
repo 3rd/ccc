@@ -83,17 +83,129 @@ const renderFrontmatter = (data: Record<string, unknown>) => {
   return lines.join("\n");
 };
 
-const stripFrontmatter = (content: string) => {
+const splitFrontmatter = (content: string) => {
   const lines = content.split(/\r?\n/u);
-  if (lines[0] !== "---") return content.trim();
+  if (lines[0] !== "---") return null;
 
   const endIndex = lines.findIndex((line, index) => index > 0 && line === "---");
-  if (endIndex === -1) return content.trim();
+  if (endIndex === -1) return null;
 
-  return lines
-    .slice(endIndex + 1)
-    .join("\n")
-    .trim();
+  return {
+    frontmatter: lines.slice(1, endIndex),
+    body: lines.slice(endIndex + 1).join("\n"),
+  };
+};
+
+const stripFrontmatter = (content: string) => {
+  const split = splitFrontmatter(content);
+  if (!split) return content.trim();
+
+  return split.body.trim();
+};
+
+const parseYamlStringScalar = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  if (trimmed.startsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (typeof parsed === "string") return parsed;
+    } catch {
+      return trimmed;
+    }
+  }
+
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replaceAll("''", "'");
+  }
+
+  return trimmed;
+};
+
+const isYamlBlockScalar = (value: string): boolean =>
+  value === ">" || value === ">-" || value === ">+" || value === "|" || value === "|-" || value === "|+";
+
+const collectDescriptionBlock = (frontmatter: string[], startIndex: number): string[] => {
+  const lines: string[] = [];
+  for (let index = startIndex + 1; index < frontmatter.length; index += 1) {
+    const line = frontmatter[index] ?? "";
+    if (line.trim() === "") {
+      lines.push("");
+      continue;
+    }
+
+    const match = /^(\s+)(.*)$/u.exec(line);
+    if (!match) break;
+    lines.push(match[2] ?? "");
+  }
+  return lines;
+};
+
+const readDescriptionFromFrontmatter = (content: string): string | null => {
+  const split = splitFrontmatter(content);
+  if (!split) return null;
+
+  for (let index = 0; index < split.frontmatter.length; index += 1) {
+    const line = split.frontmatter[index] ?? "";
+    const match = /^description:\s*(.*)$/u.exec(line);
+    if (!match) continue;
+
+    const value = match[1]?.trim() ?? "";
+    if (!isYamlBlockScalar(value)) return parseYamlStringScalar(value);
+
+    const block = collectDescriptionBlock(split.frontmatter, index);
+    if (value.startsWith("|")) return block.join("\n").trim();
+    return block.join(" ").replace(/\s+/gu, " ").trim();
+  }
+
+  return null;
+};
+
+const getDescriptionEndIndex = (frontmatter: string[], startIndex: number): number => {
+  const line = frontmatter[startIndex] ?? "";
+  const value = /^description:\s*(.*)$/u.exec(line)?.[1]?.trim() ?? "";
+  if (!isYamlBlockScalar(value)) return startIndex + 1;
+
+  let endIndex = startIndex + 1;
+  while (endIndex < frontmatter.length) {
+    const next = frontmatter[endIndex] ?? "";
+    if (next.trim() !== "" && !/^\s+/u.test(next)) break;
+    endIndex += 1;
+  }
+  return endIndex;
+};
+
+const setFrontmatterDescription = (content: string, description: string): string => {
+  const split = splitFrontmatter(content);
+  if (!split) return content;
+
+  const rendered = `description: ${renderYamlScalar(description)}`;
+  for (let index = 0; index < split.frontmatter.length; index += 1) {
+    if (!/^description:/u.test(split.frontmatter[index] ?? "")) continue;
+
+    const endIndex = getDescriptionEndIndex(split.frontmatter, index);
+    const frontmatter = [
+      ...split.frontmatter.slice(0, index),
+      rendered,
+      ...split.frontmatter.slice(endIndex),
+    ];
+    return `---\n${frontmatter.join("\n")}\n---\n${split.body}`;
+  }
+
+  return `---\n${[rendered, ...split.frontmatter].join("\n")}\n---\n${split.body}`;
+};
+
+const appendFrontmatterDescription = (baseSkill: string, appendSkill: string): string => {
+  const appendDescription = readDescriptionFromFrontmatter(appendSkill);
+  if (!appendDescription) return baseSkill;
+
+  const baseDescription = readDescriptionFromFrontmatter(baseSkill);
+  const description = baseDescription
+    ? `${baseDescription.trimEnd()}\n\n${appendDescription.trim()}`
+    : appendDescription.trim();
+
+  return setFrontmatterDescription(baseSkill, description);
 };
 
 const normalizeRelativePath = (value: string) => {
@@ -160,7 +272,8 @@ const appendSkillBundle = (base: SkillBundle, append: SkillBundle): SkillBundle 
 
   if (baseSkill && appendSkill) {
     const appendBody = stripFrontmatter(appendSkill);
-    if (appendBody) fileMap.set(SKILL_MD, `${baseSkill.trimEnd()}\n\n${appendBody}\n`);
+    const skill = appendFrontmatterDescription(baseSkill, appendSkill);
+    fileMap.set(SKILL_MD, appendBody ? `${skill.trimEnd()}\n\n${appendBody}\n` : skill);
   }
 
   for (const file of append.files) {

@@ -44,8 +44,8 @@ export interface SkillDefinition {
   userInvocable?: boolean;
   /** Blocks programmatic invocation via the Skill tool. */
   disableModelInvocation?: boolean;
-  /** Run agent in an isolated git worktree (v2.1.50). */
-  isolation?: "worktree";
+  /** Run agent in an isolated git worktree, or a remote CCR sandbox (worktree v2.1.50, remote v2.1.178). */
+  isolation?: "worktree" | "remote";
   /** Always run as a background task (v2.1.49). */
   background?: boolean;
   /** Override effort level when this skill is invoked (v2.1.80). */

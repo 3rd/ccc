@@ -11,6 +11,7 @@ const __dirname = dirname(__filename);
 const projectRoot = resolve(__dirname, "..", "..");
 const launcherPath = join(projectRoot, "src", "cli", "launcher.ts");
 const tsconfigPath = join(projectRoot, "tsconfig.json");
+const DEFAULT_TYPESCRIPT_RUNNER = "tsx";
 
 type LaunchSpec = {
   args: string[];
@@ -54,6 +55,11 @@ const createTempFilePath = () => {
   return join(tmpdir(), `ccc-doru-${randomUUID()}.mjs`);
 };
 
+const getTypeScriptRunner = (env: NodeJS.ProcessEnv) => {
+  const runner = env.CCC_TYPESCRIPT_RUNNER?.trim();
+  return runner || DEFAULT_TYPESCRIPT_RUNNER;
+};
+
 const splitCliArgs = (cliArgs: string[]) => {
   if (cliArgs[0] !== "--doru") {
     return {
@@ -80,7 +86,7 @@ export const buildLaunchSpec = (options: BuildLaunchSpecOptions = {}): LaunchSpe
 
   if (!doruEnabled) {
     return {
-      command: "tsx",
+      command: getTypeScriptRunner(env),
       args: [launcherPath, ...forwardedArgs],
       env,
       cwd,

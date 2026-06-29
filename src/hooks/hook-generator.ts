@@ -66,6 +66,7 @@ const getHookCommandEnvPrefix = () => {
     DEBUG: process.env.DEBUG,
     CCC_INSTANCE_ID: currentInstanceId,
     CCC_CONFIG_DIR: currentConfigDirectory,
+    CCC_EVENTS_FILE: process.env.CCC_EVENTS_FILE,
   });
 };
 

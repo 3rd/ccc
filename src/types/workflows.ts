@@ -19,8 +19,9 @@ export interface WorkflowAgentOpts {
   label?: string;
   phase?: string;
   schema?: Record<string, unknown>;
-  model?: "haiku" | "opus" | "sonnet";
-  isolation?: "worktree";
+  model?: "haiku" | "opus" | "sonnet" | "fable";
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  isolation?: "worktree" | "remote";
   agentType?: string;
 }
 
