@@ -135,12 +135,23 @@ describe("config resolution", () => {
       { layer: "preset", name: "typescript", mode: "append" },
     ]);
     expect(layeredSkill.match(/^---$/gm)).toHaveLength(2);
-    expect(layeredSkill).toContain('description: "Base layered skill"');
+    expect(layeredSkill).toContain('description: "Base layered skill\\n\\nPreset layered skill"');
     expect(layeredSkill).toContain("Base layered body");
     expect(layeredSkill).toContain("Preset layered body");
-    expect(layeredSkill).not.toContain("Preset layered skill");
     expect(layeredFiles.get("shared.md")).toBe("preset sidecar\n");
     expect(layeredFiles.get("preset-only.md")).toBe("preset-only sidecar\n");
+
+    const replaced = requireSkill(skills, "replaced-skill");
+    const replacedSkill = mapSkillFiles(replaced).get("SKILL.md") ?? "";
+
+    expect(replaced.trace).toEqual([
+      { layer: "global", mode: "override" },
+      { layer: "preset", name: "typescript", mode: "override" },
+    ]);
+    expect(replacedSkill).toContain('description: "Preset replaced skill"');
+    expect(replacedSkill).toContain("Preset replaced body");
+    expect(replacedSkill).not.toContain("Base replaced skill");
+    expect(replacedSkill).not.toContain("Base replaced body");
 
     const precedence = requireSkill(skills, "ts-precedence");
     const precedenceSkill = mapSkillFiles(precedence).get("SKILL.md") ?? "";

@@ -43,3 +43,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 /analysis
 /docs
+
+/specs
+/plan
+/check

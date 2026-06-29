@@ -192,14 +192,17 @@ const run = async () => {
   const crypto = await import("crypto");
   const tmpDir = os.tmpdir();
   const randomId = crypto.randomBytes(6).toString("hex");
-  const eventsFile = path.join(tmpDir, `ccc-events-${randomId}.jsonl`);
-  fs.writeFileSync(eventsFile, "");
-  process.env.CCC_EVENTS_FILE = eventsFile;
+  const existingEventsFile = process.env.CCC_EVENTS_FILE;
+  const eventsFile = existingEventsFile ?? path.join(tmpDir, `ccc-events-${randomId}.jsonl`);
+  if (!existingEventsFile) {
+    fs.writeFileSync(eventsFile, "");
+    process.env.CCC_EVENTS_FILE = eventsFile;
+  }
 
   // clean up events file on exit
   const cleanupEventsFile = () => {
     try {
-      if (fs.existsSync(eventsFile)) fs.unlinkSync(eventsFile);
+      if (!existingEventsFile && fs.existsSync(eventsFile)) fs.unlinkSync(eventsFile);
     } catch {}
   };
   process.on("exit", cleanupEventsFile);
@@ -648,7 +651,6 @@ const run = async () => {
     model?: string;
     systemPrompt?: string;
     systemPromptFile?: string;
-    mcpDebug?: boolean;
     outputFormat?: "json" | "stream-json" | "text";
     disableSlashCommands?: boolean;
     maxBudgetUsd?: number;
@@ -810,11 +812,6 @@ const run = async () => {
   // --system-prompt-file (v1.0.51)
   if (!hasCliArg("--system-prompt-file") && settingsCli.systemPromptFile) {
     args.push("--system-prompt-file", settingsCli.systemPromptFile);
-  }
-
-  // --mcp-debug (v0.2.31)
-  if (!hasCliArg("--mcp-debug") && settingsCli.mcpDebug) {
-    args.push("--mcp-debug");
   }
 
   // --output-format (v0.2.66)
