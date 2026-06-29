@@ -282,8 +282,12 @@ const baseSettingsSchema = z.object({
 
   // @internal emit a <total_tokens>N tokens left</total_tokens> block in the system prompt
   // and after each tool result; 'infinite' = Infinite, 'fixed' = 5000000, 'countdown' = live
-  // remaining context tokens; env CLAUDE_CODE_TOTAL_TOKENS_REMINDER overrides (v2.1.176)
-  totalTokensReminder: z.enum(["off", "infinite", "fixed", "countdown"]).optional(),
+  // remaining context tokens, 'padded-countdown' = countdown seeded by totalTokensReminderBudget;
+  // env CLAUDE_CODE_TOTAL_TOKENS_REMINDER overrides (v2.1.176, padded-countdown v2.1.196)
+  totalTokensReminder: z.enum(["off", "infinite", "fixed", "countdown", "padded-countdown"]).optional(),
+  // @internal starting budget (tokens) for totalTokensReminder 'padded-countdown' mode; default 15000000;
+  // server-controlled via GrowthBook, env CLAUDE_CODE_TOTAL_TOKENS_REMINDER_BUDGET overrides (v2.1.196)
+  totalTokensReminderBudget: z.number().optional(),
 
   // blocks startup until remote managed settings are freshly fetched; exits on failure (v2.1.92)
   forceRemoteSettingsRefresh: z.boolean().optional(),
@@ -555,6 +559,8 @@ const baseSettingsSchema = z.object({
   disableWorkflows: z.boolean().optional(),
   // disable the Artifact tool; also via CLAUDE_CODE_DISABLE_ARTIFACT (v2.1.172, Frame renamed to Artifact)
   disableArtifact: z.boolean().optional(),
+  // enable or disable the Artifact tool for this user; unset = default by plan once available (v2.1.196)
+  enableArtifact: z.boolean().optional(),
   // enable or disable the Workflows feature for this user; unset = default by plan (v2.1.152)
   enableWorkflows: z.boolean().optional(),
   // enable the "workflow"/"workflows" keyword trigger; default true (v2.1.157)
