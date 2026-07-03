@@ -358,6 +358,9 @@ export interface SubagentStopHookInput extends BaseHookInput {
 
 export type NotificationType =
   | ({} & string)
+  // background agent in `claude agents` needs input / finished (v2.1.198)
+  | "agent_completed"
+  | "agent_needs_input"
   | "auth_success"
   | "elicitation_complete"
   | "elicitation_dialog"
