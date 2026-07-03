@@ -24,6 +24,7 @@ import * as os from "os";
 import * as path from "path";
 import type { FileHandle } from "fs/promises";
 import type { SkillBundle } from "@/types/skills";
+import { type NsVfsFile, setupNamespaceVfs } from "@/vfs/ns-vfs";
 import { ensureFileExists } from "./fs";
 import { log } from "./log";
 
@@ -2003,6 +2004,40 @@ export const setupVirtualFileSystem = (args: {
   // ensure files exists - workaround for discovery issues
   // TODO: remove since we can monkey patch now
   ensureFileExists(claudeMdPath);
+
+  // expose the virtual content categories to child processes (shell tools,
+  // subagent CLIs) by writing them into session-private tmpfs mounts (the
+  // wrapper launched us inside a mount namespace). deliberately excludes
+  // ~/.claude.json, settings.json, and CLAUDE.md: those exist on the real fs
+  // and shadowing them would change behavior of nested claude/ccc children.
+  const nsFiles: NsVfsFile[] = [];
+  const nsRoots: string[] = [];
+  if (args.skills && args.skills.length > 0) {
+    nsRoots.push(skillsPath);
+    for (const skill of args.skills) {
+      for (const file of skill.files) {
+        nsFiles.push({
+          nativePath: path.join(skillsPath, skill.name, file.relativePath),
+          content: file.content,
+        });
+      }
+    }
+  }
+  const nsCategories: [Map<string, string> | undefined, string][] = [
+    [args.commands, commandsPath],
+    [args.agents, agentsPath],
+    [args.rules, rulesPath],
+    [args.outputStyles, outputStylesPath],
+    [args.workflows, workflowsPath],
+  ];
+  for (const [entries, rootPath] of nsCategories) {
+    if (!entries || entries.size === 0) continue;
+    nsRoots.push(rootPath);
+    for (const [filename, content] of entries) {
+      nsFiles.push({ nativePath: path.join(rootPath, filename), content });
+    }
+  }
+  setupNamespaceVfs(nsRoots, nsFiles);
 
   monkeyPatchFS({
     vol,

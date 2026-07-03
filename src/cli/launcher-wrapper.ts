@@ -5,6 +5,7 @@ import * as fs from "fs";
 import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
+import { NS_ACTIVE_ENV, namespacePrefix } from "../vfs/ns-vfs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -120,6 +121,13 @@ const run = () => {
   const spec = buildLaunchSpec();
   if (spec.tempFile) {
     fs.writeFileSync(spec.tempFile.path, spec.tempFile.content, "utf8");
+  }
+
+  const nsPrefix = namespacePrefix(spec.env);
+  if (nsPrefix) {
+    spec.args = [...nsPrefix.slice(1), spec.command, ...spec.args];
+    spec.command = nsPrefix[0]!;
+    spec.env[NS_ACTIVE_ENV] = "1";
   }
 
   const child = spawn(spec.command, spec.args, {
