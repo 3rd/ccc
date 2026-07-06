@@ -137,6 +137,35 @@ describe("wrapForNode", () => {
     expect(wrapped).toContain("__cccBun.which('rg')");
   });
 
+  test("shims Bun.file spawn stdio targets, deepEquals, isStandaloneExecutable, and stdin", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "ccc-native-preamble-"));
+    const tempFile = join(tempDir, "wrapped.mjs");
+    const logFile = join(tempDir, "breadcrumb.log");
+    const raw = Buffer.from(
+      [
+        "// @bun @bytecode @bun-cjs",
+        `${NATIVE_BUN_ENTRY_MARKER}`,
+        `const child = Bun.spawn(['node', '-e', 'console.error("crumb")'], { stdio: ['ignore', 'ignore', Bun.file(${JSON.stringify(logFile)})] });`,
+        `child.exited.then(() => Bun.file(${JSON.stringify(logFile)}).text()).then((log) => {`,
+        "  console.log(JSON.stringify([log.trim(), Bun.deepEquals({ a: [1] }, { a: [1] }), Bun.deepEquals({ a: 1 }, { a: 2 }), Bun.isStandaloneExecutable, typeof Bun.stdin.stream]));",
+        "});",
+        "})",
+      ].join("\n"),
+    );
+
+    try {
+      await writeFile(tempFile, wrapForNode(raw));
+      const { stdout } = await execFileAsync("node", [tempFile], {
+        env: { ...process.env, CCC_CLAUDE_WRAPPER_PKG_JSON: join(process.cwd(), "package.json") },
+        timeout: 10000,
+      });
+
+      expect(JSON.parse(stdout.trim())).toEqual(["crumb", true, false, false, "function"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("returns a nonzero listen port synchronously for port zero", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "ccc-native-preamble-"));
     const tempFile = join(tempDir, "wrapped.mjs");

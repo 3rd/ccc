@@ -61,7 +61,11 @@ console.log(JSON.stringify({ content, outputStyleContent, openResult, syncWriteC
     try {
       const { stdout } = await execFileAsync("bun", ["--eval", script], {
         cwd: process.cwd(),
-        env: { ...process.env, HOME: home },
+        // CCC_NS_VFS=0: this test targets the in-process VFS. When the suite itself runs
+        // inside a CCC session (whose user namespace grants CAP_SYS_ADMIN), the child's
+        // ns-mount probe would otherwise succeed and leave real tmpfs mounts over the temp
+        // HOME, making the rm() cleanup below fail with EBUSY.
+        env: { ...process.env, HOME: home, CCC_NS_VFS: "0" },
         timeout: 5000,
       });
 
