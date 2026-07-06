@@ -671,13 +671,25 @@ const baseSettingsSchema = z.object({
           allowManagedReadPathsOnly: z.boolean().optional(),
         })
         .optional(),
-      // protect credential files and secret env vars from sandboxed reads; only `deny` mode is supported (v2.1.187)
+      // protect credential files and secret env vars from sandboxed reads; files support `deny`,
+      // env vars support `deny` or `mask` (sentinel in sandbox, real value injected at the proxy) (v2.1.187, mask v2.1.201)
       credentials: z
         .object({
           files: z.array(z.object({ path: z.string().min(1), mode: z.literal("deny") })).optional(),
           envVars: z
-            .array(z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u), mode: z.literal("deny") }))
+            .array(
+              z.object({
+                name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u),
+                mode: z.enum(["deny", "mask"]),
+                // narrow which hosts the proxy injects the real value at; only meaningful for `mask`,
+                // defaults to network.allowedDomains when unset (v2.1.201)
+                injectHosts: z.array(z.string()).optional(),
+              }),
+            )
             .optional(),
+          // allow sentinel→real substitution on the plain-HTTP proxy path; cleartext risk, test fixtures only;
+          // honored only from user/managed/CLI settings, not project settings (v2.1.201)
+          allowPlaintextInject: z.boolean().optional(),
         })
         .optional(),
       // selectively ignore sandbox violations by process/pattern (v2.1.61)
@@ -707,6 +719,12 @@ const baseSettingsSchema = z.object({
 
   // GrowthBook feature flag overrides
   featureFlags: z.record(z.string(), z.unknown()).optional(),
+
+  // CCC-only: top-level keys merged into the virtual ~/.claude.json state file (not settings.json).
+  // For CLI options that live in .claude.json rather than settings — e.g. leftArrowOpensAgents,
+  // defaultToAgentsView — where the real state file is the store the CLI actually reads.
+  // Trust fields and cachedGrowthBookFeatures are managed by the launcher and win over entries here.
+  claudeState: z.record(z.string(), z.unknown()).optional(),
 
   // hooks are overwritten by launcher
   // hooks: z.record(z.string(), z.array(z.any())).optional(),
@@ -770,6 +788,8 @@ const baseSettingsSchema = z.object({
   todoFeatureEnabled: z.boolean().optional(), // default: true
   // whether Claude responds after an input-box `!` bash command runs; false adds output to context only (v2.1.186, default true)
   respondToBashCommands: z.boolean().optional(),
+  // idle time before AskUserQuestion auto-continues with the answers selected so far; default: never (v2.1.200)
+  askUserQuestionTimeout: z.enum(["60s", "5m", "10m", "never"]).optional(),
   teammateMode: z.enum(["auto", "tmux", "iterm2", "in-process"]).optional(), // default: "auto" (iterm2 v2.1.186)
   remoteControlAtStartup: z.boolean().optional(), // default: unset (tristate; undefined = "default")
   autoUploadSessions: z.boolean().optional(), // default: unset (server-controlled)

@@ -1847,6 +1847,7 @@ export const setupVirtualFileSystem = (args: {
     patches: _patches,
     profiles: _profiles,
     featureFlags: rawFeatureFlags,
+    claudeState: rawClaudeState,
     _profileName,
     _availableProfiles,
     ...filteredSettings
@@ -1857,14 +1858,28 @@ export const setupVirtualFileSystem = (args: {
   void _profileName; // eslint: diagnostic-only field
   void _availableProfiles; // eslint: diagnostic-only field
 
-  // merge featureFlags into ~/.claude.json's cachedGrowthBookFeatures
+  // merge featureFlags (into cachedGrowthBookFeatures) and claudeState (top-level
+  // keys, e.g. leftArrowOpensAgents) into the virtual ~/.claude.json. claudeState
+  // wins over the real state file's values (config-as-code beats drifted local
+  // state); the featureFlags merge is applied after it, so cachedGrowthBookFeatures
+  // stays launcher-managed even if claudeState carries that key.
   const featureFlags =
     rawFeatureFlags && typeof rawFeatureFlags === "object" && !Array.isArray(rawFeatureFlags) ?
       (rawFeatureFlags as Record<string, unknown>)
     : undefined;
+  const claudeStateOverrides =
+    rawClaudeState && typeof rawClaudeState === "object" && !Array.isArray(rawClaudeState) ?
+      (rawClaudeState as Record<string, unknown>)
+    : undefined;
   let effectiveClaudeStateJson = args.claudeStateJson;
-  if (featureFlags && Object.keys(featureFlags).length > 0) {
-    log.vfs(`Injecting featureFlags into cachedGrowthBookFeatures: ${Object.keys(featureFlags).join(", ")}`);
+  const hasFeatureFlags = featureFlags !== undefined && Object.keys(featureFlags).length > 0;
+  const hasClaudeStateOverrides =
+    claudeStateOverrides !== undefined && Object.keys(claudeStateOverrides).length > 0;
+  if (hasFeatureFlags || hasClaudeStateOverrides) {
+    if (hasFeatureFlags)
+      log.vfs(`Injecting featureFlags into cachedGrowthBookFeatures: ${Object.keys(featureFlags).join(", ")}`);
+    if (hasClaudeStateOverrides)
+      log.vfs(`Injecting claudeState keys into .claude.json: ${Object.keys(claudeStateOverrides).join(", ")}`);
     try {
       const parsed = effectiveClaudeStateJson ? JSON.parse(effectiveClaudeStateJson) : {};
       const base = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
@@ -1874,12 +1889,13 @@ export const setupVirtualFileSystem = (args: {
         : {};
       const merged = {
         ...base,
-        cachedGrowthBookFeatures: { ...existing, ...featureFlags },
+        ...(hasClaudeStateOverrides ? claudeStateOverrides : {}),
+        ...(hasFeatureFlags ? { cachedGrowthBookFeatures: { ...existing, ...featureFlags } } : {}),
       };
       effectiveClaudeStateJson = `${JSON.stringify(merged, null, 2)}\n`;
     } catch (error) {
       log.vfs(
-        `Failed to merge featureFlags into .claude.json: ${error instanceof Error ? error.message : error}`,
+        `Failed to merge featureFlags/claudeState into .claude.json: ${error instanceof Error ? error.message : error}`,
       );
     }
   }

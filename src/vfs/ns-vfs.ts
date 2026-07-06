@@ -96,6 +96,13 @@ export type NsVfsFile = {
  * real filesystem.
  */
 export const setupNamespaceVfs = (roots: string[], files: NsVfsFile[]): boolean => {
+  // honor the kill switch here too, not just in namespacePrefix: a child process can
+  // inherit CCC_NS_VFS_ACTIVE=1 from an enclosing CCC session (e.g. tests or nested
+  // launches run inside one) and would otherwise mount tmpfs despite CCC_NS_VFS=0.
+  if (process.env[NS_KILL_SWITCH_ENV] === "0") {
+    log.vfs("Namespace VFS mounts skipped: disabled via CCC_NS_VFS=0");
+    return false;
+  }
   if (process.env[NS_ACTIVE_ENV] !== "1") return false;
   if (roots.length === 0) return false;
 
