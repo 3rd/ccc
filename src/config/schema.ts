@@ -288,6 +288,10 @@ const baseSettingsSchema = z.object({
   // @internal starting budget (tokens) for totalTokensReminder 'padded-countdown' mode; default 15000000;
   // server-controlled via GrowthBook, env CLAUDE_CODE_TOTAL_TOKENS_REMINDER_BUDGET overrides (v2.1.196)
   totalTokensReminderBudget: z.number().optional(),
+  // @internal emit the totalTokensReminder block after each regular user prompt and (for 'padded-countdown')
+  // re-anchor the task budget at each user turn; default off; server-controlled via GrowthBook
+  // tengu_lapis_anchor_user_turn, env CLAUDE_CODE_TOTAL_TOKENS_REMINDER_AFTER_USER_TURN overrides (v2.1.202)
+  totalTokensReminderAfterUserTurn: z.boolean().optional(),
 
   // blocks startup until remote managed settings are freshly fetched; exits on failure (v2.1.92)
   forceRemoteSettingsRefresh: z.boolean().optional(),

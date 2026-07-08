@@ -4,32 +4,55 @@ export type PatchFn = (content: string) => string;
 
 export type RuntimePatch = { find: string; replace: string } | { fn: PatchFn; name: string };
 
-// short-circuit the sync growthbook flag reader (v_/k$) so featureFlags set via
-// globalThis.__cccFeatureFlags always win. injection must happen at the
-// function entry: the reader has settings-layer pre-checks (kSH/NSH) that
+// short-circuit the growthbook flag readers so featureFlags set via
+// globalThis.__cccFeatureFlags always win. injection must happen at each
+// reader's entry: the readers have settings-layer pre-checks that
 // short-circuit before reaching the in-memory cache, so any layer carrying the
 // flag would otherwise win against __cccFF.
 //
-// minified identifiers rotate every build. we anchor on two stable structural
-// signatures unique to the sync reader:
-//   1. body starts with `let X=Y();if(X&&FLAG in X)return X[FLAG];` — the
-//      layered settings override pattern.
-//   2. body contains `cachedGrowthBookFeatures` within ~800 chars — only the
-//      sync reader carries this literal directly (async wrappers only delegate).
+// minified identifiers rotate every build; two bundle generations are handled:
+//   - 2.1.203+: a source-aware sync reader whose body starts with
+//     `let X=Y();if(X&&FLAG in X)return{value:X[FLAG],source:"override"};`,
+//     plus two async boolean readers with the prologue
+//     `let X=Y();if(X&&FLAG in X)return Boolean(X[FLAG]);` that read the cache
+//     directly (they no longer delegate to the sync reader).
+//   - <=2.1.202 (reachable via CLAUDE_PATH): a single raw-value sync reader
+//     starting with `let X=Y();if(X&&FLAG in X)return X[FLAG];`; async
+//     wrappers only delegate, so one injection suffices.
+// every anchor also requires the `cachedGrowthBookFeatures` literal within
+// ~800 chars — it only appears in reader bodies, never in delegating wrappers.
 const growthbookSyncFlagOverride: RuntimePatch = {
   name: "growthbook-sync-flag-override",
   fn: (content) => {
     if (content.includes("__cccFeatureFlags")) return content;
-    const re =
+
+    // opens an `if(...){` block; each caller closes it with its return statement
+    const guard = (flag: string) =>
+      `let __cccFF=globalThis.__cccFeatureFlags;` +
+      `if(__cccFF&&Object.prototype.hasOwnProperty.call(__cccFF,${flag})){` +
+      `if(process.env.CCC_DEBUG_FEATURE_FLAGS)console.error("[ccc] featureFlag "+${flag}+" -> "+JSON.stringify(__cccFF[${flag}]));`;
+
+    const sourceAwareSyncRe =
+      /function ([\w$]+)\(([\w$]+),([\w$]+)\){(?=let [\w$]+=[\w$]+\(\);if\([\w$]+&&\2 in [\w$]+\)return\{value:[\w$]+\[\2\],source:"override"\};)(?=[^]{0,800}?cachedGrowthBookFeatures)/;
+    const asyncBoolRe =
+      /async function ([\w$]+)\(([\w$]+)\){(?=let [\w$]+=[\w$]+\(\);if\([\w$]+&&\2 in [\w$]+\)return Boolean\([\w$]+\[\2\]\);)(?=[^]{0,800}?cachedGrowthBookFeatures)/g;
+    const legacySyncRe =
       /function ([\w$]+)\(([\w$]+),([\w$]+)\){(?=let [\w$]+=[\w$]+\(\);if\([\w$]+&&\2 in [\w$]+\)return [\w$]+\[\2];)(?=[^]{0,800}?cachedGrowthBookFeatures)/;
-    return content.replace(re, (match, _fn, flag, _dflt) => {
-      return (
-        `${match}let __cccFF=globalThis.__cccFeatureFlags;` +
-        `if(__cccFF&&Object.prototype.hasOwnProperty.call(__cccFF,${flag})){` +
-        `if(process.env.CCC_DEBUG_FEATURE_FLAGS)console.error("[ccc] featureFlag "+${flag}+" -> "+JSON.stringify(__cccFF[${flag}]));` +
-        `return __cccFF[${flag}];}`
+
+    const withSync = content.replace(
+      sourceAwareSyncRe,
+      (match, _fn, flag) => `${match}${guard(flag)}return{value:__cccFF[${flag}],source:"override"};}`,
+    );
+    if (withSync !== content)
+      return withSync.replace(
+        asyncBoolRe,
+        (match, _fn, flag) => `${match}${guard(flag)}return Boolean(__cccFF[${flag}]);}`,
       );
-    });
+
+    return content.replace(
+      legacySyncRe,
+      (match, _fn, flag) => `${match}${guard(flag)}return __cccFF[${flag}];}`,
+    );
   },
 };
 
