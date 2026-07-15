@@ -12,24 +12,10 @@ export interface NativeInfo {
 
 interface WrapperPkg {
   version?: string;
-  bin?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
 }
 
 const BINARY_CANDIDATES = ["claude", "claude.exe"];
-
-const isNativeLayout = (pkgDir: string, pkg: WrapperPkg) => {
-  const hasCliJs =
-    fs.existsSync(path.join(pkgDir, "cli.js")) && fs.statSync(path.join(pkgDir, "cli.js")).size > 1024;
-  if (hasCliJs) return false;
-
-  const hasInstall = fs.existsSync(path.join(pkgDir, "install.cjs"));
-  const hasWrapper = fs.existsSync(path.join(pkgDir, "cli-wrapper.cjs"));
-  if (hasInstall && hasWrapper) return true;
-
-  const binClaude = pkg.bin?.claude;
-  return typeof binClaude === "string" && !binClaude.endsWith(".js");
-};
 
 const findInstalledBinary = (wrapperDir: string, pkg: WrapperPkg) => {
   const req = createRequire(path.join(wrapperDir, "package.json"));
@@ -41,7 +27,8 @@ const findInstalledBinary = (wrapperDir: string, pkg: WrapperPkg) => {
     let pkgDir: string;
     try {
       pkgDir = path.dirname(req.resolve(`${platformPkg}/package.json`));
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "MODULE_NOT_FOUND") throw error;
       continue;
     }
     for (const binName of BINARY_CANDIDATES) {
@@ -52,13 +39,13 @@ const findInstalledBinary = (wrapperDir: string, pkg: WrapperPkg) => {
   return null;
 };
 
-export const detectNativeMode = (wrapperDir: string): NativeInfo | null => {
+export const resolveNativeBinary = (wrapperDir: string): NativeInfo => {
   const pkgJsonPath = path.join(wrapperDir, "package.json");
-  if (!fs.existsSync(pkgJsonPath)) return null;
+  if (!fs.existsSync(pkgJsonPath)) {
+    throw new Error(`native-detect: package.json not found under ${wrapperDir}`);
+  }
 
   const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8")) as WrapperPkg;
-  if (!isNativeLayout(wrapperDir, pkg)) return null;
-
   const version = pkg.version ?? "unknown";
   const found = findInstalledBinary(wrapperDir, pkg);
   if (!found) {

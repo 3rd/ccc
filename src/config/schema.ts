@@ -198,6 +198,8 @@ const baseSettingsSchema = z.object({
       appendSystemPrompt: z.string().optional(),
       // load additional system prompt from file and append (print mode only)
       appendSystemPromptFile: z.string().optional(),
+      // append to every Task-tool subagent's system prompt, propagated to nested subagents (print mode only, v2.1.207)
+      appendSubagentSystemPrompt: z.string().optional(),
       // beta headers to include in API requests (API key users only)
       betas: z.array(z.string()).optional(),
       // limit number of agentic turns (print mode only)
@@ -767,6 +769,9 @@ const baseSettingsSchema = z.object({
     .enum(["auto", "dark", "light", "light-daltonized", "dark-daltonized", "light-ansi", "dark-ansi"])
     .optional(), // default: "dark"
   editorMode: z.enum(["normal", "vim"]).optional(), // default: "normal"
+  // Vim INSERT-mode key-sequence remaps, e.g. {"jj": "<Esc>"}; keys are exactly two printable
+  // characters typed in sequence and "<Esc>" is the only supported target (v2.1.208)
+  vimInsertModeRemaps: z.record(z.string(), z.unknown()).optional(),
   verbose: z.boolean().optional(), // default: false
   preferredNotifChannel: z
     .enum([
