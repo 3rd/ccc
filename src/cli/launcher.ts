@@ -6,6 +6,7 @@ import p from "picocolors";
 import { which } from "zx";
 import { setInstanceId } from "@/hooks/hook-generator";
 import type { AgentDefinition } from "@/config/schema";
+import type { ClaudeMarketplaceConfig } from "@/config/plugins";
 import { runDoctor } from "@/cli/doctor";
 import { buildAgents } from "@/config/builders/build-agents";
 import { buildCommands } from "@/config/builders/build-commands";
@@ -20,7 +21,11 @@ import { exportProfileEnv, stripProfileFromArgv } from "@/config/builders/resolv
 import { dumpConfig } from "@/config/dump-config";
 import { Context } from "@/context/Context";
 import { applyNativeCertEnvDefaults } from "@/native/cert-env";
-import { resolveCliForLaunch } from "@/native/resolver";
+import {
+  resolveCliForLaunch,
+  resolveCliFromExecutable,
+  type ResolvedCli,
+} from "@/native/resolver";
 import { applyBuiltInPatches, applyUserPatches, type RuntimePatch } from "@/patches/cli-patches";
 import { getPluginInfo, loadCCCPluginsFromConfig } from "@/plugins";
 import { log } from "@/utils/log";
@@ -28,37 +33,7 @@ import { createStartupLogger } from "@/utils/startup";
 import { setupVirtualFileSystem } from "@/utils/virtual-fs";
 import { buildTrustedClaudeState } from "@/utils/workspace-trust";
 
-type ResolveResult = { path: string; source: string; native?: boolean; wrapperDir?: string };
-
-const findWrapperDir = (startPath: string) => {
-  let dir = path.dirname(startPath);
-  for (let i = 0; i < 5; i++) {
-    const pkgJsonPath = path.join(dir, "package.json");
-    if (fs.existsSync(pkgJsonPath)) {
-      try {
-        const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8")) as { name?: string };
-        if (pkg.name === "@anthropic-ai/claude-code") return dir;
-      } catch {}
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return null;
-};
-
-const maybeResolveNative = (resolved: ResolveResult): ResolveResult => {
-  const wrapperDir = findWrapperDir(resolved.path);
-  if (!wrapperDir) return resolved;
-  const native = resolveCliForLaunch(wrapperDir);
-  if (!native) return resolved;
-  return {
-    path: native.path,
-    source: `${resolved.source} (native ${native.cacheHit ? "cache" : "extracted"})`,
-    native: true,
-    wrapperDir: native.info?.wrapperDir ?? wrapperDir,
-  };
-};
+type ResolveResult = ResolvedCli & { source: string };
 
 const hasLongFlag = (args: string[], flag: string) => {
   return args.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
@@ -88,47 +63,42 @@ const getLongFlagValue = (args: string[], flag: string) => {
 
 const resolveClaudeCli = async (launcherRoot: string): Promise<ResolveResult> => {
   if (process.env.CLAUDE_PATH) {
-    return maybeResolveNative({ path: process.env.CLAUDE_PATH, source: "env override" });
+    return {
+      ...resolveCliFromExecutable(process.env.CLAUDE_PATH, launcherRoot),
+      source: "env override",
+    };
   }
 
   // try node_modules/.bin/claude
   const localBinPath = path.join(launcherRoot, "node_modules/.bin/claude");
   if (fs.existsSync(localBinPath)) {
-    return maybeResolveNative({ path: fs.realpathSync(localBinPath), source: "local bin" });
+    return { ...resolveCliFromExecutable(localBinPath, launcherRoot), source: "local bin" };
   }
 
   // try resolving the package
+  let claudePkgPath: string | undefined;
   try {
     const req = createRequire(import.meta.url);
-    const claudePkgPath = req.resolve("@anthropic-ai/claude-code/package.json", {
+    claudePkgPath = req.resolve("@anthropic-ai/claude-code/package.json", {
       paths: [launcherRoot],
     });
-    const claudeDir = path.dirname(claudePkgPath);
-    const native = resolveCliForLaunch(claudeDir);
-    if (native) {
-      return {
-        path: native.path,
-        source: `local package (native ${native.cacheHit ? "cache" : "extracted"})`,
-        native: true,
-        wrapperDir: native.info?.wrapperDir ?? claudeDir,
-      };
-    }
-    const claudePkg = JSON.parse(fs.readFileSync(claudePkgPath, "utf8"));
-    const mainEntry = claudePkg.bin?.["claude"] || claudePkg.main || "cli.js";
-    const claudeModulePath = path.join(claudeDir, mainEntry);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "MODULE_NOT_FOUND") throw error;
+  }
 
-    if (fs.existsSync(claudeModulePath)) {
-      return { path: claudeModulePath, source: "local package" };
-    }
-  } catch {}
+  if (claudePkgPath) {
+    const claudeDir = path.dirname(claudePkgPath);
+    return { ...resolveCliForLaunch(claudeDir), source: "local package" };
+  }
 
   // fallback to global claude
+  let claudeBinPath: string;
   try {
-    const claudeBinPath = await which("claude");
-    return maybeResolveNative({ path: fs.realpathSync(claudeBinPath), source: "global bin" });
+    claudeBinPath = await which("claude");
   } catch {
-    throw new Error("Could not find Claude Code neither in node_modules nor globally.");
+    throw new Error("Could not find Claude Code in node_modules or globally.");
   }
+  return { ...resolveCliFromExecutable(claudeBinPath, launcherRoot), source: "global bin" };
 };
 
 // eslint-disable-next-line sonarjs/cognitive-complexity
@@ -270,11 +240,30 @@ const run = async () => {
   // applied, so a profile's token override must be promoted to process env pre-boot
   if (settings._profileName) exportProfileEnv(settings._availableProfiles?.[settings._profileName]);
 
+  // the plugins-config marketplace shape is flat ({ source: "local", path }); Claude's
+  // settings.json expects the nested settings shape ({ source: { source: "directory", path } }).
+  // Splicing the flat shape verbatim makes Claude reject and skip settings.json entirely
+  // ("Expected object, but received string").
+  const toSettingsMarketplace = (entry: ClaudeMarketplaceConfig): { source: Record<string, unknown> } => {
+    if (entry.source === "local") return { source: { source: "directory", path: entry.path ?? "" } };
+    if (entry.source === "github") {
+      return {
+        source: { source: "github", repo: entry.repo ?? "", ...(entry.path ? { path: entry.path } : {}) },
+      };
+    }
+    return { source: { source: "url", url: entry.url ?? "" } };
+  };
+
   const settingsWithPlugins = {
     ...settings,
     ...(pluginsConfig.claude?.enabledPlugins && { enabledPlugins: pluginsConfig.claude.enabledPlugins }),
     ...(pluginsConfig.claude?.extraKnownMarketplaces && {
-      extraKnownMarketplaces: pluginsConfig.claude.extraKnownMarketplaces,
+      extraKnownMarketplaces: Object.fromEntries(
+        Object.entries(pluginsConfig.claude.extraKnownMarketplaces).map(([name, entry]) => [
+          name,
+          toSettingsMarketplace(entry),
+        ]),
+      ),
     }),
   };
 
@@ -538,34 +527,28 @@ const run = async () => {
 
   // resolve claude cli path first (needed for runtime patches in VFS)
   const resolveTask = startup.start("Resolve Claude CLI");
-  let claudeModulePath: string;
+  let extractedCliPath: string;
   try {
     const resolved = await resolveClaudeCli(context.launcherDirectory);
-    claudeModulePath = resolved.path;
-    log.info("LAUNCHER", `Found Claude CLI: ${claudeModulePath}`);
-    if (resolved.native) {
-      if (process.env.USE_BUILTIN_RIPGREP === undefined) {
-        process.env.USE_BUILTIN_RIPGREP = "0";
-        log.debug("LAUNCHER", "Native mode: set USE_BUILTIN_RIPGREP=0 (using system ripgrep)");
-      }
-      const certEnv = applyNativeCertEnvDefaults();
-      if (certEnv) {
-        log.debug(
-          "LAUNCHER",
-          `Native mode: SSL_CERT_DIR=${certEnv.certDir ?? "(unset)"} SSL_CERT_FILE=${certEnv.certFile ?? "(unset)"}`,
-        );
-      }
-      // anchor the cached bundle's createRequire() on the wrapper's package.json so
-      // its Node fallback paths (require("yaml"), require("undici"), ...) resolve
-      // against the launcher's node_modules instead of the cache dir.
-      if (resolved.wrapperDir) {
-        process.env.CCC_CLAUDE_WRAPPER_PKG_JSON = path.join(resolved.wrapperDir, "package.json");
-        log.debug(
-          "LAUNCHER",
-          `Native mode: CCC_CLAUDE_WRAPPER_PKG_JSON=${process.env.CCC_CLAUDE_WRAPPER_PKG_JSON}`,
-        );
-      }
+    extractedCliPath = resolved.extractedCliPath;
+    log.info("LAUNCHER", `Found extracted Claude CLI: ${extractedCliPath}`);
+    if (process.env.USE_BUILTIN_RIPGREP === undefined) {
+      process.env.USE_BUILTIN_RIPGREP = "0";
+      log.debug("LAUNCHER", "Native mode: set USE_BUILTIN_RIPGREP=0 (using system ripgrep)");
     }
+    const certEnv = applyNativeCertEnvDefaults();
+    if (certEnv) {
+      log.debug(
+        "LAUNCHER",
+        `Native mode: SSL_CERT_DIR=${certEnv.certDir ?? "(unset)"} SSL_CERT_FILE=${certEnv.certFile ?? "(unset)"}`,
+      );
+    }
+    // Anchor createRequire() outside the cache directory.
+    process.env.CCC_CLAUDE_WRAPPER_PKG_JSON = resolved.modulePackageJsonPath;
+    log.debug(
+      "LAUNCHER",
+      `Native mode: CCC_CLAUDE_WRAPPER_PKG_JSON=${process.env.CCC_CLAUDE_WRAPPER_PKG_JSON}`,
+    );
     resolveTask.done(resolved.source);
   } catch (error) {
     resolveTask.fail("Claude CLI not found");
@@ -660,6 +643,8 @@ const run = async () => {
     teammateMode?: "auto" | "in-process" | "tmux";
     appendSystemPrompt?: string;
     appendSystemPromptFile?: string;
+    // append to every Task-tool subagent's system prompt (print mode only) (v2.1.207)
+    appendSubagentSystemPrompt?: string;
     betas?: string[];
     maxTurns?: number;
     noSessionPersistence?: boolean;
@@ -859,6 +844,11 @@ const run = async () => {
     args.push("--append-system-prompt-file", settingsCli.appendSystemPromptFile);
   }
 
+  // --append-subagent-system-prompt (print mode only, v2.1.207)
+  if (!hasCliArg("--append-subagent-system-prompt") && settingsCli.appendSubagentSystemPrompt) {
+    args.push("--append-subagent-system-prompt", settingsCli.appendSubagentSystemPrompt);
+  }
+
   // --betas (comma-separated)
   if (!hasCliArg("--betas") && settingsCli.betas?.length) {
     args.push("--betas", settingsCli.betas.join(","));
@@ -949,7 +939,7 @@ const run = async () => {
     args.push("--thinking", settingsCli.thinking);
   }
 
-  log.info("LAUNCHER", `Launching Claude from: ${claudeModulePath}`);
+  log.info("LAUNCHER", `Launching Claude from: ${extractedCliPath}`);
   log.debug("LAUNCHER", `Arguments: ${args.join(" ")}`);
   log.debug("LAUNCHER", `Additional args from CLI: ${process.argv.slice(2).join(" ") || "none"}`);
   log.info("LAUNCHER", `Log file: ${log.getLogPath()}`);
@@ -975,12 +965,12 @@ const run = async () => {
   }
 
   // apply runtime patches to CLI file (ESM imports bypass VFS)
-  let importPath = claudeModulePath;
+  let importPath = extractedCliPath;
   const osModule = await import("os");
   const cryptoModule = await import("crypto");
 
   const patchTask = startup.start("Apply runtime patches");
-  let content = fs.readFileSync(claudeModulePath, "utf8");
+  let content = fs.readFileSync(extractedCliPath, "utf8");
   const allApplied: string[] = [];
   const allMissed: string[] = [];
 
@@ -1030,7 +1020,23 @@ const run = async () => {
 
   const launchTask = startup.start("Launching Claude...");
   const cleanedUserArgs = stripProfileFromArgv(process.argv.slice(2));
-  process.argv = [process.argv[0]!, claudeModulePath, ...args, ...cleanedUserArgs];
+  process.argv = [process.argv[0]!, extractedCliPath, ...args, ...cleanedUserArgs];
+
+  // This process runs under tsx, whose esbuild loader transforms every ESM load — including
+  // the plain-JS claude bundle — injecting a ~55MB inline sourcemap and enabling node's
+  // source-map support; node then caches the FULL decode on the module (~876MB of segment
+  // arrays for a map that maps minified code onto itself; heap dumps 0052178e / 8e133d73,
+  // ~1GB RSS per session). The bundle needs neither the transform nor the maps:
+  // 1) stop node from decoding maps in this process,
+  process.setSourceMapsEnabled(false);
+  // 2) strip the tsx loader from inherited NODE_OPTIONS so claude's re-exec'd children
+  //    load the bundle through clean node instead of paying the same transform+decode.
+  if (process.env.NODE_OPTIONS) {
+    const cleaned = process.env.NODE_OPTIONS.replace(/\s*--(?:import|require|loader)(?:\s+|=)\S*tsx\S*/g, "").trim();
+    if (cleaned) process.env.NODE_OPTIONS = cleaned;
+    else delete process.env.NODE_OPTIONS;
+  }
+
   launchTask.done();
   await import(importPath);
 };

@@ -21,6 +21,16 @@ const buildRunnerEnv = (context: Context, extraEnv?: Record<string, string>): Re
   return env;
 };
 
+const buildInlineMCPCommand = (name: string, context: Context): ClaudeMCPConfig => {
+  const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
+  return {
+    type: "stdio",
+    command: "bun",
+    args: [runnerPath, "mcp", name],
+    env: buildRunnerEnv(context),
+  };
+};
+
 const processExternalMCP = (
   config: ClaudeMCPConfig & { filter?: unknown; autoEnable?: string; headersHelper?: string },
   name: string,
@@ -61,13 +71,7 @@ export const buildMCPs = async (context: Context): Promise<Record<string, Claude
     if (isMCPLayerDisabled(layerData)) continue;
 
     if (layerData.type === "inline") {
-      const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
-      processed[name] = {
-        type: "stdio",
-        command: "bun",
-        args: [runnerPath, "mcp", name],
-        env: buildRunnerEnv(context),
-      };
+      processed[name] = buildInlineMCPCommand(name, context);
     } else if (layerData.type === "http" || layerData.type === "sse" || layerData.type === "traditional") {
       const config = layerData.config;
       const result = processExternalMCP(config, name, context);
@@ -83,13 +87,7 @@ export const buildMCPs = async (context: Context): Promise<Record<string, Claude
     if (isMCPLayerDisabled(layerData)) continue;
 
     if (layerData.type === "inline") {
-      const runnerPath = join(context.launcherDirectory, "src", "cli", "runner.ts");
-      processed[name] = {
-        type: "stdio",
-        command: "bun",
-        args: [runnerPath, "mcp", name],
-        env: buildRunnerEnv(context),
-      };
+      processed[name] = buildInlineMCPCommand(name, context);
     } else if (layerData.type === "http" || layerData.type === "sse" || layerData.type === "traditional") {
       const config = layerData.config;
       const result = processExternalMCP(config, name, context);
