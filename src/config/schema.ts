@@ -367,6 +367,10 @@ const baseSettingsSchema = z.object({
   awsAuthRefresh: z.string().optional(),
   // command to refresh GCP authentication
   gcpAuthRefresh: z.string().optional(),
+  // corporate launcher argv prefix for the background-agent supervisor and covered background
+  // processes; CLAUDE_CODE_PROCESS_WRAPPER env var takes precedence; honored from managed,
+  // --settings/SDK, and user settings only (project/local ignored) (v2.1.210)
+  processWrapper: z.string().optional(),
   // script outputting JSON with AWS credentials
   awsCredentialExport: z.string().optional(),
   cleanupPeriodDays: z.number().optional(),
@@ -501,6 +505,8 @@ const baseSettingsSchema = z.object({
   strictKnownMarketplaces: z.array(marketplaceSourceSchema).optional(),
   // rate (0-1) for session quality survey prompts; enterprise admins only (v2.1.76)
   feedbackSurveyRate: z.number().min(0).max(1).optional(),
+  // model-drafted feedback via the SendFeedback tool: "notify" (default), "quiet", or "off" (v2.1.212)
+  feedbackDrafts: z.enum(["notify", "quiet", "off"]).optional(),
   // control whether git commit/PR workflow instructions are included (v2.1.69)
   includeGitInstructions: z.boolean().optional(),
   // show thinking summaries in transcript view (ctrl+o) (v2.1.69)
