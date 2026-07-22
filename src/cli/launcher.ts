@@ -993,7 +993,15 @@ const run = async () => {
     const patchTmpDir = osModule.tmpdir();
     const hash = cryptoModule.createHash("md5").update(content).digest("hex").slice(0, 8);
     const patchedPath = path.join(patchTmpDir, `claude-cli-patched-${hash}.mjs`);
-    fs.writeFileSync(patchedPath, content);
+    // content-addressed cache: an existing file is byte-identical, so reuse it.
+    // Otherwise write to a unique temp path and rename into place — rename is
+    // atomic, so concurrent launchers (parallel lab runs) can never import a
+    // torn half-written bundle (previously a SyntaxError under concurrency).
+    if (!fs.existsSync(patchedPath)) {
+      const stagingPath = `${patchedPath}.${process.pid}.staging`;
+      fs.writeFileSync(stagingPath, content);
+      fs.renameSync(stagingPath, patchedPath);
+    }
     importPath = patchedPath;
     log.info(
       "LAUNCHER",
