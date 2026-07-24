@@ -46,7 +46,10 @@ export interface SkillDefinition {
   disableModelInvocation?: boolean;
   /** Run agent in an isolated git worktree, or a remote CCR sandbox (worktree v2.1.50, remote v2.1.178). */
   isolation?: "worktree" | "remote";
-  /** Always run as a background task (v2.1.49). */
+  /**
+   * Always run as a background task (v2.1.49). Skills with `context: "fork"` run in the
+   * background by default since v2.1.218; set `false` to keep the caller waiting in-line.
+   */
   background?: boolean;
   /** Override effort level when this skill is invoked (v2.1.80). */
   effort?: "high" | "low" | "max" | "medium";

@@ -320,11 +320,13 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
   const reserved = new Set([
     "agent",
     "allowed-tools",
+    "background",
     "context",
     "description",
     "disable-model-invocation",
     "effort",
     "hooks",
+    "isolation",
     "mode",
     "model",
     "name",
@@ -368,6 +370,14 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
   }
   if (definition.effort) {
     frontmatter.effort = definition.effort;
+  }
+  if (definition.isolation) {
+    frontmatter.isolation = definition.isolation;
+  }
+  // `false` is meaningful: fork skills run in the background by default since 2.1.218,
+  // and `background: false` is the opt-out that keeps the caller waiting in-line.
+  if (definition.background !== undefined) {
+    frontmatter.background = definition.background;
   }
 
   if (definition.frontmatter) {
