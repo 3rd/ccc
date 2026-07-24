@@ -579,6 +579,10 @@ const baseSettingsSchema = z.object({
   enableWorkflows: z.boolean().optional(),
   // enable the "workflow"/"workflows" keyword trigger; default true (v2.1.157)
   workflowKeywordTriggerEnabled: z.boolean().optional(),
+  // advisory size guideline for dynamic workflows: "small" <5 agents, "medium" (default) <15,
+  // "large" <50, "unrestricted" sends none; any settings value overrides and hides the
+  // /config "Dynamic workflow size" row; a guideline, not an enforced limit (v2.1.219)
+  workflowSizeGuideline: z.enum(["unrestricted", "small", "medium", "large"]).optional(),
   // marketplace names whose plugins may surface as contextual install suggestions;
   // managed-settings only (v2.1.152)
   pluginSuggestionMarketplaces: z.array(z.string()).optional(),
@@ -661,6 +665,10 @@ const baseSettingsSchema = z.object({
           socksProxyPort: z.number().optional(),
           // when true in managed settings, only managed allowedDomains apply (v2.1.61)
           allowManagedDomainsOnly: z.boolean().optional(),
+          // deny hosts not in allowedDomains deterministically instead of prompting; sandboxed
+          // commands only (in-process tools like WebFetch unaffected); honored only from
+          // user/managed/CLI settings, project settings ignored (v2.1.219)
+          strictAllowlist: z.boolean().optional(),
           // macOS only: additional XPC/Mach service names to allow looking up
           allowMachLookup: z.array(z.string()).optional(),
           // [EXPERIMENTAL] in-process TLS termination so the per-request filter can see HTTPS bodies;
