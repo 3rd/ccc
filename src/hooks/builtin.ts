@@ -19,6 +19,13 @@ const builtins: BuiltinCommands = {
     batchable: true,
     handler: eventRecorder.record,
   }),
+  DirectoryAdded: createHook({
+    event: "DirectoryAdded",
+    id: "builtin-recorder",
+    source: "builtin",
+    batchable: true,
+    handler: eventRecorder.record,
+  }),
   Elicitation: createHook({
     event: "Elicitation",
     id: "builtin-recorder",

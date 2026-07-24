@@ -1,6 +1,7 @@
 export type HookEventName =
   | "ConfigChange"
   | "CwdChanged"
+  | "DirectoryAdded"
   | "Elicitation"
   | "ElicitationResult"
   | "FileChanged"
@@ -477,6 +478,14 @@ export interface FileChangedHookInput extends BaseHookInput {
   event: "add" | "change" | "unlink";
 }
 
+// fires after /add-dir or the SDK register_repo_root control request registers a new
+// working directory mid-session; the hook matcher matches `source` (v2.1.219)
+export interface DirectoryAddedHookInput extends BaseHookInput {
+  hook_event_name: "DirectoryAdded";
+  directory: string;
+  source: "slash_command" | "register_repo_root";
+}
+
 export type InstructionsMemoryType = "Local" | "Managed" | "Project" | "User";
 
 export type InstructionsLoadReason =
@@ -533,6 +542,7 @@ export interface PostToolUseFailureHookInput extends BaseHookInput {
 export type ClaudeHookInput =
   | ConfigChangeHookInput
   | CwdChangedHookInput
+  | DirectoryAddedHookInput
   | ElicitationHookInput
   | ElicitationResultHookInput
   | FileChangedHookInput
@@ -757,6 +767,9 @@ export interface CwdChangedHookResponse extends BaseHookResponse {
   };
 }
 
+// only systemMessage is consumed by the CLI (v2.1.219)
+export interface DirectoryAddedHookResponse extends BaseHookResponse {}
+
 export interface FileChangedHookResponse extends BaseHookResponse {
   hookSpecificOutput?: {
     hookEventName: "FileChanged";
@@ -795,6 +808,7 @@ export interface ElicitationResultHookResponse extends BaseHookResponse {
 export type HookResponse =
   | ConfigChangeHookResponse
   | CwdChangedHookResponse
+  | DirectoryAddedHookResponse
   | ElicitationHookResponse
   | ElicitationResultHookResponse
   | FileChangedHookResponse
@@ -832,6 +846,10 @@ export interface HookEventMap {
   CwdChanged: {
     input: CwdChangedHookInput;
     response: CwdChangedHookResponse | void;
+  };
+  DirectoryAdded: {
+    input: DirectoryAddedHookInput;
+    response: DirectoryAddedHookResponse | void;
   };
   Elicitation: {
     input: ElicitationHookInput;
