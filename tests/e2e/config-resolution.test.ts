@@ -152,6 +152,9 @@ describe("config resolution", () => {
     expect(replacedSkill).toContain("Preset replaced body");
     expect(replacedSkill).not.toContain("Base replaced skill");
     expect(replacedSkill).not.toContain("Base replaced body");
+    expect(replacedSkill).toContain('context: "fork"');
+    expect(replacedSkill).toContain("background: false");
+    expect(replacedSkill).toContain('isolation: "worktree"');
 
     const precedence = requireSkill(skills, "ts-precedence");
     const precedenceSkill = mapSkillFiles(precedence).get("SKILL.md") ?? "";

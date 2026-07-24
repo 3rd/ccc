@@ -402,6 +402,8 @@ const baseSettingsSchema = z.object({
   // fallback models tried in order when the primary is overloaded/unavailable; "default" expands to the default model; CLI --fallback-model takes precedence (v2.1.170)
   fallbackModel: z.array(z.string()).optional(),
   spinnerTipsEnabled: z.boolean().optional(),
+  // when false, disables the :emoji: shortcode typeahead in the prompt input (v2.1.218)
+  emojiCompletionEnabled: z.boolean().optional(),
   spinnerTipsOverride: z
     .object({
       tips: z.array(z.string()),
@@ -681,6 +683,11 @@ const baseSettingsSchema = z.object({
           allowRead: z.array(z.string()).optional(),
           // when true in managed settings, only managed allowRead paths apply (v2.1.77)
           allowManagedReadPathsOnly: z.boolean().optional(),
+          // macOS/Linux/WSL only: skip filesystem isolation while keeping network+seccomp isolation;
+          // egress-control-only deployments; drops denyRead/credentials.files read protection;
+          // honored only from user/managed/CLI settings, and managed-only once managed settings
+          // configure sandbox.filesystem or credentials.files (v2.1.218)
+          disabled: z.boolean().optional(),
         })
         .optional(),
       // protect credential files and secret env vars from sandboxed reads; files support `deny`,

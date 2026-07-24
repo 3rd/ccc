@@ -5,4 +5,7 @@ export default createSkill({
   description: "Preset replaced skill",
   mode: "override",
   content: "Preset replaced body",
+  context: "fork",
+  background: false,
+  isolation: "worktree",
 });
