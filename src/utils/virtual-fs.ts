@@ -640,6 +640,38 @@ const monkeyPatchFS = ({
     return error;
   };
 
+  // settings.json is the one protected file the CLI itself writes back: /effort, /model,
+  // theme and thinking toggles all persist through an atomic save (staging file + rename).
+  // A hard EACCES there surfaces as a user-facing failure ("Failed to set effort level:
+  // ... permission denied, rename ..."), so the write is absorbed into the virtual volume
+  // instead. Reads already come from that volume, so the session sees its own update; the
+  // real ~/.claude/settings.json stays untouched, which is what child processes and the
+  // next launch read. Absorbed writes therefore live for the session only.
+  const absorbedWritePaths = new Set([path.join(os.homedir(), ".claude", "settings.json")]);
+
+  const absorbedWriteTarget = (filePath: unknown) => {
+    const normalized = normalizedArg(filePath);
+    if (!normalized || !absorbedWritePaths.has(normalized)) return undefined;
+    return normalized;
+  };
+
+  const absorbWrite = (target: string, data: unknown, options?: unknown) => {
+    vol.writeFileSync(
+      target,
+      data as Parameters<typeof vol.writeFileSync>[1],
+      options as Parameters<typeof vol.writeFileSync>[2],
+    );
+    log.vfs(`WRITE ABSORBED: "${target}" -> virtual volume`);
+  };
+
+  // the staging half of the CLI's atomic save landed on the real fs (it is not a
+  // protected path), so move its content into the volume and drop the leftover file.
+  const absorbRename = (stagingPath: string, target: string) => {
+    absorbWrite(target, origReadFileSync(stagingPath));
+    origUnlinkSync(stagingPath);
+    log.vfs(`RENAME ABSORBED: "${stagingPath}" -> virtual "${target}"`);
+  };
+
   const isWriteFlag = (flags?: number | string | null) => {
     if (typeof flags === "number") {
       const writeFlags =
@@ -661,6 +693,11 @@ const monkeyPatchFS = ({
     data: any,
     options?: any,
   ) {
+    const absorbed = absorbedWriteTarget(filePath);
+    if (absorbed) {
+      absorbWrite(absorbed, data, options);
+      return;
+    }
     if (isProtectedPath(filePath)) {
       throw createPermissionError("open", String(filePath));
     }
@@ -680,6 +717,13 @@ const monkeyPatchFS = ({
       optionsOrCallback = undefined;
     }
     const cb = callback || (() => {});
+
+    const absorbed = absorbedWriteTarget(filePath);
+    if (absorbed) {
+      absorbWrite(absorbed, data, optionsOrCallback);
+      process.nextTick(() => cb(null));
+      return;
+    }
 
     if (isProtectedPath(filePath)) {
       const error = createPermissionError("open", String(filePath));
@@ -783,6 +827,11 @@ const monkeyPatchFS = ({
 
   const origRenameSync = fsDefault.renameSync;
   fsDefault.renameSync = function (this: typeof fsDefault, oldPath: PathLike, newPath: PathLike) {
+    const absorbed = absorbedWriteTarget(newPath);
+    if (absorbed && !isProtectedPath(oldPath)) {
+      absorbRename(String(oldPath), absorbed);
+      return;
+    }
     if (isProtectedPath(oldPath) || isProtectedPath(newPath)) {
       throw createPermissionError("rename", String(oldPath));
     }
@@ -797,6 +846,18 @@ const monkeyPatchFS = ({
     callback?: (err: NodeJS.ErrnoException | null) => void,
   ) {
     const cb = callback || (() => {});
+
+    const absorbed = absorbedWriteTarget(newPath);
+    if (absorbed && !isProtectedPath(oldPath)) {
+      try {
+        absorbRename(String(oldPath), absorbed);
+      } catch (error: unknown) {
+        process.nextTick(() => cb(error as NodeJS.ErrnoException));
+        return;
+      }
+      process.nextTick(() => cb(null));
+      return;
+    }
 
     if (isProtectedPath(oldPath) || isProtectedPath(newPath)) {
       const error = createPermissionError("rename", String(oldPath));
@@ -1001,6 +1062,11 @@ const monkeyPatchFS = ({
     const origPromisesWriteFile = fsDefault.promises.writeFile;
     Object.defineProperty(fsDefault.promises, "writeFile", {
       async value(filePath: PathLike, data: any, options?: any) {
+        const absorbed = absorbedWriteTarget(filePath);
+        if (absorbed) {
+          absorbWrite(absorbed, data, options);
+          return;
+        }
         if (isProtectedPath(filePath)) {
           throw createPermissionError("open", String(filePath));
         }
@@ -1049,6 +1115,11 @@ const monkeyPatchFS = ({
     const origPromisesRename = fsDefault.promises.rename;
     Object.defineProperty(fsDefault.promises, "rename", {
       async value(oldPath: PathLike, newPath: PathLike) {
+        const absorbed = absorbedWriteTarget(newPath);
+        if (absorbed && !isProtectedPath(oldPath)) {
+          absorbRename(String(oldPath), absorbed);
+          return;
+        }
         if (isProtectedPath(oldPath) || isProtectedPath(newPath)) {
           throw createPermissionError("rename", String(oldPath));
         }
