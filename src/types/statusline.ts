@@ -59,6 +59,11 @@ export type StatusLineInput = {
     };
   };
   exceeds_200k_tokens: boolean;
+  // effective effort for the turn (/effort override ?? model catalog default_effort);
+  // only present when the current model supports effort (v2.1.219)
+  effort?: {
+    level: "low" | "medium" | "high" | "xhigh" | "max";
+  };
   // only present when vim mode is enabled
   vim?: {
     mode: "INSERT" | "NORMAL" | "VISUAL" | "VISUAL LINE";
