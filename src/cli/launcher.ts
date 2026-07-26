@@ -3,35 +3,12 @@ import * as fs from "fs";
 import { createRequire } from "node:module";
 import * as path from "path";
 import p from "picocolors";
-import { which } from "zx";
-import { setInstanceId } from "@/hooks/hook-generator";
-import type { AgentDefinition } from "@/config/schema";
 import type { ClaudeMarketplaceConfig } from "@/config/plugins";
-import { runDoctor } from "@/cli/doctor";
-import { buildAgents } from "@/config/builders/build-agents";
-import { buildCommands } from "@/config/builders/build-commands";
-import { buildMCPs } from "@/config/builders/build-mcps";
-import { buildOutputStyles } from "@/config/builders/build-output-styles";
-import { buildPlugins } from "@/config/builders/build-plugins";
-import { buildRules } from "@/config/builders/build-rules";
-import { buildSettings, buildSystemPrompt, buildUserPrompt } from "@/config/builders/build-settings";
-import { buildSkills } from "@/config/builders/build-skills";
-import { buildWorkflows } from "@/config/builders/build-workflows";
-import { exportProfileEnv, stripProfileFromArgv } from "@/config/builders/resolve-profile";
-import { dumpConfig } from "@/config/dump-config";
-import { Context } from "@/context/Context";
-import { applyNativeCertEnvDefaults } from "@/native/cert-env";
-import {
-  resolveCliForLaunch,
-  resolveCliFromExecutable,
-  type ResolvedCli,
-} from "@/native/resolver";
-import { applyBuiltInPatches, applyUserPatches, type RuntimePatch } from "@/patches/cli-patches";
-import { getPluginInfo, loadCCCPluginsFromConfig } from "@/plugins";
+import type { AgentDefinition } from "@/config/schema";
+import type { ResolvedCli } from "@/native/resolver";
+import type { RuntimePatch } from "@/patches/cli-patches";
 import { log } from "@/utils/log";
 import { createStartupLogger } from "@/utils/startup";
-import { setupVirtualFileSystem } from "@/utils/virtual-fs";
-import { buildTrustedClaudeState } from "@/utils/workspace-trust";
 
 type ResolveResult = ResolvedCli & { source: string };
 
@@ -62,6 +39,7 @@ const getLongFlagValue = (args: string[], flag: string) => {
 };
 
 const resolveClaudeCli = async (launcherRoot: string): Promise<ResolveResult> => {
+  const { resolveCliForLaunch, resolveCliFromExecutable } = await import("@/native/resolver");
   if (process.env.CLAUDE_PATH) {
     return {
       ...resolveCliFromExecutable(process.env.CLAUDE_PATH, launcherRoot),
@@ -94,7 +72,7 @@ const resolveClaudeCli = async (launcherRoot: string): Promise<ResolveResult> =>
   // fallback to global claude
   let claudeBinPath: string;
   try {
-    claudeBinPath = await which("claude");
+    claudeBinPath = await (await import("zx")).which("claude");
   } catch {
     throw new Error("Could not find Claude Code in node_modules or globally.");
   }
@@ -136,11 +114,13 @@ const run = async () => {
 
   // init context
   const ctxTask = startup.start("Resolve project context");
+  const { Context } = await import("@/context/Context");
   const context = new Context(process.cwd());
   await context.init();
 
   let virtualClaudeStateJson: string | undefined;
   try {
+    const { buildTrustedClaudeState } = await import("@/utils/workspace-trust");
     const trustOverride = buildTrustedClaudeState([context.project.rootDirectory, context.workingDirectory]);
     virtualClaudeStateJson = trustOverride.claudeStateJson;
     log.info("LAUNCHER", `Prepared virtual Claude workspace trust from ${trustOverride.claudeStatePath}`);
@@ -154,7 +134,7 @@ const run = async () => {
     );
   }
 
-  setInstanceId(context.instanceId, context.configDirectory);
+  (await import("@/hooks/hook-generator")).setInstanceId(context.instanceId, context.configDirectory);
   process.env.CCC_INSTANCE_ID = context.instanceId;
 
   // create temp file for events
@@ -187,11 +167,14 @@ const run = async () => {
 
   ctxTask.done();
 
-  const pluginsConfig = await startup.run("Build plugins", () => buildPlugins(context));
+  const pluginsConfig = await startup.run("Build plugins", async () =>
+    (await import("@/config/builders/build-plugins")).buildPlugins(context),
+  );
 
   // discover and load CCC plugins
   const pluginTask = startup.start("Load CCC plugins");
   try {
+    const { loadCCCPluginsFromConfig } = await import("@/plugins");
     const loadResult = await loadCCCPluginsFromConfig(context, pluginsConfig.ccc ?? {});
     context.loadedPlugins = loadResult.plugins;
 
@@ -210,19 +193,40 @@ const run = async () => {
   }
 
   // build MCPs first so context.hasMCP() is available during prompt building
-  const mcps = await startup.run("Build MCPs", () => buildMCPs(context));
+  const mcps = await startup.run("Build MCPs", async () =>
+    (await import("@/config/builders/build-mcps")).buildMCPs(context),
+  );
   context.mcpServers = mcps;
 
   // build remaining configuration in parallel
-  const settingsPromise = startup.run("Build settings", () => buildSettings(context));
-  const systemPromptPromise = startup.run("Build system prompt", () => buildSystemPrompt(context));
-  const userPromptPromise = startup.run("Build user prompt", () => buildUserPrompt(context));
-  const commandsPromise = startup.run("Build commands", () => buildCommands(context));
-  const agentsPromise = startup.run("Build agents", () => buildAgents(context));
-  const skillsPromise = startup.run("Build skills", () => buildSkills(context));
-  const rulesPromise = startup.run("Build rules", () => buildRules(context));
-  const outputStylesPromise = startup.run("Build output styles", () => buildOutputStyles(context));
-  const workflowsPromise = startup.run("Build workflows", () => buildWorkflows(context));
+  const settingsModule = import("@/config/builders/build-settings");
+  const settingsPromise = startup.run("Build settings", async () =>
+    (await settingsModule).buildSettings(context),
+  );
+  const systemPromptPromise = startup.run("Build system prompt", async () =>
+    (await settingsModule).buildSystemPrompt(context),
+  );
+  const userPromptPromise = startup.run("Build user prompt", async () =>
+    (await settingsModule).buildUserPrompt(context),
+  );
+  const commandsPromise = startup.run("Build commands", async () =>
+    (await import("@/config/builders/build-commands")).buildCommands(context),
+  );
+  const agentsPromise = startup.run("Build agents", async () =>
+    (await import("@/config/builders/build-agents")).buildAgents(context),
+  );
+  const skillsPromise = startup.run("Build skills", async () =>
+    (await import("@/config/builders/build-skills")).buildSkills(context),
+  );
+  const rulesPromise = startup.run("Build rules", async () =>
+    (await import("@/config/builders/build-rules")).buildRules(context),
+  );
+  const outputStylesPromise = startup.run("Build output styles", async () =>
+    (await import("@/config/builders/build-output-styles")).buildOutputStyles(context),
+  );
+  const workflowsPromise = startup.run("Build workflows", async () =>
+    (await import("@/config/builders/build-workflows")).buildWorkflows(context),
+  );
   const [settings, systemPrompt, userPrompt, commands, agents, skills, rules, outputStyles, workflows] =
     await Promise.all([
       settingsPromise,
@@ -238,7 +242,11 @@ const run = async () => {
 
   // oauth credentials are resolved from real process env before settings.json env is
   // applied, so a profile's token override must be promoted to process env pre-boot
-  if (settings._profileName) exportProfileEnv(settings._availableProfiles?.[settings._profileName]);
+  if (settings._profileName) {
+    (await import("@/config/builders/resolve-profile")).exportProfileEnv(
+      settings._availableProfiles?.[settings._profileName],
+    );
+  }
 
   // the plugins-config marketplace shape is flat ({ source: "local", path }); Claude's
   // settings.json expects the nested settings shape ({ source: { source: "directory", path } }).
@@ -308,7 +316,7 @@ const run = async () => {
     }
     const { debugMCP } = await import("@/cli/debug-mcp");
 
-    const processedMcps = await buildMCPs(context);
+    const processedMcps = await (await import("@/config/builders/build-mcps")).buildMCPs(context);
     const { loadConfigFromLayers, mergeMCPs } = await import("@/config/layers");
     const { isMCPLayerDisabled } = await import("@/types/mcps");
     const layers = await loadConfigFromLayers<import("@/types/mcps").MCPServers>(context, "mcps.ts");
@@ -325,6 +333,7 @@ const run = async () => {
 
   // --doctor
   if (process.argv.includes("--doctor")) {
+    const { runDoctor } = await import("@/cli/doctor");
     await runDoctor(
       context,
       {
@@ -386,7 +395,7 @@ const run = async () => {
     console.log(p.blue("\nMCPs:"));
     console.log(mcps);
     console.log(p.blue("\nCCC Plugins:"));
-    const pluginInfos = getPluginInfo(context.loadedPlugins);
+    const pluginInfos = (await import("@/plugins")).getPluginInfo(context.loadedPlugins);
     if (pluginInfos.length === 0) {
       console.log("  (none)");
     } else {
@@ -438,6 +447,7 @@ const run = async () => {
 
   // --dump-config
   if (process.argv.includes("--dump-config")) {
+    const { dumpConfig } = await import("@/config/dump-config");
     await dumpConfig(context, {
       settings: settingsWithPlugins as Record<string, unknown>,
       systemPrompt,
@@ -536,7 +546,7 @@ const run = async () => {
       process.env.USE_BUILTIN_RIPGREP = "0";
       log.debug("LAUNCHER", "Native mode: set USE_BUILTIN_RIPGREP=0 (using system ripgrep)");
     }
-    const certEnv = applyNativeCertEnvDefaults();
+    const certEnv = (await import("@/native/cert-env")).applyNativeCertEnvDefaults();
     if (certEnv) {
       log.debug(
         "LAUNCHER",
@@ -573,6 +583,7 @@ const run = async () => {
 
   // setup vfs
   await startup.run("Mount VFS", async () => {
+    const { setupVirtualFileSystem } = await import("@/utils/virtual-fs");
     setupVirtualFileSystem({
       settings: settingsWithPlugins as unknown as Record<string, unknown>,
       claudeStateJson: virtualClaudeStateJson,
@@ -966,48 +977,108 @@ const run = async () => {
 
   // apply runtime patches to CLI file (ESM imports bypass VFS)
   let importPath = extractedCliPath;
-  const osModule = await import("os");
-  const cryptoModule = await import("crypto");
 
   const patchTask = startup.start("Apply runtime patches");
-  let content = fs.readFileSync(extractedCliPath, "utf8");
+  const { applyBuiltInPatches, applyUserPatches } = await import("@/patches/cli-patches");
+  const { computePatchKey, dropPatchedEntry, patchCacheMode, readPatched, writePatchedAtomic } = await import(
+    "@/patches/patched-cache"
+  );
+  const { PREAMBLE_VERSION } = await import("@/native/preamble");
+  const patchList = patches ?? [];
+  const cacheMode = patchCacheMode();
+  const patchKey =
+    cacheMode === "off" ? undefined : (
+      computePatchKey({
+        extractedCliPath,
+        preambleVersion: PREAMBLE_VERSION,
+        patches: patchList,
+        configFingerprint: process.env.CCC_CONFIG_FINGERPRINT,
+        salt: process.env.CCC_PATCH_CACHE_SALT,
+      })
+    );
+  const cached = patchKey ? readPatched(patchKey) : null;
+
+  // these drive the stale-patch report below, so a cache hit has to restore them too
   const allApplied: string[] = [];
   const allMissed: string[] = [];
 
-  // apply built-in patches (lsp fixes, feature disabling)
-  const builtIn = applyBuiltInPatches(content);
-  content = builtIn.content;
-  allApplied.push(...builtIn.applied);
-  allMissed.push(...builtIn.missed);
+  const derivePatched = () => {
+    let content = fs.readFileSync(extractedCliPath, "utf8");
+    const applied: string[] = [];
+    const missed: string[] = [];
 
-  // apply user-defined patches from settings
-  if (patches && patches.length > 0) {
-    const user = applyUserPatches(content, patches);
-    content = user.content;
-    allApplied.push(...user.applied);
-    allMissed.push(...user.missed);
+    // apply built-in patches (lsp fixes, feature disabling)
+    const builtIn = applyBuiltInPatches(content);
+    content = builtIn.content;
+    applied.push(...builtIn.applied);
+    missed.push(...builtIn.missed);
+
+    // apply user-defined patches from settings
+    if (patchList.length > 0) {
+      const user = applyUserPatches(content, patchList);
+      content = user.content;
+      applied.push(...user.applied);
+      missed.push(...user.missed);
+    }
+    return { content: applied.length > 0 ? content : null, applied, missed };
+  };
+
+  if (cached) {
+    if (cached.patchedPath) importPath = cached.patchedPath;
+    allApplied.push(...cached.applied);
+    allMissed.push(...cached.missed);
+    log.info("LAUNCHER", `Reused patched CLI ${patchKey}: ${cached.patchedPath ?? "(unpatched)"}`);
+  } else {
+    const derived = derivePatched();
+    allApplied.push(...derived.applied);
+    allMissed.push(...derived.missed);
+
+    if (patchKey) {
+      const entry = writePatchedAtomic(patchKey, derived.content, derived.applied, derived.missed);
+      if (entry.patchedPath) importPath = entry.patchedPath;
+    } else if (derived.content !== null) {
+      // cache disabled: keep the previous content-addressed temp file behaviour. Write to a
+      // unique temp path and rename into place — rename is atomic, so concurrent launchers
+      // (parallel lab runs) can never import a torn half-written bundle.
+      const hash = crypto.createHash("md5").update(derived.content).digest("hex").slice(0, 8);
+      const patchedPath = path.join(os.tmpdir(), `claude-cli-patched-${hash}.mjs`);
+      if (!fs.existsSync(patchedPath)) {
+        const stagingPath = `${patchedPath}.${process.pid}.staging`;
+        fs.writeFileSync(stagingPath, derived.content);
+        fs.renameSync(stagingPath, patchedPath);
+      }
+      importPath = patchedPath;
+    }
+
+    if (allApplied.length > 0) {
+      log.info(
+        "LAUNCHER",
+        `Applied ${allApplied.length}/${allApplied.length + allMissed.length} runtime patches`,
+      );
+      for (const patchName of allApplied) log.debug("LAUNCHER", `  + ${patchName}`);
+    }
   }
 
-  if (allApplied.length > 0) {
-    // write patched CLI to temp file
-    const patchTmpDir = osModule.tmpdir();
-    const hash = cryptoModule.createHash("md5").update(content).digest("hex").slice(0, 8);
-    const patchedPath = path.join(patchTmpDir, `claude-cli-patched-${hash}.mjs`);
-    // content-addressed cache: an existing file is byte-identical, so reuse it.
-    // Otherwise write to a unique temp path and rename into place — rename is
-    // atomic, so concurrent launchers (parallel lab runs) can never import a
-    // torn half-written bundle (previously a SyntaxError under concurrency).
-    if (!fs.existsSync(patchedPath)) {
-      const stagingPath = `${patchedPath}.${process.pid}.staging`;
-      fs.writeFileSync(stagingPath, content);
-      fs.renameSync(stagingPath, patchedPath);
+  // CCC_PATCH_CACHE=verify: re-derive and compare, so a key that misses an input shows up as a
+  // warning here instead of as an unexplained behaviour change
+  if (cached && cacheMode === "verify" && patchKey) {
+    const derived = derivePatched();
+    const actual = cached.patchedPath ? fs.readFileSync(cached.patchedPath, "utf8") : null;
+    const sameLabels =
+      derived.applied.join("\0") === cached.applied.join("\0") &&
+      derived.missed.join("\0") === cached.missed.join("\0");
+    if (derived.content !== actual || !sameLabels) {
+      log.warn("LAUNCHER", `Patch cache mismatch for ${patchKey}; rebuilding from source`);
+      dropPatchedEntry(patchKey);
+      const entry = writePatchedAtomic(patchKey, derived.content, derived.applied, derived.missed);
+      importPath = entry.patchedPath ?? extractedCliPath;
+      allApplied.length = 0;
+      allMissed.length = 0;
+      allApplied.push(...derived.applied);
+      allMissed.push(...derived.missed);
+    } else {
+      log.info("LAUNCHER", `Patch cache verified: ${patchKey}`);
     }
-    importPath = patchedPath;
-    log.info(
-      "LAUNCHER",
-      `Applied ${allApplied.length}/${allApplied.length + allMissed.length} runtime patches`,
-    );
-    for (const patchName of allApplied) log.debug("LAUNCHER", `  + ${patchName}`);
   }
 
   const total = allApplied.length + allMissed.length;
@@ -1027,20 +1098,45 @@ const run = async () => {
   }
 
   const launchTask = startup.start("Launching Claude...");
+  const { stripProfileFromArgv } = await import("@/config/builders/resolve-profile");
   const cleanedUserArgs = stripProfileFromArgv(process.argv.slice(2));
   process.argv = [process.argv[0]!, extractedCliPath, ...args, ...cleanedUserArgs];
 
-  // This process runs under tsx, whose esbuild loader transforms every ESM load — including
-  // the plain-JS claude bundle — injecting a ~55MB inline sourcemap and enabling node's
-  // source-map support; node then caches the FULL decode on the module (~876MB of segment
-  // arrays for a map that maps minified code onto itself; heap dumps 0052178e / 8e133d73,
-  // ~1GB RSS per session). The bundle needs neither the transform nor the maps:
-  // 1) stop node from decoding maps in this process,
+  // The tsx loader transforms every ESM load — including the plain-JS claude bundle — injecting a
+  // ~55MB inline sourcemap and enabling node's source-map support; node then caches the FULL
+  // decode on the module (~876MB of segment arrays for a map that maps minified code onto itself;
+  // heap dumps 0052178e / 8e133d73, ~1GB RSS per session), and the transform itself costs ~4.5s on
+  // a 21MB bundle. The bundle needs neither the transform nor the maps:
+  // 1) drop the loader entirely when we own the registration (tsx-runner.mjs). Everything that
+  //    needs TypeScript — config layers, prompts, settings — has already been imported by now.
+  //    The unregister handshake talks to node's module-hooks thread, which can leave the promise
+  //    pending with nothing else keeping this event loop alive; the timer bounds that and simply
+  //    falls back to importing through the loader.
+  const unregisterTsx = (globalThis as { __cccTsxUnregister?: () => Promise<void> }).__cccTsxUnregister;
+  if (unregisterTsx) {
+    const startedAt = Date.now();
+    const dropped = await Promise.race([
+      unregisterTsx().then(
+        () => true,
+        () => false,
+      ),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 250)),
+    ]);
+    log.debug(
+      "LAUNCHER",
+      `tsx loader unregister: ${dropped ? "dropped" : "kept"} in ${Date.now() - startedAt}ms`,
+    );
+  }
+  // 2) stop node from decoding maps in this process, for the CCC_TYPESCRIPT_RUNNER path where the
+  //    loader came from NODE_OPTIONS and cannot be removed,
   process.setSourceMapsEnabled(false);
-  // 2) strip the tsx loader from inherited NODE_OPTIONS so claude's re-exec'd children
+  // 3) strip the tsx loader from inherited NODE_OPTIONS so claude's re-exec'd children
   //    load the bundle through clean node instead of paying the same transform+decode.
   if (process.env.NODE_OPTIONS) {
-    const cleaned = process.env.NODE_OPTIONS.replace(/\s*--(?:import|require|loader)(?:\s+|=)\S*tsx\S*/g, "").trim();
+    const cleaned = process.env.NODE_OPTIONS.replace(
+      /\s*--(?:import|require|loader)(?:\s+|=)\S*tsx\S*/g,
+      "",
+    ).trim();
     if (cleaned) process.env.NODE_OPTIONS = cleaned;
     else delete process.env.NODE_OPTIONS;
   }

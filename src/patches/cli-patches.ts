@@ -1,8 +1,15 @@
 // runtime patches for claude cli
 
+import { createHash } from "crypto";
+
 export type PatchFn = (content: string) => string;
 
-export type RuntimePatch = { find: string; replace: string } | { fn: PatchFn; name: string };
+// keyMaterial declares anything a patch bakes into its output that fn.toString() cannot show —
+// typically a preamble a factory precomputed from config before creating fn. Patch caching keys
+// on the function source, so a closed-over value not declared here would go unnoticed.
+export type RuntimePatch =
+  | { find: string; replace: string }
+  | { fn: PatchFn; name: string; keyMaterial?: string };
 
 // short-circuit the growthbook flag readers so featureFlags set via
 // globalThis.__cccFeatureFlags always win. injection must happen at each
@@ -93,6 +100,22 @@ const builtInStringPatches: RuntimePatch[] = [
 
 const labelFor = (patch: RuntimePatch) =>
   "fn" in patch ? patch.name : `"${patch.find}" => "${patch.replace}"`;
+
+// identity of one patch's behaviour, for cache keys: the literal replacement, or the function's
+// source plus whatever it declares as closed-over material
+export const patchDescriptor = (patch: RuntimePatch) =>
+  "fn" in patch
+    ? `f\0${patch.name}\0${patch.fn.toString()}\0${patch.keyMaterial ?? ""}`
+    : `s\0${patch.find}\0${patch.replace}`;
+
+export const patchSetDigest = (patches: readonly RuntimePatch[]) => {
+  const hash = createHash("sha256");
+  for (const patch of patches) hash.update(patchDescriptor(patch)).update("\0\0");
+  return hash.digest("hex").slice(0, 16);
+};
+
+// moves whenever the built-in patch list changes, so cached output cannot outlive it
+export const BUILTIN_PATCHES_VERSION = patchSetDigest(builtInStringPatches);
 
 const applyOne = (content: string, patch: RuntimePatch) => {
   const result = "fn" in patch ? patch.fn(content) : content.replaceAll(patch.find, patch.replace);
