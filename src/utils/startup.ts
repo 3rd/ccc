@@ -64,6 +64,7 @@ export class StartupLogger {
       label,
       startedAt: process.hrtime.bigint(),
     };
+    this.printHeader();
 
     return {
       done: (note?: string) => {

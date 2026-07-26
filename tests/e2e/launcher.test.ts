@@ -7,6 +7,7 @@ import { assertExitCode, assertStderrEmpty, assertStdoutContains } from "../util
 import { LAUNCHER_ROOT, runCCC } from "../utils/test-runner";
 
 const expectedLauncherPath = join(LAUNCHER_ROOT, "src/cli/launcher.ts");
+const expectedRunnerPath = join(LAUNCHER_ROOT, "src/cli/tsx-runner.mjs");
 const expectedTsconfigPath = join(LAUNCHER_ROOT, "tsconfig.json");
 
 const setupFakeNpx = () => {
@@ -33,20 +34,59 @@ node "$runner_path"
 };
 
 describe("launcher", () => {
-  test("wrapper launches tsx directly by default", () => {
+  test("wrapper launches node with the in-process tsx runner by default", () => {
     const spec = buildLaunchSpec({
       cliArgs: ["--print-config"],
       cwd: "/tmp/ccc-test",
       env: { PATH: "/usr/bin" },
     });
 
-    expect(spec.command).toBe("tsx");
-    expect(spec.args[0]).toBe(expectedLauncherPath);
+    expect(spec.command).toBe("node");
+    expect(spec.args[0]).toBe(expectedRunnerPath);
     expect(spec.args[1]).toBe("--print-config");
     expect(spec.tempFile).toBeUndefined();
     expect(spec.cwd).toBe("/tmp/ccc-test");
     expect(spec.env.PATH).toBe("/usr/bin");
     expect(spec.env.TSX_TSCONFIG_PATH).toBe(expectedTsconfigPath);
+  });
+
+  test("wrapper runs the launcher through an explicit CCC_TYPESCRIPT_RUNNER", () => {
+    const spec = buildLaunchSpec({
+      cliArgs: ["--print-config"],
+      cwd: "/tmp/ccc-test",
+      env: { CCC_TYPESCRIPT_RUNNER: "tsx", PATH: "/usr/bin" },
+    });
+
+    expect(spec.command).toBe("tsx");
+    expect(spec.args[0]).toBe(expectedLauncherPath);
+    expect(spec.args[1]).toBe("--print-config");
+    expect(spec.env.TSX_TSCONFIG_PATH).toBe(expectedTsconfigPath);
+  });
+
+  test("wrapper points node at a stable V8 compile cache", () => {
+    const spec = buildLaunchSpec({
+      cliArgs: [],
+      cwd: "/tmp/ccc-test",
+      env: { XDG_CACHE_HOME: "/tmp/ccc-test-cache" },
+    });
+
+    expect(spec.env.NODE_COMPILE_CACHE).toBe("/tmp/ccc-test-cache/ccc/v8-compile-cache");
+  });
+
+  test("wrapper honours an explicit compile cache dir and the kill switch", () => {
+    const explicit = buildLaunchSpec({
+      cliArgs: [],
+      cwd: "/tmp/ccc-test",
+      env: { NODE_COMPILE_CACHE: "/tmp/ccc-explicit-cache" },
+    });
+    expect(explicit.env.NODE_COMPILE_CACHE).toBe("/tmp/ccc-explicit-cache");
+
+    const disabled = buildLaunchSpec({
+      cliArgs: [],
+      cwd: "/tmp/ccc-test",
+      env: { CCC_COMPILE_CACHE: "0", NODE_COMPILE_CACHE: "" },
+    });
+    expect(disabled.env.NODE_COMPILE_CACHE).toBe("");
   });
 
   test("wrapper enables doru only when the flag is leading", () => {
@@ -72,8 +112,8 @@ describe("launcher", () => {
       env: { PATH: "/usr/bin" },
     });
 
-    expect(spec.command).toBe("tsx");
-    expect(spec.args).toEqual([expectedLauncherPath, "--append-system-prompt", "--doru"]);
+    expect(spec.command).toBe("node");
+    expect(spec.args).toEqual([expectedRunnerPath, "--append-system-prompt", "--doru"]);
     expect(spec.tempFile).toBeUndefined();
   });
 
@@ -84,8 +124,8 @@ describe("launcher", () => {
       env: { PATH: "/usr/bin" },
     });
 
-    expect(spec.command).toBe("tsx");
-    expect(spec.args).toEqual([expectedLauncherPath, "--", "--doru"]);
+    expect(spec.command).toBe("node");
+    expect(spec.args).toEqual([expectedRunnerPath, "--", "--doru"]);
     expect(spec.tempFile).toBeUndefined();
   });
 

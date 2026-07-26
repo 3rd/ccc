@@ -2,17 +2,17 @@
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
 import * as fs from "fs";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
-import { NS_ACTIVE_ENV, namespacePrefix } from "../vfs/ns-vfs";
+import { namespacePrefix, NS_ACTIVE_ENV } from "../vfs/ns-vfs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const projectRoot = resolve(__dirname, "..", "..");
 const launcherPath = join(projectRoot, "src", "cli", "launcher.ts");
+const tsxRunnerPath = join(projectRoot, "src", "cli", "tsx-runner.mjs");
 const tsconfigPath = join(projectRoot, "tsconfig.json");
-const DEFAULT_TYPESCRIPT_RUNNER = "tsx";
 
 type LaunchSpec = {
   args: string[];
@@ -56,9 +56,39 @@ const createTempFilePath = () => {
   return join(tmpdir(), `ccc-doru-${randomUUID()}.mjs`);
 };
 
-const getTypeScriptRunner = (env: NodeJS.ProcessEnv) => {
-  const runner = env.CCC_TYPESCRIPT_RUNNER?.trim();
-  return runner || DEFAULT_TYPESCRIPT_RUNNER;
+// an explicit runner (tsx, bun, …) opts out of the in-process registration below
+const getTypeScriptRunner = (env: NodeJS.ProcessEnv) => env.CCC_TYPESCRIPT_RUNNER?.trim() || undefined;
+
+const getNodeBinary = (env: NodeJS.ProcessEnv) => env.CCC_NODE?.trim() || "node";
+
+const MAX_COMPILE_CACHE_ENTRIES = 8000;
+
+const compileCacheEntryCount = (dir: string) => {
+  let count = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) {
+      count += 1;
+      continue;
+    }
+    count += fs.readdirSync(join(dir, entry.name)).length;
+  }
+  return count;
+};
+
+const resolveCompileCacheDir = (env: NodeJS.ProcessEnv) => {
+  if (env.CCC_COMPILE_CACHE?.trim() === "0") return undefined;
+  if (env.NODE_COMPILE_CACHE) return env.NODE_COMPILE_CACHE;
+
+  const cacheHome = env.XDG_CACHE_HOME?.trim() || join(homedir(), ".cache");
+  const dir = join(cacheHome, "ccc", "v8-compile-cache");
+  try {
+    if (compileCacheEntryCount(dir) > MAX_COMPILE_CACHE_ENTRIES) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  } catch {
+    // absent or unreadable: node creates it, or silently skips caching
+  }
+  return dir;
 };
 
 const splitCliArgs = (cliArgs: string[]) => {
@@ -79,16 +109,29 @@ export const buildLaunchSpec = (options: BuildLaunchSpecOptions = {}): LaunchSpe
   const cliArgs = options.cliArgs ?? process.argv.slice(2);
   const { doruEnabled, forwardedArgs } = splitCliArgs(cliArgs);
   const cwd = options.cwd ?? process.cwd();
-  const env = {
+  const baseEnv = {
     ...process.env,
     ...options.env,
     TSX_TSCONFIG_PATH: tsconfigPath,
   };
+  const compileCacheDir = resolveCompileCacheDir(baseEnv);
+  const env = compileCacheDir ? { ...baseEnv, NODE_COMPILE_CACHE: compileCacheDir } : baseEnv;
 
   if (!doruEnabled) {
+    // default: plain node running a runner that registers tsx in-process
+    const runner = getTypeScriptRunner(env);
+    if (runner) {
+      return {
+        command: runner,
+        args: [launcherPath, ...forwardedArgs],
+        env,
+        cwd,
+      };
+    }
+
     return {
-      command: getTypeScriptRunner(env),
-      args: [launcherPath, ...forwardedArgs],
+      command: getNodeBinary(env),
+      args: [tsxRunnerPath, ...forwardedArgs],
       env,
       cwd,
     };
