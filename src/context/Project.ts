@@ -1,13 +1,13 @@
 /* eslint-disable @typescript-eslint/class-methods-use-this */
 import glob from "fast-glob";
-import { existsSync, statSync } from "fs";
+import { existsSync, readdirSync, statSync } from "fs";
 import { dirname, join } from "path";
 import type { Context } from "@/context/Context";
 import type { ProjectConfig } from "@/types";
 import type { PresetConfig } from "@/types/presets";
 import { loadPresets } from "@/config/presets";
 import { findProjectConfigDir, loadProjectConfig } from "@/config/project-config";
-import { ROOT_MARKERS } from "@/constants";
+import { PROJECT_SCAN_MAX_DEPTH, ROOT_MARKERS } from "@/constants";
 
 export class Project {
   rootDirectory: string;
@@ -15,57 +15,75 @@ export class Project {
   presets: PresetConfig[] = [];
   projectConfig: ProjectConfig | null = null;
   workingDirectory: string;
+  private candidateRootsCache: string[] | null = null;
 
   constructor(workingDirectory: string) {
     this.workingDirectory = workingDirectory;
     this.rootDirectory = this.findProjectRoot(workingDirectory);
   }
 
-  private hasStaticPath(relativePath: string, entryType: "directory" | "file"): boolean {
+  private get candidateRoots(): string[] {
+    this.candidateRootsCache ??= this.findProjectRoots(this.rootDirectory);
+    return this.candidateRootsCache;
+  }
+
+  private findProjectRoots(root: string): string[] {
+    const roots = [root];
+
+    const walk = (directory: string, depth: number): void => {
+      if (depth >= PROJECT_SCAN_MAX_DEPTH) return;
+
+      let entries;
+      try {
+        entries = readdirSync(directory, { withFileTypes: true });
+      } catch {
+        return;
+      }
+
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+        const child = join(directory, entry.name);
+        if (ROOT_MARKERS.some((marker) => existsSync(join(child, marker)))) roots.push(child);
+        walk(child, depth + 1);
+      }
+    };
+
+    walk(root, 0);
+    return roots;
+  }
+
+  private hasStaticPath(root: string, relativePath: string, entryType: "directory" | "file"): boolean {
     try {
-      const stats = statSync(join(this.rootDirectory, relativePath));
+      const stats = statSync(join(root, relativePath));
       return entryType === "file" ? stats.isFile() : stats.isDirectory();
     } catch {
       return false;
     }
   }
 
-  private hasFilePattern(pattern: string): boolean {
-    if (!glob.isDynamicPattern(pattern)) {
-      return this.hasStaticPath(pattern, "file");
-    }
+  private hasPattern(pattern: string, entryType: "directory" | "file"): boolean {
+    const isStatic = !glob.isDynamicPattern(pattern);
 
-    try {
-      const matches = glob.sync(pattern, {
-        cwd: this.rootDirectory,
-        absolute: false,
-        onlyFiles: true,
-        dot: true,
-        ignore: [],
-      });
-      return matches.length > 0;
-    } catch {
-      return this.hasStaticPath(pattern, "file");
-    }
-  }
+    return this.candidateRoots.some((root) => {
+      if (isStatic) {
+        return this.hasStaticPath(root, pattern, entryType);
+      }
 
-  private hasDirectoryPattern(pattern: string): boolean {
-    if (!glob.isDynamicPattern(pattern)) {
-      return this.hasStaticPath(pattern, "directory");
-    }
-
-    try {
-      const matches = glob.sync(pattern, {
-        cwd: this.rootDirectory,
-        absolute: false,
-        onlyDirectories: true,
-        dot: true,
-        ignore: [],
-      });
-      return matches.length > 0;
-    } catch {
-      return this.hasStaticPath(pattern, "directory");
-    }
+      try {
+        const matches = glob.sync(pattern, {
+          cwd: root,
+          absolute: false,
+          onlyFiles: entryType === "file",
+          onlyDirectories: entryType === "directory",
+          dot: true,
+          ignore: [],
+        });
+        return matches.length > 0;
+      } catch {
+        return this.hasStaticPath(root, pattern, entryType);
+      }
+    });
   }
 
   findProjectRoot(startDir: string) {
@@ -85,11 +103,11 @@ export class Project {
   }
 
   hasFile(relativePath: string) {
-    return this.hasFilePattern(relativePath);
+    return this.hasPattern(relativePath, "file");
   }
 
   hasDirectory(relativePath: string) {
-    return this.hasDirectoryPattern(relativePath);
+    return this.hasPattern(relativePath, "directory");
   }
 
   async loadProjectPresets(context: Context) {
