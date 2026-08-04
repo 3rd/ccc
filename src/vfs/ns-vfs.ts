@@ -89,6 +89,82 @@ export type NsVfsFile = {
   content: string | Buffer;
 };
 
+const NOTIFY_SOCKET_ENV = "AGENTS_VFS_NOTIFY_SOCKET";
+const NOTIFY_TOKEN_ENV = "AGENTS_VFS_NOTIFY_TOKEN";
+const NOTIFY_TOKEN_HEX_BYTES = 64;
+const NOTIFY_REGISTER_TIMEOUT_MS = 30_000;
+
+const notifyFrame = (token: string, op: "F" | "D", nativePath: string, content?: Buffer): Buffer => {
+  const path = Buffer.from(nativePath, "utf8");
+  const header = Buffer.alloc(op === "D" ? 4 : 12);
+  header.writeUInt32LE(path.byteLength, 0);
+  if (op === "F") header.writeBigUInt64LE(BigInt(content?.byteLength ?? 0), 4);
+  return Buffer.concat([
+    Buffer.from(token, "ascii"),
+    Buffer.from(op, "ascii"),
+    header,
+    path,
+    ...(content ? [content] : []),
+  ]);
+};
+
+/**
+ * Hands the virtual files to the outer launcher's notification supervisor instead of mounting them.
+ * Synchronous on purpose: the caller is mid-config-build and the files must be resolvable before it
+ * returns. Returns false when no supervisor is configured, which is the standalone-ccc path.
+ */
+const registerWithNotifySupervisor = (roots: string[], files: NsVfsFile[]): boolean => {
+  const socketName = process.env[NOTIFY_SOCKET_ENV];
+  const token = process.env[NOTIFY_TOKEN_ENV];
+  if (!socketName || !token || token.length !== NOTIFY_TOKEN_HEX_BYTES) return false;
+
+  const frames = [
+    ...roots.map((root) => notifyFrame(token, "D", root)),
+    ...files.map((file) =>
+      notifyFrame(token, "F", file.nativePath, Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content)),
+    ),
+  ];
+
+  // Node has no synchronous unix-socket write, and this runs mid-config-build where the files must
+  // be resolvable by the time we return — so the sends happen in a short-lived child we can block on.
+  const sender = `
+    const net = require('net');
+    const chunks = [];
+    process.stdin.on('data', (c) => chunks.push(c));
+    process.stdin.on('end', async () => {
+      const frames = JSON.parse(Buffer.concat(chunks).toString('utf8')).map((f) => Buffer.from(f, 'base64'));
+      for (const frame of frames) {
+        await new Promise((ok, fail) => {
+          const s = net.connect('\\0' + process.argv[1]);
+          s.on('error', fail);
+          s.on('data', (d) => { s.end(); d[0] === 0 ? ok() : fail(new Error('rejected')); });
+          // the supervisor drops the connection unanswered on a bad handshake; without this the
+          // promise never settles, the loop drains, and the child exits 0 as if it had registered
+          s.on('close', () => fail(new Error('closed without status')));
+          s.write(frame);
+        });
+      }
+      process.exit(0);
+    });
+  `;
+
+  try {
+    execFileSync(process.execPath, ["-e", sender, socketName], {
+      input: JSON.stringify(frames.map((frame) => frame.toString("base64"))),
+      stdio: ["pipe", "ignore", "pipe"],
+      // a supervisor that accepts and then stalls would otherwise block startup forever; the real
+      // batch is a few hundred unix-socket round trips, so this only fires on a stuck peer
+      timeout: NOTIFY_REGISTER_TIMEOUT_MS,
+    });
+  } catch (error) {
+    log.warn("VFS", `Notify supervisor registration failed: ${error instanceof Error ? error.message : error}`);
+    return false;
+  }
+
+  log.vfs(`Notify supervisor: registered ${roots.length} root(s), ${files.length} file(s)`);
+  return true;
+};
+
 /**
  * Launcher-side (inside the namespace): mounts tmpfs over each root and
  * writes the virtual files into the mounts. Returns false (and writes
@@ -96,6 +172,12 @@ export type NsVfsFile = {
  * real filesystem.
  */
 export const setupNamespaceVfs = (roots: string[], files: NsVfsFile[]): boolean => {
+  // A seccomp user-notification supervisor, when the outer launcher started one, serves these paths
+  // to child processes without a mount namespace at all — which is the point, because an
+  // unprivileged user namespace maps only our own uid and makes every root-owned file look like
+  // nobody, breaking ssh and therefore git. Standalone ccc has no such env and keeps the mounts.
+  if (registerWithNotifySupervisor(roots, files)) return true;
+
   // honor the kill switch here too, not just in namespacePrefix: a child process can
   // inherit CCC_NS_VFS_ACTIVE=1 from an enclosing CCC session (e.g. tests or nested
   // launches run inside one) and would otherwise mount tmpfs despite CCC_NS_VFS=0.

@@ -698,11 +698,32 @@ const baseSettingsSchema = z.object({
           disabled: z.boolean().optional(),
         })
         .optional(),
-      // protect credential files and secret env vars from sandboxed reads; files support `deny`,
-      // env vars support `deny` or `mask` (sentinel in sandbox, real value injected at the proxy) (v2.1.187, mask v2.1.201)
+      // protect credential files and secret env vars from sandboxed reads; files and env vars support
+      // `deny` or `mask` (sentinel in sandbox, real value injected at the proxy) (v2.1.187, env mask v2.1.201, file mask v2.1.221)
       credentials: z
         .object({
-          files: z.array(z.object({ path: z.string().min(1), mode: z.literal("deny") })).optional(),
+          files: z
+            .array(
+              z.object({
+                path: z.string().min(1),
+                // `mask` shows sandboxed commands a sentinel-substituted copy (whole-file, or only the
+                // spans captured by `extract`); degrades to `deny` on macOS/Windows (v2.1.221)
+                mode: z.enum(["deny", "mask"]),
+                // regex for structured masking: capture group 1 of each global match is replaced with a
+                // sentinel, rest of the file preserved; whole-file masking when unset (v2.1.221)
+                extract: z.string().optional(),
+                // when `extract` matches nothing: warn = fail-open (default), deny = degrade entry to
+                // `deny` (treated as error under sandbox.filesystem.disabled), error = abort setup (v2.1.221)
+                onExtractNoMatch: z.enum(["warn", "deny", "error"]).optional(),
+                // also replace verbatim occurrences of captured values outside the matched spans;
+                // for long high-entropy secrets repeated where the regex does not reach (v2.1.221)
+                maskDuplicates: z.boolean().optional(),
+                // narrow which hosts the proxy injects the real value at; only meaningful for `mask`,
+                // defaults to network.allowedDomains when unset (v2.1.221)
+                injectHosts: z.array(z.string()).optional(),
+              }),
+            )
+            .optional(),
           envVars: z
             .array(
               z.object({
