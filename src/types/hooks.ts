@@ -51,6 +51,8 @@ export type HookMatcherType =
   | "Grep"
   | "LSP"
   | "manual"
+  | "memory_list"
+  | "memory_read"
   | "Monitor"
   | "MultiEdit"
   | "NotebookEdit"
