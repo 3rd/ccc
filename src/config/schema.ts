@@ -453,6 +453,15 @@ const baseSettingsSchema = z.object({
   claudeMd: z.string().optional(),
   // remote session configuration (v2.1.51)
   remote: z.object({ defaultEnvironmentId: z.string().optional() }).optional(),
+  // inbound cross-session peer messages (SendMessage from your other sessions):
+  // "accept" delivers them, "hold" parks them for review without letting Claude act,
+  // "refuse" opts this session out; unset = auto-deliver only when the sender's
+  // permission-mode class matches this session's (v2.1.226)
+  crossSessionInbound: z.enum(["accept", "hold", "refuse"]).optional(),
+  // max time a permission/user dialog forwarded to a remote client stays parked awaiting
+  // an answer (and how long a HELD cross-session message awaits approval) before resolving
+  // to its safe no-action default; CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS overrides (v2.1.226)
+  dialogExpiry: z.enum(["60s", "5m", "10m", "never"]).optional(),
   // SSH remote environment configurations (v2.1.59)
   sshConfigs: z
     .array(
@@ -715,6 +724,13 @@ const baseSettingsSchema = z.object({
                 // when `extract` matches nothing: warn = fail-open (default), deny = degrade entry to
                 // `deny` (treated as error under sandbox.filesystem.disabled), error = abort setup (v2.1.221)
                 onExtractNoMatch: z.enum(["warn", "deny", "error"]).optional(),
+                // decode candidates as JWTs (located via a built-in JWT regex, or `extract` if set),
+                // verify them, and replace with structurally valid fake JWTs so client-side token
+                // parsing keeps working; when none verifies, `onExtractNoMatch` governs (v2.1.226)
+                decode: z.enum(["jwt"]).optional(),
+                // names of top-level payload claims to mask inside each decoded token instead of
+                // replacing the whole token; requires `decode` (v2.1.226)
+                maskClaims: z.array(z.string()).optional(),
                 // also replace verbatim occurrences of captured values outside the matched spans;
                 // for long high-entropy secrets repeated where the regex does not reach (v2.1.221)
                 maskDuplicates: z.boolean().optional(),
@@ -729,6 +745,20 @@ const baseSettingsSchema = z.object({
               z.object({
                 name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u),
                 mode: z.enum(["deny", "mask"]),
+                // regex for structured masking of the value; capture group 1 of each global match is
+                // replaced with a sentinel, whole-value masking when unset; cannot be combined with
+                // `decode` (v2.1.226)
+                extract: z.string().optional(),
+                // when `extract` matches nothing: warn = fail-open (default), deny = unset the
+                // variable in the sandbox (fail-closed), error = abort setup; on entries with
+                // `decode` only `warn` is accepted (v2.1.226)
+                onExtractNoMatch: z.enum(["warn", "deny", "error"]).optional(),
+                // verify the whole value as a JWT and replace it with a structurally valid fake JWT;
+                // non-verifying values pass through unmasked with a warning (v2.1.226)
+                decode: z.enum(["jwt"]).optional(),
+                // names of top-level payload claims to mask inside the decoded token instead of
+                // replacing the whole token; requires `decode` (v2.1.226)
+                maskClaims: z.array(z.string()).optional(),
                 // narrow which hosts the proxy injects the real value at; only meaningful for `mask`,
                 // defaults to network.allowedDomains when unset (v2.1.201)
                 injectHosts: z.array(z.string()).optional(),
@@ -738,6 +768,37 @@ const baseSettingsSchema = z.object({
           // allow sentinel→real substitution on the plain-HTTP proxy path; cleartext risk, test fixtures only;
           // honored only from user/managed/CLI settings, not project settings (v2.1.201)
           allowPlaintextInject: z.boolean().optional(),
+          // explicit groupings of masked env vars into AWS credential pairs for SigV4 re-signing
+          // (non-standard variable names); the conventional AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY /
+          // AWS_SESSION_TOKEN trio is paired automatically when masked; members must be whole-value
+          // `mask` entries (no `extract`/`decode`) and mutually distinct; honored only from
+          // user/managed/CLI settings, not project settings (v2.1.226)
+          awsPairs: z
+            .array(
+              z.object({
+                // name of the masked env var holding the AWS access key id
+                accessKeyIdVar: z.string(),
+                // name of the masked env var holding the AWS secret access key
+                secretAccessKeyVar: z.string(),
+                // masked env var holding the session token (temporary credentials); sent as
+                // x-amz-security-token on re-signed requests when set
+                sessionTokenVar: z.string().optional(),
+              }),
+            )
+            .optional(),
+          // policies for AWS SigV4 request shapes the proxy cannot re-sign when they reference a
+          // masked credential pair: `deny` (default, fails closed) or `passthrough` (forwards
+          // unre-signed; upstream rejects); honored only from user/managed/CLI settings (v2.1.226)
+          sigv4: z
+            .object({
+              // aws-chunked streaming uploads (x-amz-content-sha256: STREAMING-*)
+              streaming: z.enum(["deny", "passthrough"]).optional(),
+              // presigned URLs (X-Amz-Algorithm/X-Amz-Signature in the query)
+              presigned: z.enum(["deny", "passthrough"]).optional(),
+              // SigV4A (AWS4-ECDSA-P256-SHA256) asymmetric signatures
+              sigv4a: z.enum(["deny", "passthrough"]).optional(),
+            })
+            .optional(),
         })
         .optional(),
       // selectively ignore sandbox violations by process/pattern (v2.1.61)
