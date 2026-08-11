@@ -401,6 +401,8 @@ const baseSettingsSchema = z.object({
   model: z.union([z.enum(["auto", "default", "opus", "opusplan", "sonnet", "haiku", "fable"]), z.string()]).optional(),
   // fallback models tried in order when the primary is overloaded/unavailable; "default" expands to the default model; CLI --fallback-model takes precedence (v2.1.170)
   fallbackModel: z.array(z.string()).optional(),
+  // @internal controls the ProposeGoal tool (model-proposed session goals); 'auto' (default when absent) lets the model choose per proposal via ask_user, 'alwaysAsk' routes every proposal through the approval dialog, 'disabled' turns the tool off; typed /goal unaffected; consent-affecting, so read from trusted sources only (user/policy/flag) — workspace-resident project/local settings are ignored (v2.1.227)
+  modelProposedGoals: z.enum(["auto", "alwaysAsk", "disabled"]).optional(),
   spinnerTipsEnabled: z.boolean().optional(),
   // when false, disables the :emoji: shortcode typeahead in the prompt input (v2.1.218)
   emojiCompletionEnabled: z.boolean().optional(),
