@@ -5,6 +5,7 @@ import * as path from "path";
 import p from "picocolors";
 import type { ClaudeMarketplaceConfig } from "@/config/plugins";
 import type { AgentDefinition } from "@/config/schema";
+import { prepareContextInstanceId } from "@/context/instance-id";
 import type { ResolvedCli } from "@/native/resolver";
 import type { RuntimePatch } from "@/patches/cli-patches";
 import { log } from "@/utils/log";
@@ -109,8 +110,10 @@ const run = async () => {
     return interactive && !hasQuiet;
   };
 
+  const instanceId = prepareContextInstanceId();
   const startupMessagesEnabled = shouldEnableLogger();
   const startup = createStartupLogger({ enabled: startupMessagesEnabled });
+  startup.setInstanceId(instanceId);
 
   // init context
   const ctxTask = startup.start("Resolve project context");
@@ -961,7 +964,6 @@ const run = async () => {
       if (value) process.stdout.write(`${p.dim(`  ${label}:`)} ${value}\n`);
     };
 
-    process.stdout.write(`${p.dim("  instance id:")} ${context.instanceId}\n`);
     printDebugPath("ccc debug log", log.getLogPath());
     const cccCacheDir = log.getCacheDir();
     printDebugPath("ccc hooks log", cccCacheDir ? path.join(cccCacheDir, "hooks.jsonl") : null);

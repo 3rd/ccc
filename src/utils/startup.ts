@@ -1,4 +1,7 @@
+import { performance } from "node:perf_hooks";
 import pc from "picocolors";
+
+const STARTUP_T0_ENV = "AGENTS_STARTUP_T0_MS";
 
 interface TaskHandle {
   done: (note?: string) => void;
@@ -26,19 +29,30 @@ export interface TimingReport {
 
 export interface StartupLoggerOptions {
   enabled?: boolean;
+  write?: (line: string) => void;
 }
 
 export class StartupLogger {
   private printedHeader = false;
   private readonly enabled: boolean;
+  private instanceId: string | undefined;
   private readonly startTime: bigint;
+  private readonly startedAtEpochMs: number;
   private readonly timings: TimingEntry[] = [];
+  private readonly write: (line: string) => void;
 
   constructor(opts: StartupLoggerOptions = {}) {
     const tty = typeof process !== "undefined" && Boolean(process.stdout) && process.stdout.isTTY;
     const debug = Boolean(process.env.DEBUG);
     this.enabled = Boolean(opts.enabled ?? (tty && !debug));
     this.startTime = process.hrtime.bigint();
+    const inheritedStart = Number(process.env[STARTUP_T0_ENV]);
+    // one-shot: claude runs in-process, so anything the session spawns would inherit the stamp
+    // and anchor its own boot figure to this launch's start
+    delete process.env[STARTUP_T0_ENV];
+    this.startedAtEpochMs =
+      Number.isFinite(inheritedStart) && inheritedStart > 0 ? inheritedStart : performance.timeOrigin;
+    this.write = opts.write ?? ((line) => process.stdout.write(line));
   }
 
   private static fmtDuration(startedAt: bigint, endedAt?: bigint): string {
@@ -55,17 +69,25 @@ export class StartupLogger {
 
   private printHeader() {
     if (!this.enabled || this.printedHeader) return;
-    process.stdout.write(`${pc.bold(pc.cyan("ccc"))} ${pc.dim("— starting up")}\n`);
+    const bootStartedAt = BigInt(Math.round(this.startedAtEpochMs * 1_000_000));
+    const now = BigInt(Date.now()) * 1_000_000n;
+    this.write(
+      `${pc.bold(pc.cyan("ccc"))} ${pc.dim(`— starting up (boot ${StartupLogger.fmtDuration(bootStartedAt, now)})`)}\n`,
+    );
+    if (this.instanceId) this.write(`  ${pc.dim(`instance id: ${this.instanceId}`)}\n`);
     this.printedHeader = true;
   }
 
+  setInstanceId(instanceId: string): void {
+    this.instanceId = instanceId;
+  }
+
   start(label: string): TaskHandle {
+    this.printHeader();
     const task: TaskData = {
       label,
       startedAt: process.hrtime.bigint(),
     };
-    this.printHeader();
-
     return {
       done: (note?: string) => {
         task.endedAt = process.hrtime.bigint();
@@ -76,7 +98,6 @@ export class StartupLogger {
           note,
         });
         if (!this.enabled) return;
-        this.printHeader();
         const detail = [
           task.label,
           note ? pc.dim(`(${note})`) : undefined,
@@ -84,7 +105,7 @@ export class StartupLogger {
         ]
           .filter(Boolean)
           .join(" ");
-        process.stdout.write(`${pc.green("✔")} ${detail}\n`);
+        this.write(`${pc.green("✔")} ${detail}\n`);
       },
 
       skip: (note?: string) => {
@@ -96,9 +117,8 @@ export class StartupLogger {
           note,
         });
         if (!this.enabled) return;
-        this.printHeader();
         const detail = [task.label, note ? pc.dim(`(${note})`) : undefined].filter(Boolean).join(" ");
-        process.stdout.write(`${pc.dim("↷")} ${detail}\n`);
+        this.write(`${pc.dim("↷")} ${detail}\n`);
       },
 
       fail: (error: unknown) => {
@@ -111,11 +131,10 @@ export class StartupLogger {
           note: errorMessage,
         });
         if (!this.enabled) return;
-        this.printHeader();
         const detail = [task.label, errorMessage ? pc.dim(`- ${errorMessage}`) : undefined]
           .filter(Boolean)
           .join(" ");
-        process.stdout.write(`${pc.red("✖")} ${detail}\n`);
+        this.write(`${pc.red("✖")} ${detail}\n`);
       },
     };
   }
