@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/class-methods-use-this */
-import { randomUUID } from "crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { platform, release } from "os";
 import { dirname, join, relative } from "path";
@@ -7,6 +6,7 @@ import { fileURLToPath } from "url";
 import { $, cd } from "zx";
 import type { LoadedPlugin } from "@/plugins/types";
 import type { ClaudeMCPConfig } from "@/types/mcps";
+import { consumeContextInstanceId } from "./instance-id";
 import { Project } from "./Project";
 
 interface CacheEntry<T> {
@@ -91,7 +91,7 @@ export class Context {
     this.workingDirectory = workingDirectory;
     this.launcherDirectory = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
     this.project = new Project(workingDirectory);
-    this.instanceId = randomUUID();
+    this.instanceId = consumeContextInstanceId();
     this.configDirectory = this.getConfigDirectory();
   }
 
