@@ -55,6 +55,8 @@ const marketplaceSourceSchema = z.discriminatedUnion("source", [
     path: z.string().optional(),
     // directories to include via git sparse-checkout (v2.1.64)
     sparsePaths: z.array(z.string()).optional(),
+    // skip Git LFS smudge during clone and update (GIT_LFS_SKIP_SMUDGE=1)
+    skipLfs: z.boolean().optional(),
   }),
   z.object({
     source: z.literal("git"),
@@ -63,18 +65,12 @@ const marketplaceSourceSchema = z.discriminatedUnion("source", [
     path: z.string().optional(),
     // directories to include via git sparse-checkout (v2.1.64)
     sparsePaths: z.array(z.string()).optional(),
+    // skip Git LFS smudge during clone and update (GIT_LFS_SKIP_SMUDGE=1)
+    skipLfs: z.boolean().optional(),
   }),
   z.object({
     source: z.literal("npm"),
     package: z.string(),
-    version: z.string().optional(),
-    registry: z.url().optional(),
-  }),
-  z.object({
-    source: z.literal("pip"),
-    package: z.string(),
-    version: z.string().optional(),
-    registry: z.url().optional(),
   }),
   z.object({
     source: z.literal("file"),
@@ -84,15 +80,13 @@ const marketplaceSourceSchema = z.discriminatedUnion("source", [
     source: z.literal("directory"),
     path: z.string(),
   }),
+  // ~/.claude/skills auto-loaded as a plugin marketplace; used in managed policy lists
+  z.object({
+    source: z.literal("skills-dir"),
+  }),
   z.object({
     source: z.literal("hostPattern"),
     hostPattern: z.string(),
-  }),
-  z.object({
-    source: z.literal("git-subdir"),
-    url: z.string(),
-    path: z.string(),
-    ref: z.string().optional(),
   }),
   // regex path pattern matching for strict marketplace allowlists (v2.1.69)
   z.object({
@@ -107,6 +101,15 @@ const marketplaceSourceSchema = z.discriminatedUnion("source", [
     owner: z.record(z.string(), z.unknown()).optional(),
   }),
 ]);
+
+// shared by policyHelper and the per-OS policyHelpers entries (v2.1.136 / v2.1.228)
+const policyHelperSchema = z.object({
+  // absolute path to the helper executable
+  path: z.string(),
+  timeoutMs: z.number().int().min(1000).optional(),
+  // 0 disables refresh; otherwise minimum 60_000 ms
+  refreshIntervalMs: z.union([z.literal(0), z.number().int().min(60_000)]).optional(),
+});
 
 const marketplaceEntrySchema = z.object({
   source: marketplaceSourceSchema,
@@ -603,15 +606,23 @@ const baseSettingsSchema = z.object({
   // @internal whether the user has accepted the multi-agent workflow usage warning (v2.1.152)
   skipWorkflowUsageWarning: z.boolean().optional(),
 
+  // controls the `command` plugin source (marketplace-declared command produces the plugin
+  // directory); unset follows allowManagedHooksOnly; managed settings only (v2.1.229)
+  disableCommandPluginSources: z.boolean().optional(),
+
   // executable that computes managed settings at startup; honored only from
   // admin-controlled policy sources (v2.1.136)
-  policyHelper: z
+  policyHelper: policyHelperSchema.optional(),
+
+  // per-OS variant of policyHelper, keyed by platform; the current platform's entry wins over
+  // policyHelper, wsl falls back to the linux entry first; admin-controlled policy sources
+  // only (v2.1.228)
+  policyHelpers: z
     .object({
-      // absolute path to the helper executable
-      path: z.string(),
-      timeoutMs: z.number().int().min(1000).optional(),
-      // 0 disables refresh; otherwise minimum 60_000 ms
-      refreshIntervalMs: z.union([z.literal(0), z.number().int().min(60_000)]).optional(),
+      macos: policyHelperSchema.optional(),
+      linux: policyHelperSchema.optional(),
+      windows: policyHelperSchema.optional(),
+      wsl: policyHelperSchema.optional(),
     })
     .optional(),
 
