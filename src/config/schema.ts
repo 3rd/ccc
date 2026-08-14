@@ -102,13 +102,21 @@ const marketplaceSourceSchema = z.discriminatedUnion("source", [
   }),
 ]);
 
-// shared by policyHelper and the per-OS policyHelpers entries (v2.1.136 / v2.1.228)
+// top-level policyHelper: executable that computes managed settings at startup (v2.1.136)
 const policyHelperSchema = z.object({
   // absolute path to the helper executable
   path: z.string(),
   timeoutMs: z.number().int().min(1000).optional(),
   // 0 disables refresh; otherwise minimum 60_000 ms
   refreshIntervalMs: z.union([z.literal(0), z.number().int().min(60_000)]).optional(),
+});
+
+// per-OS policyHelpers entry: a helper (path becomes optional — an entry may be
+// payload-only), a static defaultSettings payload, or both (v2.1.228, defaultSettings v2.1.232)
+const policyHelpersEntrySchema = policyHelperSchema.partial({ path: true }).extend({
+  // static managed-settings payload applied when no helper on the platform's chain is
+  // configured, or the selected helper fails at startup or refresh
+  defaultSettings: z.record(z.string(), z.unknown()).optional(),
 });
 
 const marketplaceEntrySchema = z.object({
@@ -515,10 +523,16 @@ const baseSettingsSchema = z.object({
   enabledPlugins: z.record(z.string(), z.union([z.array(z.string()), z.boolean(), z.undefined()])).optional(),
   // additional marketplace sources for this repository (v2.1.61)
   extraKnownMarketplaces: z.record(z.string(), marketplaceEntrySchema).optional(),
+  // alias for extraKnownMarketplaces: read exactly as that key; ignored with a warning when
+  // both are set, and may be rewritten to the canonical spelling on update (v2.1.232)
+  additionalMarketplaces: z.record(z.string(), marketplaceEntrySchema).optional(),
   // enterprise blocklist of marketplace sources (v2.1.61)
   blockedMarketplaces: z.array(marketplaceSourceSchema).optional(),
   // enterprise strict allowlist of marketplace sources (v2.1.61)
   strictKnownMarketplaces: z.array(marketplaceSourceSchema).optional(),
+  // alias for strictKnownMarketplaces (managed settings only): read exactly as that key;
+  // ignored with a warning when both are set (v2.1.232)
+  allowedMarketplaces: z.array(marketplaceSourceSchema).optional(),
   // rate (0-1) for session quality survey prompts; enterprise admins only (v2.1.76)
   feedbackSurveyRate: z.number().min(0).max(1).optional(),
   // model-drafted feedback via the SendFeedback tool: "notify" (default), "quiet", or "off" (v2.1.212)
@@ -615,14 +629,18 @@ const baseSettingsSchema = z.object({
   policyHelper: policyHelperSchema.optional(),
 
   // per-OS variant of policyHelper, keyed by platform; the current platform's entry wins over
-  // policyHelper, wsl falls back to the linux entry first; admin-controlled policy sources
-  // only (v2.1.228)
+  // policyHelper, wsl falls back to the linux entry first; when no helper on the chain is
+  // configured or the selected helper fails, the first static payload applies (the chain's
+  // defaultSettings platform-specific-first, then top-level `default`); admin-controlled
+  // policy sources only (v2.1.228, payload fallbacks v2.1.232)
   policyHelpers: z
     .object({
-      macos: policyHelperSchema.optional(),
-      linux: policyHelperSchema.optional(),
-      windows: policyHelperSchema.optional(),
-      wsl: policyHelperSchema.optional(),
+      macos: policyHelpersEntrySchema.optional(),
+      linux: policyHelpersEntrySchema.optional(),
+      windows: policyHelpersEntrySchema.optional(),
+      wsl: policyHelpersEntrySchema.optional(),
+      // static managed-settings payload reached by every platform, including unrecognized ones (v2.1.232)
+      default: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
 
@@ -816,7 +834,8 @@ const baseSettingsSchema = z.object({
         .optional(),
       // selectively ignore sandbox violations by process/pattern (v2.1.61)
       ignoreViolations: z.record(z.string(), z.array(z.string())).optional(),
-      // custom ripgrep configuration (v2.1.61)
+      // custom ripgrep configuration; honored only from user/managed/CLI settings,
+      // project settings ignored (v2.1.61, source restriction documented v2.1.232)
       ripgrep: z.object({ command: z.string(), args: z.array(z.string()).optional() }).optional(),
       enableWeakerNestedSandbox: z.boolean().optional(),
       // weaker network isolation for sandbox (v2.1.64)
