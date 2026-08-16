@@ -994,7 +994,6 @@ const run = async () => {
         extractedCliPath,
         preambleVersion: PREAMBLE_VERSION,
         patches: patchList,
-        configFingerprint: process.env.CCC_CONFIG_FINGERPRINT,
         salt: process.env.CCC_PATCH_CACHE_SALT,
       })
     );

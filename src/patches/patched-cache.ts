@@ -28,11 +28,6 @@ export interface PatchCacheKeyInput {
   preambleVersion: string;
   /** User patches, in application order. */
   patches: readonly RuntimePatch[];
-  /**
-   * Optional identity of the generated config the patches came from. Absent for a standalone CCC
-   * launch, where the patch digest alone carries the identity.
-   */
-  configFingerprint?: string;
   salt?: string;
 }
 
@@ -70,8 +65,6 @@ export const computePatchKey = (input: PatchCacheKeyInput): string => {
     .update(BUILTIN_PATCHES_VERSION)
     .update("\0")
     .update(patchSetDigest(input.patches))
-    .update("\0")
-    .update(input.configFingerprint ?? "")
     .update("\0")
     .update(input.salt ?? "")
     .digest("hex")

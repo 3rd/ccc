@@ -66,11 +66,10 @@ describe("computePatchKey", () => {
     expect(computePatchKey(keyInput(cliPath))).not.toBe(before);
   });
 
-  test("moves for the preamble, config fingerprint, and salt", () => {
+  test("moves for the preamble and salt", () => {
     const cliPath = writeCli();
     const base = computePatchKey(keyInput(cliPath));
     expect(computePatchKey({ ...keyInput(cliPath), preambleVersion: "preamble-2" })).not.toBe(base);
-    expect(computePatchKey({ ...keyInput(cliPath), configFingerprint: "abc" })).not.toBe(base);
     expect(computePatchKey({ ...keyInput(cliPath), salt: "abc" })).not.toBe(base);
   });
 
