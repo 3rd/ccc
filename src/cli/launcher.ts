@@ -1,7 +1,8 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env bun
 import * as fs from "fs";
 import { createRequire } from "node:module";
 import * as path from "path";
+import { fileURLToPath } from "node:url";
 import p from "picocolors";
 import type { ClaudeMarketplaceConfig } from "@/config/plugins";
 import type { AgentDefinition } from "@/config/schema";
@@ -10,6 +11,8 @@ import type { ResolvedCli } from "@/native/resolver";
 import type { RuntimePatch } from "@/patches/cli-patches";
 import { log } from "@/utils/log";
 import { createStartupLogger } from "@/utils/startup";
+import type { RuntimeHostPayload } from "./runtime-host";
+import { PREPARATION_LAUNCHER_PATH_ENV, RUNTIME_HOST_PAYLOAD_FD_ENV } from "./runtime-host-process";
 
 type ResolveResult = ResolvedCli & { source: string };
 
@@ -82,6 +85,20 @@ const resolveClaudeCli = async (launcherRoot: string): Promise<ResolveResult> =>
 
 // eslint-disable-next-line sonarjs/cognitive-complexity
 const run = async () => {
+  if (!process.env[RUNTIME_HOST_PAYLOAD_FD_ENV]) {
+    const { buildRuntimeHost } = await import("./runtime-host-build");
+    const runtimeHostPath = await buildRuntimeHost();
+    const nodeBinary = process.env.CCC_NODE?.trim() || "node";
+    const executable = Bun.which(nodeBinary) ?? nodeBinary;
+    const execve = process.execve;
+    if (!execve) throw new Error("Bun process replacement is unavailable");
+    execve(executable, [nodeBinary, runtimeHostPath, ...process.argv.slice(2)], {
+      ...process.env,
+      CCC_BUN_EXEC_PATH: process.execPath,
+      [PREPARATION_LAUNCHER_PATH_ENV]: fileURLToPath(import.meta.url),
+    });
+  }
+
   const incomingArgs = process.argv.slice(2);
   // only accept --debug=<value> form; bare --debug/-d always means "1"
   const incomingDebugEqValue = incomingArgs
@@ -140,34 +157,8 @@ const run = async () => {
   (await import("@/hooks/hook-generator")).setInstanceId(context.instanceId, context.configDirectory);
   process.env.CCC_INSTANCE_ID = context.instanceId;
 
-  // create temp file for events
   const os = await import("os");
   const crypto = await import("crypto");
-  const tmpDir = os.tmpdir();
-  const randomId = crypto.randomBytes(6).toString("hex");
-  const existingEventsFile = process.env.CCC_EVENTS_FILE;
-  const eventsFile = existingEventsFile ?? path.join(tmpDir, `ccc-events-${randomId}.jsonl`);
-  if (!existingEventsFile) {
-    fs.writeFileSync(eventsFile, "");
-    process.env.CCC_EVENTS_FILE = eventsFile;
-  }
-
-  // clean up events file on exit
-  const cleanupEventsFile = () => {
-    try {
-      if (!existingEventsFile && fs.existsSync(eventsFile)) fs.unlinkSync(eventsFile);
-    } catch {}
-  };
-  process.on("exit", cleanupEventsFile);
-  process.on("SIGINT", () => {
-    cleanupEventsFile();
-    process.exit(0);
-  });
-  process.on("SIGTERM", () => {
-    cleanupEventsFile();
-    process.exit(0);
-  });
-
   ctxTask.done();
 
   const pluginsConfig = await startup.run("Build plugins", async () =>
@@ -585,9 +576,9 @@ const run = async () => {
   }
 
   // setup vfs
-  await startup.run("Mount VFS", async () => {
-    const { setupVirtualFileSystem } = await import("@/utils/virtual-fs");
-    setupVirtualFileSystem({
+  const virtualFileSystem = await startup.run("Mount VFS", async () => {
+    const { prepareVirtualFileSystem } = await import("@/utils/virtual-fs");
+    return prepareVirtualFileSystem({
       settings: settingsWithPlugins as unknown as Record<string, unknown>,
       claudeStateJson: virtualClaudeStateJson,
       userPrompt,
@@ -1101,49 +1092,26 @@ const run = async () => {
   const launchTask = startup.start("Launching Claude...");
   const { stripProfileFromArgv } = await import("@/config/builders/resolve-profile");
   const cleanedUserArgs = stripProfileFromArgv(process.argv.slice(2));
-  process.argv = [process.argv[0]!, extractedCliPath, ...args, ...cleanedUserArgs];
-
-  // The tsx loader transforms every ESM load — including the plain-JS claude bundle — injecting a
-  // ~55MB inline sourcemap and enabling node's source-map support; node then caches the FULL
-  // decode on the module (~876MB of segment arrays for a map that maps minified code onto itself;
-  // heap dumps 0052178e / 8e133d73, ~1GB RSS per session), and the transform itself costs ~4.5s on
-  // a 21MB bundle. The bundle needs neither the transform nor the maps:
-  // 1) drop the loader entirely when we own the registration (tsx-runner.mjs). Everything that
-  //    needs TypeScript — config layers, prompts, settings — has already been imported by now.
-  //    The unregister handshake talks to node's module-hooks thread, which can leave the promise
-  //    pending with nothing else keeping this event loop alive; the timer bounds that and simply
-  //    falls back to importing through the loader.
-  const unregisterTsx = (globalThis as { __cccTsxUnregister?: () => Promise<void> }).__cccTsxUnregister;
-  if (unregisterTsx) {
-    const startedAt = Date.now();
-    const dropped = await Promise.race([
-      unregisterTsx().then(
-        () => true,
-        () => false,
-      ),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 250)),
-    ]);
-    log.debug(
-      "LAUNCHER",
-      `tsx loader unregister: ${dropped ? "dropped" : "kept"} in ${Date.now() - startedAt}ms`,
-    );
-  }
-  // 2) stop node from decoding maps in this process, for the CCC_TYPESCRIPT_RUNNER path where the
-  //    loader came from NODE_OPTIONS and cannot be removed,
-  process.setSourceMapsEnabled(false);
-  // 3) strip the tsx loader from inherited NODE_OPTIONS so claude's re-exec'd children
-  //    load the bundle through clean node instead of paying the same transform+decode.
-  if (process.env.NODE_OPTIONS) {
-    const cleaned = process.env.NODE_OPTIONS.replace(
-      /\s*--(?:import|require|loader)(?:\s+|=)\S*tsx\S*/g,
-      "",
-    ).trim();
-    if (cleaned) process.env.NODE_OPTIONS = cleaned;
-    else delete process.env.NODE_OPTIONS;
-  }
+  const runtimePayload: RuntimeHostPayload = {
+    version: 1,
+    claudeArgv: [extractedCliPath, ...args, ...cleanedUserArgs],
+    importPath,
+    featureFlags,
+    environment: Object.fromEntries(
+      Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+    ),
+    runtimeLogPath: log.getLogPath() ?? undefined,
+    virtualFileSystem,
+  };
 
   launchTask.done();
-  await import(importPath);
+  if (startupMessagesEnabled) process.stdout.write("\n");
+  delete runtimePayload.environment[RUNTIME_HOST_PAYLOAD_FD_ENV];
+  delete runtimePayload.environment[PREPARATION_LAUNCHER_PATH_ENV];
+  delete runtimePayload.environment.CCC_BUN_EXEC_PATH;
+  const payloadFd = Number(process.env[RUNTIME_HOST_PAYLOAD_FD_ENV]);
+  if (!Number.isInteger(payloadFd) || payloadFd < 0) throw new Error("Invalid CCC runtime payload descriptor");
+  fs.writeFileSync(payloadFd, JSON.stringify(runtimePayload));
 };
 
 run();

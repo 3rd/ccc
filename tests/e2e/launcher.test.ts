@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { basename, dirname, join } from "path";
+import { join } from "path";
 import { buildLaunchSpec } from "@/cli/launcher-wrapper";
 import { assertExitCode, assertStderrEmpty, assertStdoutContains } from "../utils/assertions";
 import { LAUNCHER_ROOT, runCCC } from "../utils/test-runner";
 
 const expectedLauncherPath = join(LAUNCHER_ROOT, "src/cli/launcher.ts");
-const expectedRunnerPath = join(LAUNCHER_ROOT, "src/cli/tsx-runner.mjs");
+const expectedDoruRunnerPath = join(LAUNCHER_ROOT, "src/cli/doru-runtime-host-runner.mjs");
+const expectedRunnerPath = join(LAUNCHER_ROOT, "src/cli/runtime-host-runner.mjs");
+const expectedRuntimeHostPath = "/tmp/ccc-runtime-host.mjs";
 const expectedTsconfigPath = join(LAUNCHER_ROOT, "tsconfig.json");
 
 const setupFakeNpx = () => {
@@ -34,19 +36,20 @@ node "$runner_path"
 };
 
 describe("launcher", () => {
-  test("wrapper launches node with the in-process tsx runner by default", () => {
+  test("wrapper replaces itself with the Node runtime host by default", () => {
     const spec = buildLaunchSpec({
       cliArgs: ["--print-config"],
       cwd: "/tmp/ccc-test",
-      env: { PATH: "/usr/bin" },
+      env: { CCC_NODE: "/usr/bin/node", PATH: "/usr/bin" },
+      runtimeHostPath: expectedRuntimeHostPath,
     });
 
-    expect(spec.command).toBe("node");
-    expect(spec.args[0]).toBe(expectedRunnerPath);
+    expect(spec.command).toBe("/usr/bin/node");
+    expect(spec.args[0]).toBe(expectedRuntimeHostPath);
     expect(spec.args[1]).toBe("--print-config");
-    expect(spec.tempFile).toBeUndefined();
     expect(spec.cwd).toBe("/tmp/ccc-test");
     expect(spec.env.PATH).toBe("/usr/bin");
+    expect(spec.env.CCC_BUN_EXEC_PATH).toBe(process.execPath);
     expect(spec.env.TSX_TSCONFIG_PATH).toBe(expectedTsconfigPath);
   });
 
@@ -54,12 +57,15 @@ describe("launcher", () => {
     const spec = buildLaunchSpec({
       cliArgs: ["--print-config"],
       cwd: "/tmp/ccc-test",
-      env: { CCC_TYPESCRIPT_RUNNER: "tsx", PATH: "/usr/bin" },
+      env: { CCC_NODE: "/usr/bin/node", CCC_TYPESCRIPT_RUNNER: "tsx", PATH: "/usr/bin" },
+      runtimeHostPath: expectedRuntimeHostPath,
     });
 
     expect(spec.command).toBe("tsx");
-    expect(spec.args[0]).toBe(expectedLauncherPath);
-    expect(spec.args[1]).toBe("--print-config");
+    expect(spec.args[0]).toBe(expectedRunnerPath);
+    expect(spec.args[1]).toBe("/usr/bin/node");
+    expect(spec.args[2]).toBe(expectedRuntimeHostPath);
+    expect(spec.args[3]).toBe("--print-config");
     expect(spec.env.TSX_TSCONFIG_PATH).toBe(expectedTsconfigPath);
   });
 
@@ -68,6 +74,7 @@ describe("launcher", () => {
       cliArgs: [],
       cwd: "/tmp/ccc-test",
       env: { XDG_CACHE_HOME: "/tmp/ccc-test-cache" },
+      runtimeHostPath: expectedRuntimeHostPath,
     });
 
     expect(spec.env.NODE_COMPILE_CACHE).toBe("/tmp/ccc-test-cache/ccc/v8-compile-cache");
@@ -78,6 +85,7 @@ describe("launcher", () => {
       cliArgs: [],
       cwd: "/tmp/ccc-test",
       env: { NODE_COMPILE_CACHE: "/tmp/ccc-explicit-cache" },
+      runtimeHostPath: expectedRuntimeHostPath,
     });
     expect(explicit.env.NODE_COMPILE_CACHE).toBe("/tmp/ccc-explicit-cache");
 
@@ -85,6 +93,7 @@ describe("launcher", () => {
       cliArgs: [],
       cwd: "/tmp/ccc-test",
       env: { CCC_COMPILE_CACHE: "0", NODE_COMPILE_CACHE: "" },
+      runtimeHostPath: expectedRuntimeHostPath,
     });
     expect(disabled.env.NODE_COMPILE_CACHE).toBe("");
   });
@@ -93,14 +102,17 @@ describe("launcher", () => {
     const spec = buildLaunchSpec({
       cliArgs: ["--doru", "--print-config"],
       cwd: "/tmp/ccc-test",
-      env: { PATH: "/usr/bin" },
-      tempFilePath: "/tmp/ccc-doru-test.mjs",
+      env: { CCC_NODE: "/usr/bin/node", PATH: "/usr/bin" },
+      runtimeHostPath: expectedRuntimeHostPath,
     });
 
     expect(spec.command).toBe("npx");
-    expect(spec.args).toEqual(["--yes", "doru", "--ui", "/tmp/ccc-doru-test.mjs"]);
-    expect(spec.tempFile?.path).toBe("/tmp/ccc-doru-test.mjs");
-    expect(spec.tempFile?.content).toContain('const forwardedArgs = ["--print-config"];');
+    expect(spec.args).toEqual(["--yes", "doru", "--ui", expectedDoruRunnerPath]);
+    expect(JSON.parse(spec.env.CCC_DORU_RUNTIME_HOST_PAYLOAD ?? "")).toEqual({
+      nodeBinary: "/usr/bin/node",
+      runtimeHostPath: expectedRuntimeHostPath,
+      forwardedArgs: ["--print-config"],
+    });
     expect(spec.env.PATH).toBe("/usr/bin");
     expect(spec.env.TSX_TSCONFIG_PATH).toBe(expectedTsconfigPath);
   });
@@ -109,24 +121,24 @@ describe("launcher", () => {
     const spec = buildLaunchSpec({
       cliArgs: ["--append-system-prompt", "--doru"],
       cwd: "/tmp/ccc-test",
-      env: { PATH: "/usr/bin" },
+      env: { CCC_NODE: "/usr/bin/node", PATH: "/usr/bin" },
+      runtimeHostPath: expectedRuntimeHostPath,
     });
 
-    expect(spec.command).toBe("node");
-    expect(spec.args).toEqual([expectedRunnerPath, "--append-system-prompt", "--doru"]);
-    expect(spec.tempFile).toBeUndefined();
+    expect(spec.command).toBe("/usr/bin/node");
+    expect(spec.args).toEqual([expectedRuntimeHostPath, "--append-system-prompt", "--doru"]);
   });
 
   test("wrapper preserves --doru after --", () => {
     const spec = buildLaunchSpec({
       cliArgs: ["--", "--doru"],
       cwd: "/tmp/ccc-test",
-      env: { PATH: "/usr/bin" },
+      env: { CCC_NODE: "/usr/bin/node", PATH: "/usr/bin" },
+      runtimeHostPath: expectedRuntimeHostPath,
     });
 
-    expect(spec.command).toBe("node");
-    expect(spec.args).toEqual([expectedRunnerPath, "--", "--doru"]);
-    expect(spec.tempFile).toBeUndefined();
+    expect(spec.command).toBe("/usr/bin/node");
+    expect(spec.args).toEqual([expectedRuntimeHostPath, "--", "--doru"]);
   });
 
   test("wrapper --print-config exits successfully with minimal config", async () => {
@@ -144,7 +156,21 @@ describe("launcher", () => {
     assertStderrEmpty(result.stderr);
   });
 
-  test("wrapper --doru executes the generated runner and cleans it up", async () => {
+  test("wrapper keeps the explicit TypeScript runner handoff without running preparation in it", async () => {
+    const result = await runCCC({
+      entrypoint: "wrapper",
+      projectDir: "typescript-basic",
+      configFixture: "minimal",
+      args: ["--print-config"],
+      env: { CCC_TYPESCRIPT_RUNNER: "tsx" },
+    });
+
+    assertExitCode(result.exitCode, 0);
+    assertStdoutContains(result.stdout, "Settings:");
+    assertStderrEmpty(result.stderr);
+  });
+
+  test("wrapper --doru executes the static runtime host runner", async () => {
     const { fakeBinDir, runnerPathFile } = setupFakeNpx();
 
     try {
@@ -165,9 +191,7 @@ describe("launcher", () => {
       assertStdoutContains(result.stdout, "Agents:");
 
       const runnerPath = readFileSync(runnerPathFile, "utf8");
-      expect(dirname(runnerPath)).toBe(tmpdir());
-      expect(basename(runnerPath)).toStartWith("ccc-doru-");
-      expect(existsSync(runnerPath)).toBe(false);
+      expect(runnerPath).toBe(expectedDoruRunnerPath);
     } finally {
       rmSync(fakeBinDir, { force: true, recursive: true });
     }
