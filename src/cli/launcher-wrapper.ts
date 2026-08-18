@@ -1,62 +1,35 @@
 #!/usr/bin/env bun
-import { spawn } from "child_process";
-import { randomUUID } from "crypto";
 import * as fs from "fs";
-import { homedir, tmpdir } from "os";
+import { homedir } from "os";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { namespacePrefix, NS_ACTIVE_ENV } from "../vfs/ns-vfs";
+import { PREPARATION_LAUNCHER_PATH_ENV } from "./runtime-host-process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const projectRoot = resolve(__dirname, "..", "..");
 const launcherPath = join(projectRoot, "src", "cli", "launcher.ts");
-const tsxRunnerPath = join(projectRoot, "src", "cli", "tsx-runner.mjs");
+const doruRuntimeHostRunnerPath = join(projectRoot, "src", "cli", "doru-runtime-host-runner.mjs");
+const runtimeHostRunnerPath = join(projectRoot, "src", "cli", "runtime-host-runner.mjs");
 const tsconfigPath = join(projectRoot, "tsconfig.json");
+const DORU_RUNTIME_HOST_PAYLOAD_ENV = "CCC_DORU_RUNTIME_HOST_PAYLOAD";
 
 type LaunchSpec = {
   args: string[];
   command: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
-  tempFile?: {
-    content: string;
-    path: string;
-  };
 };
 
 type BuildLaunchSpecOptions = {
   cliArgs?: string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  tempFilePath?: string;
+  runtimeHostPath?: string;
 };
 
-const resolveTsxApiPath = () => {
-  return Bun.resolveSync("tsx/esm/api", projectRoot);
-};
-
-const createDoruRunnerSource = (tsxApiPath: string, forwardedArgs: string[]) => {
-  return `import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
-
-const require = createRequire(import.meta.url);
-const { register } = require(${JSON.stringify(tsxApiPath)});
-const launcherPath = ${JSON.stringify(launcherPath)};
-const forwardedArgs = ${JSON.stringify(forwardedArgs)};
-
-register({ tsconfig: ${JSON.stringify(tsconfigPath)} });
-process.argv = [process.execPath, launcherPath, ...forwardedArgs];
-
-await import(pathToFileURL(launcherPath).href);
-`;
-};
-
-const createTempFilePath = () => {
-  return join(tmpdir(), `ccc-doru-${randomUUID()}.mjs`);
-};
-
-// an explicit runner (tsx, bun, …) opts out of the in-process registration below
+// Preserve the explicit-runner hook, but let it hand preparation to Bun instead of loading config itself.
 const getTypeScriptRunner = (env: NodeJS.ProcessEnv) => env.CCC_TYPESCRIPT_RUNNER?.trim() || undefined;
 
 const getNodeBinary = (env: NodeJS.ProcessEnv) => env.CCC_NODE?.trim() || "node";
@@ -112,59 +85,55 @@ export const buildLaunchSpec = (options: BuildLaunchSpecOptions = {}): LaunchSpe
   const baseEnv = {
     ...process.env,
     ...options.env,
+    CCC_BUN_EXEC_PATH: process.execPath,
     TSX_TSCONFIG_PATH: tsconfigPath,
   };
   const compileCacheDir = resolveCompileCacheDir(baseEnv);
-  const env = compileCacheDir ? { ...baseEnv, NODE_COMPILE_CACHE: compileCacheDir } : baseEnv;
+  const env: NodeJS.ProcessEnv =
+    compileCacheDir ? { ...baseEnv, NODE_COMPILE_CACHE: compileCacheDir } : baseEnv;
+  env[PREPARATION_LAUNCHER_PATH_ENV] = launcherPath;
+  const runtimeHostPath = options.runtimeHostPath;
+  if (!runtimeHostPath) throw new Error("CCC runtime host path is required");
+  const nodeBinary = getNodeBinary(env);
+  const resolvedNodeBinary = Bun.which(nodeBinary, { PATH: env.PATH, cwd }) ?? nodeBinary;
 
   if (!doruEnabled) {
-    // default: plain node running a runner that registers tsx in-process
     const runner = getTypeScriptRunner(env);
     if (runner) {
       return {
         command: runner,
-        args: [launcherPath, ...forwardedArgs],
+        args: [runtimeHostRunnerPath, resolvedNodeBinary, runtimeHostPath, ...forwardedArgs],
         env,
         cwd,
       };
     }
 
     return {
-      command: getNodeBinary(env),
-      args: [tsxRunnerPath, ...forwardedArgs],
+      command: nodeBinary,
+      args: [runtimeHostPath, ...forwardedArgs],
       env,
       cwd,
     };
   }
 
-  const tempFilePath = options.tempFilePath ?? createTempFilePath();
-  const tsxApiPath = resolveTsxApiPath();
+  env[DORU_RUNTIME_HOST_PAYLOAD_ENV] = JSON.stringify({
+    nodeBinary: resolvedNodeBinary,
+    runtimeHostPath,
+    forwardedArgs,
+  });
 
   return {
     command: "npx",
-    args: ["--yes", "doru", "--ui", tempFilePath],
+    args: ["--yes", "doru", "--ui", doruRuntimeHostRunnerPath],
     env,
     cwd,
-    tempFile: {
-      path: tempFilePath,
-      content: createDoruRunnerSource(tsxApiPath, forwardedArgs),
-    },
   };
 };
 
-const removeTempFile = (tempFilePath?: string) => {
-  if (!tempFilePath) return;
-
-  try {
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-  } catch {}
-};
-
-const run = () => {
-  const spec = buildLaunchSpec();
-  if (spec.tempFile) {
-    fs.writeFileSync(spec.tempFile.path, spec.tempFile.content, "utf8");
-  }
+const run = async () => {
+  const { buildRuntimeHost } = await import("./runtime-host-build");
+  const runtimeHostPath = await buildRuntimeHost();
+  const spec = buildLaunchSpec({ runtimeHostPath });
 
   const nsPrefix = namespacePrefix(spec.env);
   if (nsPrefix) {
@@ -173,24 +142,20 @@ const run = () => {
     spec.env[NS_ACTIVE_ENV] = "1";
   }
 
-  const child = spawn(spec.command, spec.args, {
-    stdio: "inherit",
-    env: spec.env,
-    cwd: spec.cwd,
-  });
-
-  child.on("exit", (code) => {
-    removeTempFile(spec.tempFile?.path);
-    process.exit(code || 0);
-  });
-
-  child.on("error", (err) => {
-    removeTempFile(spec.tempFile?.path);
+  try {
+    const executable = Bun.which(spec.command, { PATH: spec.env.PATH, cwd: spec.cwd }) ?? spec.command;
+    const execve = process.execve;
+    if (!execve) throw new Error("Bun process replacement is unavailable");
+    execve(executable, [spec.command, ...spec.args], spec.env);
+  } catch (err) {
     console.error("Failed to start CCC:", err);
     process.exit(1);
-  });
+  }
 };
 
 if (import.meta.main) {
-  run();
+  run().catch((error: unknown) => {
+    console.error("Failed to start CCC:", error);
+    process.exit(1);
+  });
 }

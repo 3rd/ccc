@@ -94,13 +94,12 @@ const NOTIFY_TOKEN_ENV = "AGENTS_VFS_NOTIFY_TOKEN";
 const NOTIFY_TOKEN_HEX_BYTES = 64;
 const NOTIFY_REGISTER_TIMEOUT_MS = 30_000;
 
-const notifyFrame = (token: string, op: "F" | "D", nativePath: string, content?: Buffer): Buffer => {
+const notifyEntry = (op: "F" | "D", nativePath: string, content?: Buffer): Buffer => {
   const path = Buffer.from(nativePath, "utf8");
   const header = Buffer.alloc(op === "D" ? 4 : 12);
   header.writeUInt32LE(path.byteLength, 0);
   if (op === "F") header.writeBigUInt64LE(BigInt(content?.byteLength ?? 0), 4);
   return Buffer.concat([
-    Buffer.from(token, "ascii"),
     Buffer.from(op, "ascii"),
     header,
     path,
@@ -118,42 +117,42 @@ const registerWithNotifySupervisor = (roots: string[], files: NsVfsFile[]): bool
   const token = process.env[NOTIFY_TOKEN_ENV];
   if (!socketName || !token || token.length !== NOTIFY_TOKEN_HEX_BYTES) return false;
 
-  const frames = [
-    ...roots.map((root) => notifyFrame(token, "D", root)),
+  const entries = [
+    ...roots.map((root) => notifyEntry("D", root)),
     ...files.map((file) =>
-      notifyFrame(token, "F", file.nativePath, Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content)),
+      notifyEntry("F", file.nativePath, Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content)),
     ),
   ];
+  if (entries.length === 0) return true;
+
+  const count = Buffer.alloc(4);
+  count.writeUInt32LE(entries.length, 0);
+  const payload = Buffer.concat([Buffer.from(token, "ascii"), Buffer.from("B", "ascii"), count, ...entries]);
 
   // Node has no synchronous unix-socket write, and this runs mid-config-build where the files must
-  // be resolvable by the time we return — so the sends happen in a short-lived child we can block on.
+  // be resolvable by the time we return — so the batch send happens in a short-lived child we can block on.
   const sender = `
     const net = require('net');
     const chunks = [];
     process.stdin.on('data', (c) => chunks.push(c));
-    process.stdin.on('end', async () => {
-      const frames = JSON.parse(Buffer.concat(chunks).toString('utf8')).map((f) => Buffer.from(f, 'base64'));
-      for (const frame of frames) {
-        await new Promise((ok, fail) => {
-          const s = net.connect('\\0' + process.argv[1]);
-          s.on('error', fail);
-          s.on('data', (d) => { s.end(); d[0] === 0 ? ok() : fail(new Error('rejected')); });
-          // the supervisor drops the connection unanswered on a bad handshake; without this the
-          // promise never settles, the loop drains, and the child exits 0 as if it had registered
-          s.on('close', () => fail(new Error('closed without status')));
-          s.write(frame);
-        });
-      }
-      process.exit(0);
+    process.stdin.on('end', () => {
+      const s = net.connect('\\0' + process.argv[1]);
+      s.on('error', (error) => { console.error(error.message); process.exit(1); });
+      s.on('data', (data) => data[0] === 0 ? process.exit(0) : process.exit(1));
+      // the supervisor drops the connection unanswered on a bad handshake; without this the child
+      // exits 0 as if it had registered the batch
+      s.on('close', () => process.exit(1));
+      s.write(Buffer.concat(chunks));
     });
   `;
 
   try {
-    execFileSync(process.execPath, ["-e", sender, socketName], {
-      input: JSON.stringify(frames.map((frame) => frame.toString("base64"))),
+    const senderRuntime = process.env.CCC_BUN_EXEC_PATH ?? process.execPath;
+    execFileSync(senderRuntime, ["-e", sender, socketName], {
+      input: payload,
       stdio: ["pipe", "ignore", "pipe"],
       // a supervisor that accepts and then stalls would otherwise block startup forever; the real
-      // batch is a few hundred unix-socket round trips, so this only fires on a stuck peer
+      // batch is one unix-socket round trip, so this only fires on a stuck peer
       timeout: NOTIFY_REGISTER_TIMEOUT_MS,
     });
   } catch (error) {

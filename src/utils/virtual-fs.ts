@@ -44,6 +44,17 @@ const VIRTUAL_PATHS = [
   path.join(os.homedir(), ".claude", "CLAUDE.md"),
 ];
 
+export type VirtualFileSystemRuntimeLogEntry =
+  | { type: "shell"; command: string; args?: string[] }
+  | { type: "vfs"; message: string; data?: unknown };
+
+export const setVirtualFileSystemRuntimeLogSink = (
+  sink: (entry: VirtualFileSystemRuntimeLogEntry) => void,
+) => {
+  log.vfs = (message, data) => sink({ type: "vfs", message, data });
+  log.shell = (command, args) => sink({ type: "shell", command, args });
+};
+
 const virtualToResolved = new Map<string, string>();
 const resolvedToVirtual = new Map<string, string>();
 let mappingsInitialized = false;
@@ -1798,7 +1809,27 @@ const monkeyPatchFS = ({
   syncBuiltinESMExports();
 };
 
-export const setupVirtualFileSystem = (args: {
+export interface PreparedVirtualFileSystem {
+  version: 1;
+  files: Array<{
+    path: string;
+    content: string;
+  }>;
+  commandsPath?: string;
+  virtualCommands: string[];
+  workingDirectory?: string;
+  disableParentClaudeMds?: boolean;
+  agentsPath?: string;
+  virtualAgents: string[];
+  skillsPath?: string;
+  virtualSkills: string[];
+  rulesPath?: string;
+  outputStylesPath?: string;
+  workflowsPath?: string;
+  virtualRoots: string[];
+}
+
+export interface VirtualFileSystemOptions {
   settings: Record<string, unknown>;
   claudeStateJson?: string;
   userPrompt: string;
@@ -1810,7 +1841,74 @@ export const setupVirtualFileSystem = (args: {
   workflows?: Map<string, string>;
   workingDirectory?: string;
   disableParentClaudeMds?: boolean;
-}) => {
+}
+
+const invalidPreparedVirtualFileSystem = (field: string): never => {
+  throw new Error(`Invalid runtime VFS payload field: ${field}`);
+};
+
+const preparedRecord = (value: unknown, field: string): Record<string, unknown> => {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return Object.fromEntries(Object.entries(value));
+  }
+  return invalidPreparedVirtualFileSystem(field);
+};
+
+const preparedString = (value: unknown, field: string): string => {
+  if (typeof value === "string") return value;
+  return invalidPreparedVirtualFileSystem(field);
+};
+
+const preparedOptionalString = (value: unknown, field: string): string | undefined => {
+  if (value === undefined) return undefined;
+  return preparedString(value, field);
+};
+
+const preparedStringArray = (value: unknown, field: string): string[] => {
+  if (Array.isArray(value)) {
+    return value.map((entry, index) => preparedString(entry, `${field}[${index}]`));
+  }
+  return invalidPreparedVirtualFileSystem(field);
+};
+
+export const validatePreparedVirtualFileSystem = (value: unknown): PreparedVirtualFileSystem => {
+  const fields = preparedRecord(value, "payload");
+  if (fields.version !== 1) invalidPreparedVirtualFileSystem("version");
+  const rawFiles =
+    Array.isArray(fields.files) ? fields.files : invalidPreparedVirtualFileSystem("files");
+
+  const files = rawFiles.map((entry, index) => {
+    const file = preparedRecord(entry, `files[${index}]`);
+    return {
+      path: preparedString(file.path, `files[${index}].path`),
+      content: preparedString(file.content, `files[${index}].content`),
+    };
+  });
+
+  const disableParentClaudeMds =
+    fields.disableParentClaudeMds === undefined || typeof fields.disableParentClaudeMds === "boolean" ?
+      fields.disableParentClaudeMds
+    : invalidPreparedVirtualFileSystem("disableParentClaudeMds");
+
+  return {
+    version: 1,
+    files,
+    commandsPath: preparedOptionalString(fields.commandsPath, "commandsPath"),
+    virtualCommands: preparedStringArray(fields.virtualCommands, "virtualCommands"),
+    workingDirectory: preparedOptionalString(fields.workingDirectory, "workingDirectory"),
+    disableParentClaudeMds,
+    agentsPath: preparedOptionalString(fields.agentsPath, "agentsPath"),
+    virtualAgents: preparedStringArray(fields.virtualAgents, "virtualAgents"),
+    skillsPath: preparedOptionalString(fields.skillsPath, "skillsPath"),
+    virtualSkills: preparedStringArray(fields.virtualSkills, "virtualSkills"),
+    rulesPath: preparedOptionalString(fields.rulesPath, "rulesPath"),
+    outputStylesPath: preparedOptionalString(fields.outputStylesPath, "outputStylesPath"),
+    workflowsPath: preparedOptionalString(fields.workflowsPath, "workflowsPath"),
+    virtualRoots: preparedStringArray(fields.virtualRoots, "virtualRoots"),
+  };
+};
+
+export const prepareVirtualFileSystem = (args: VirtualFileSystemOptions): PreparedVirtualFileSystem => {
   const claudeStatePath = path.join(os.homedir(), ".claude.json");
   const settingsJsonPath = path.join(os.homedir(), ".claude", "settings.json");
   const claudeMdPath = path.join(os.homedir(), ".claude", "CLAUDE.md");
@@ -1989,8 +2087,6 @@ export const setupVirtualFileSystem = (args: {
     [claudeMdPath]: args.userPrompt,
   });
 
-  const memfs = createFsFromVolume(vol);
-  const volPromises = memfs.promises as unknown as typeof fsDefault.promises;
   const virtualRoots = new Set<string>([agentsPath, commandsPath]);
 
   const virtualCommandFiles: string[] = [];
@@ -2126,8 +2222,14 @@ export const setupVirtualFileSystem = (args: {
   }
   setupNamespaceVfs(nsRoots, nsFiles);
 
-  monkeyPatchFS({
-    vol,
+  const files = Object.entries(vol.toJSON()).flatMap(([filePath, content]) => {
+    if (content === null) return [];
+    return [{ path: filePath, content }];
+  });
+
+  return {
+    version: 1,
+    files,
     commandsPath: args.commands ? commandsPath : undefined,
     virtualCommands: virtualCommandFiles,
     workingDirectory: args.workingDirectory,
@@ -2139,7 +2241,34 @@ export const setupVirtualFileSystem = (args: {
     rulesPath: args.rules ? rulesPath : undefined,
     outputStylesPath: args.outputStyles ? outputStylesPath : undefined,
     workflowsPath: args.workflows ? workflowsPath : undefined,
-    virtualRoots,
+    virtualRoots: Array.from(virtualRoots),
+  };
+};
+
+export const installVirtualFileSystem = (input: PreparedVirtualFileSystem) => {
+  const prepared = validatePreparedVirtualFileSystem(input);
+  const vol = Volume.fromJSON(Object.fromEntries(prepared.files.map((file) => [file.path, file.content])));
+  const memfs = createFsFromVolume(vol);
+  const volPromises = memfs.promises as unknown as typeof fsDefault.promises;
+
+  monkeyPatchFS({
+    vol,
+    commandsPath: prepared.commandsPath,
+    virtualCommands: prepared.virtualCommands,
+    workingDirectory: prepared.workingDirectory,
+    disableParentClaudeMds: prepared.disableParentClaudeMds,
+    agentsPath: prepared.agentsPath,
+    virtualAgents: prepared.virtualAgents,
+    skillsPath: prepared.skillsPath,
+    virtualSkills: prepared.virtualSkills,
+    rulesPath: prepared.rulesPath,
+    outputStylesPath: prepared.outputStylesPath,
+    workflowsPath: prepared.workflowsPath,
+    virtualRoots: new Set(prepared.virtualRoots),
     volPromises,
   });
+};
+
+export const setupVirtualFileSystem = (args: VirtualFileSystemOptions) => {
+  installVirtualFileSystem(prepareVirtualFileSystem(args));
 };
