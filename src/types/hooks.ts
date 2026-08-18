@@ -280,7 +280,8 @@ export interface SessionStartHookInput extends BaseHookInput {
 
 export interface SessionEndHookInput extends BaseHookInput {
   hook_event_name: "SessionEnd";
-  reason: "bypass_permissions_disabled" | "clear" | "logout" | "other" | "prompt_input_exit" | "resume";
+  // "bypass_permissions_disabled" removed in v2.1.234 along with the disable-bypass kill switch
+  reason: "clear" | "logout" | "other" | "prompt_input_exit" | "resume";
 }
 
 // in-flight background work (running/pending or backgrounded) registered in the

@@ -78,11 +78,13 @@ export type StatusLineInput = {
   remote?: {
     session_id: string;
   };
-  // open PR for the current branch; mirrors the footer PR badge (v2.1.145)
+  // open PR/MR for the current branch; mirrors the footer badge (v2.1.145)
   pr?: {
     number: number;
     url: string;
     review_state?: "approved" | "changes_requested" | "draft" | "pending";
+    // "mr" for GitLab merge requests (glab CLI, v2.1.234); absent or "pr" for GitHub
+    kind?: "mr" | "pr";
   };
   // only present when running in a git worktree
   worktree?: {
