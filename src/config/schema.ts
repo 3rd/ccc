@@ -111,9 +111,15 @@ const policyHelperSchema = z.object({
   refreshIntervalMs: z.union([z.literal(0), z.number().int().min(60_000)]).optional(),
 });
 
-// per-OS policyHelpers entry: a helper (path becomes optional — an entry may be
-// payload-only), a static defaultSettings payload, or both (v2.1.228, defaultSettings v2.1.232)
+// per-OS policyHelpers entry: a helper — a "path" executable, or an inline "script" +
+// "interpreter" delivered over stdin — a static defaultSettings payload, or both
+// (v2.1.228, defaultSettings v2.1.232, script/interpreter v2.1.234)
 const policyHelpersEntrySchema = policyHelperSchema.partial({ path: true }).extend({
+  // inline helper script run through the fixed per-OS interpreter; exactly one of
+  // path/script, and script requires interpreter; ASCII-only on windows (v2.1.234)
+  script: z.string().optional(),
+  // fixed per-OS: "pwsh" on the windows entry, "sh" on macos/linux/wsl (v2.1.234)
+  interpreter: z.enum(["pwsh", "sh"]).optional(),
   // static managed-settings payload applied when no helper on the platform's chain is
   // configured, or the selected helper fails at startup or refresh
   defaultSettings: z.record(z.string(), z.unknown()).optional(),
@@ -319,6 +325,9 @@ const baseSettingsSchema = z.object({
   skillListingBudgetFraction: z.number().positive().max(1).optional(),
   // per-skill listing overrides keyed by skill name (v2.1.105)
   skillOverrides: z.record(z.string(), z.enum(["on", "name-only", "user-invocable-only", "off"])).optional(),
+  // false turns off syncing the skills enabled on claude.ai; only false is honored, since the
+  // feature is enabled server-side. Not read from project settings (v2.1.234)
+  syncClaudeAiSkills: z.boolean().optional(),
   // custom per-subagent status line shown in the agent panel (v2.1.105)
   subagentStatusLine: z
     .object({
@@ -926,6 +935,9 @@ const baseSettingsSchema = z.object({
   fileCheckpointingEnabled: z.boolean().optional(), // default: true
   // auto-switch model when safety filters block a message; off may stop the chat instead (v2.1.160)
   switchModelsOnFlag: z.boolean().optional(),
+  // wait for a claude.ai usage limit to reset and continue the task automatically; when off the
+  // limit dialog offers the wait as a choice instead (v2.1.234)
+  autoContinueAtUsageLimit: z.boolean().optional(),
   showTurnDuration: z.boolean().optional(), // default: true
   showMessageTimestamps: z.boolean().optional(), // default: false
   terminalProgressBarEnabled: z.boolean().optional(), // default: true
