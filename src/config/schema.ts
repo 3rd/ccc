@@ -47,6 +47,9 @@ const marketplaceSourceSchema = z.discriminatedUnion("source", [
     source: z.literal("url"),
     url: z.url(),
     headers: z.record(z.string(), z.string()).optional(),
+    // command that prints a JSON object of HTTP headers (e.g. a short-lived auth token);
+    // output overrides `headers` and is inherited by same-origin archive downloads (v2.1.238)
+    headersHelper: z.string().max(500).optional(),
   }),
   z.object({
     source: z.literal("github"),
@@ -291,6 +294,16 @@ const baseSettingsSchema = z.object({
   fastModePerSessionOptIn: z.boolean().optional(),
   // persisted effort level for supported models (v2.1.111)
   effortLevel: z.enum(["low", "medium", "high", "xhigh"]).optional(),
+  // per-model settings keyed by canonical model name (v2.1.239)
+  modelSettings: z
+    .record(
+      z.string(),
+      z.object({
+        // persisted effort level for this model
+        effortLevel: z.enum(["low", "medium", "high", "xhigh"]).optional(),
+      }),
+    )
+    .optional(),
   // output style to adjust system prompt (e.g., "Explanatory")
   outputStyle: z.string().optional(),
   // advisor model for server-side advisor tool (v2.1.85)
@@ -693,6 +706,9 @@ const baseSettingsSchema = z.object({
       // background-session isolation: 'worktree' (default) blocks Edit/Write in the main checkout
       // until EnterWorktree; 'none' lets background jobs edit the working copy directly
       bgIsolation: z.enum(["worktree", "none"]).optional(),
+      // where Claude Code Desktop creates worktrees for SSH sessions on this machine (absolute
+      // or ~/ path); read by the desktop app only, the CLI does not read it yet (v2.1.240)
+      location: z.string().optional(),
     })
     .optional(),
 
@@ -913,6 +929,23 @@ const baseSettingsSchema = z.object({
     .enum(["auto", "dark", "light", "light-daltonized", "dark-daltonized", "light-ansi", "dark-ansi"])
     .optional(), // default: "dark"
   editorMode: z.enum(["normal", "vim"]).optional(), // default: "normal"
+  // word-editing key conventions in the prompt input: 'readline' matches Bash (Ctrl+W deletes
+  // to whitespace, punctuation separates words); 'classic' (default) keeps Unicode word
+  // segmentation (v2.1.238)
+  keybindingFlavor: z.enum(["classic", "readline"]).optional(),
+  // underline misspelled words in the prompt input using an installed aspell/hunspell/ispell;
+  // read from user, flag and managed settings only — ignored in project settings (v2.1.235)
+  spellcheck: z
+    .object({
+      enabled: z.boolean().optional(), // default: false
+      // "aspell", "hunspell", "ispell", or "auto" (default) for the first found on PATH
+      checker: z.string().optional(),
+      // dictionary passed to the checker as-is (aspell --lang, hunspell -d, ispell -d)
+      language: z.string().optional(),
+      // color of misspelled words: terminal color name, #rrggbb, rgb(), ansi256(n) or ansi:<name>
+      color: z.string().optional(),
+    })
+    .optional(),
   // Vim INSERT-mode key-sequence remaps, e.g. {"jj": "<Esc>"}; keys are exactly two printable
   // characters typed in sequence and "<Esc>" is the only supported target (v2.1.208)
   vimInsertModeRemaps: z.record(z.string(), z.unknown()).optional(),
