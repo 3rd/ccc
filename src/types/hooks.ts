@@ -605,6 +605,11 @@ export interface PostToolUseHookResponse extends BaseHookResponse {
   hookSpecificOutput?: {
     hookEventName: "PostToolUse";
     additionalContext?: string;
+    // host-asserted context shown to the auto-mode permission classifier alongside this tool
+    // call's result; put ONLY genuine user statements in intent-bearing positions. Capped at
+    // 2000 UTF-16 code units shared across all hooks contributing to one call; honored on
+    // synchronous hook responses only (v2.1.236)
+    classifierContext?: string;
     // override tool output for any tool (v2.1.121)
     updatedToolOutput?: unknown;
     // override MCP tool output (v2.1.64); prefer updatedToolOutput which works for all tools
@@ -662,6 +667,8 @@ export interface UserPromptExpansionHookResponse extends BaseHookResponse {
   hookSpecificOutput?: {
     hookEventName: "UserPromptExpansion";
     additionalContext?: string;
+    // when decision is "block", omit the original prompt from the block message (v2.1.238)
+    suppressOriginalPrompt?: boolean;
   };
 }
 
