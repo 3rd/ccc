@@ -2,13 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { GRAPH_PRUNE_GRACE_MS } from "@/native/cache";
 import { BUILTIN_PATCHES_VERSION, patchSetDigest, type RuntimePatch } from "@/patches/cli-patches";
 import {
   computePatchKey,
   dropPatchedEntry,
   patchCacheMode,
   readPatched,
-  writePatchedAtomic,
+  writePatchedGraphAtomic,
 } from "@/patches/patched-cache";
 
 const CLI_BYTES = "x".repeat(2 * 1024 * 1024);
@@ -36,6 +37,22 @@ const keyInput = (extractedCliPath: string, patches: RuntimePatch[] = []) => ({
   preambleVersion: "preamble-1",
   patches,
 });
+
+// a materialized graph is a `graph/` dir of module files plus the manifest the
+// patch cache copies from
+const writeSourceGraph = (moduleContents = CLI_BYTES) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccc-patch-graph-"));
+  tempDirs.push(dir);
+  fs.mkdirSync(path.join(dir, "root"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "root", "cli.mjs"), moduleContents);
+  fs.writeFileSync(
+    path.join(dir, "__ccc_manifest.json"),
+    JSON.stringify({ version: 1, entry: "root/cli.mjs", modules: ["root/cli.mjs"], substituted: ["root/cli.mjs"] }),
+  );
+  return dir;
+};
+
+const patchOf = (contents: string) => new Map([["root/cli.mjs", contents]]);
 
 afterEach(() => {
   if (originalCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
@@ -121,59 +138,93 @@ describe("BUILTIN_PATCHES_VERSION", () => {
 });
 
 describe("patched cache entries", () => {
-  test("round-trips the patched bundle and both label lists", () => {
+  test("round-trips the patched graph and both label lists", () => {
     useTempCacheHome();
-    const key = "abc123";
-    const entry = writePatchedAtomic(key, CLI_BYTES, ["applied-one"], ["missed-one"]);
+    const source = writeSourceGraph();
+    const entry = writePatchedGraphAtomic("abc123", source, patchOf("patched-module"), ["applied-one"], ["missed-one"]);
     expect(entry.patchedPath).toBeTruthy();
 
-    const read = readPatched(key);
+    const read = readPatched("abc123");
     expect(read?.applied).toEqual(["applied-one"]);
     expect(read?.missed).toEqual(["missed-one"]);
-    expect(fs.readFileSync(read!.patchedPath!, "utf8")).toBe(CLI_BYTES);
+    expect(fs.readFileSync(read!.patchedPath!, "utf8")).toBe("patched-module");
   });
 
-  test("records a no-patch result without writing a bundle", () => {
+  test("records a no-patch result without copying the graph", () => {
     useTempCacheHome();
-    writePatchedAtomic("nopatch", null, [], ["missed-everything"]);
+    writePatchedGraphAtomic("nopatch", writeSourceGraph(), null, [], ["missed-everything"]);
 
     const read = readPatched("nopatch");
     expect(read).toEqual({ patchedPath: null, applied: [], missed: ["missed-everything"] });
   });
 
-  test("misses on an absent, truncated, or foreign entry", () => {
+  test("misses on an absent, incomplete, or foreign entry", () => {
     const cacheHome = useTempCacheHome();
     expect(readPatched("absent")).toBeNull();
 
-    writePatchedAtomic("truncated", CLI_BYTES, ["a"], []);
-    const entryDir = path.join(cacheHome, "ccc", "claude-cli-patched", "truncated");
-    fs.writeFileSync(path.join(entryDir, "cli.mjs"), "too small");
-    expect(readPatched("truncated")).toBeNull();
+    writePatchedGraphAtomic("broken", writeSourceGraph(), patchOf("patched-module"), ["a"], []);
+    const entryDir = path.join(cacheHome, "ccc", "claude-cli-patched", "broken");
+    fs.rmSync(path.join(entryDir, "graph", "root", "cli.mjs"));
+    expect(readPatched("broken")).toBeNull();
 
     fs.writeFileSync(path.join(entryDir, "meta.json"), JSON.stringify({ key: "someone-else" }));
-    expect(readPatched("truncated")).toBeNull();
+    expect(readPatched("broken")).toBeNull();
 
     fs.writeFileSync(path.join(entryDir, "meta.json"), "{not json");
-    expect(readPatched("truncated")).toBeNull();
+    expect(readPatched("broken")).toBeNull();
   });
 
   test("leaves no staging files behind and can drop an entry", () => {
     const cacheHome = useTempCacheHome();
-    writePatchedAtomic("dropme", CLI_BYTES, [], []);
+    writePatchedGraphAtomic("dropme", writeSourceGraph(), patchOf("patched-module"), [], []);
     const entryDir = path.join(cacheHome, "ccc", "claude-cli-patched", "dropme");
-    expect(fs.readdirSync(entryDir).sort()).toEqual(["cli.mjs", "meta.json"]);
+    expect(fs.readdirSync(entryDir).sort()).toEqual(["graph", "meta.json"]);
 
     dropPatchedEntry("dropme");
     expect(readPatched("dropme")).toBeNull();
   });
 
-  test("prunes to the newest entries", () => {
+  test("prunes entries beyond the count cap once their grace period has passed", () => {
     const cacheHome = useTempCacheHome();
-    for (const key of ["k1", "k2", "k3", "k4", "k5", "k6"]) writePatchedAtomic(key, CLI_BYTES, [], []);
-
+    const source = writeSourceGraph();
     const root = path.join(cacheHome, "ccc", "claude-cli-patched");
+    for (const key of ["k1", "k2", "k3", "k4", "k5", "k6"]) {
+      writePatchedGraphAtomic(key, source, patchOf(`patched-${key}`), [], []);
+    }
+    for (const [index, key] of ["k1", "k2", "k3", "k4", "k5"].entries()) {
+      const aged = new Date(Date.now() - GRAPH_PRUNE_GRACE_MS - (5 - index) * 60_000);
+      fs.utimesSync(path.join(root, key), aged, aged);
+    }
+
+    writePatchedGraphAtomic("k7", source, patchOf("patched-k7"), [], []);
+
     expect(fs.readdirSync(root).length).toBeLessThanOrEqual(4);
-    // the most recent write always survives
-    expect(readPatched("k6")).not.toBeNull();
+    // the most recent write always survives, and the oldest aged entry goes first
+    expect(readPatched("k7")).not.toBeNull();
+    expect(fs.existsSync(path.join(root, "k1"))).toBe(false);
+  });
+
+  test("keeps entries beyond the count cap while their grace period lasts", () => {
+    const cacheHome = useTempCacheHome();
+    const source = writeSourceGraph();
+    for (const key of ["k1", "k2", "k3", "k4", "k5", "k6"]) {
+      writePatchedGraphAtomic(key, source, patchOf(`patched-${key}`), [], []);
+    }
+
+    // a session launched from any of these may still lazily import its graph
+    const root = path.join(cacheHome, "ccc", "claude-cli-patched");
+    expect(fs.readdirSync(root).sort()).toEqual(["k1", "k2", "k3", "k4", "k5", "k6"]);
+  });
+
+  test("a cache hit restarts the entry's grace period", () => {
+    const cacheHome = useTempCacheHome();
+    writePatchedGraphAtomic("hit", writeSourceGraph(), patchOf("patched-hit"), [], []);
+    const entryDir = path.join(cacheHome, "ccc", "claude-cli-patched", "hit");
+    const aged = new Date(Date.now() - GRAPH_PRUNE_GRACE_MS - 60_000);
+    fs.utimesSync(entryDir, aged, aged);
+
+    expect(readPatched("hit")).not.toBeNull();
+
+    expect(fs.statSync(entryDir).mtimeMs).toBeGreaterThan(aged.getTime() + 1000);
   });
 });
