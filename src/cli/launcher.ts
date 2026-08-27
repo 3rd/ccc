@@ -532,9 +532,11 @@ const run = async () => {
   // resolve claude cli path first (needed for runtime patches in VFS)
   const resolveTask = startup.start("Resolve Claude CLI");
   let extractedCliPath: string;
+  let graphDir: string | undefined;
   try {
     const resolved = await resolveClaudeCli(context.launcherDirectory);
     extractedCliPath = resolved.extractedCliPath;
+    graphDir = resolved.graphDir;
     log.info("LAUNCHER", `Found extracted Claude CLI: ${extractedCliPath}`);
     if (process.env.USE_BUILTIN_RIPGREP === undefined) {
       process.env.USE_BUILTIN_RIPGREP = "0";
@@ -973,10 +975,11 @@ const run = async () => {
 
   const patchTask = startup.start("Apply runtime patches");
   const { applyBuiltInPatches, applyUserPatches } = await import("@/patches/cli-patches");
-  const { computePatchKey, dropPatchedEntry, patchCacheMode, readPatched, writePatchedAtomic } = await import(
-    "@/patches/patched-cache"
-  );
+  const { computePatchKey, dropPatchedEntry, materializePatchedGraph, patchCacheMode, readPatched, writePatchedGraphAtomic } =
+    await import("@/patches/patched-cache");
   const { PREAMBLE_VERSION } = await import("@/native/preamble");
+  const { readGraphManifest } = await import("@/native/cache");
+  const { readGraphText, splitGraphText } = await import("@/native/graph-text");
   const patchList = patches ?? [];
   const cacheMode = patchCacheMode();
   const patchKey =
@@ -994,8 +997,7 @@ const run = async () => {
   const allApplied: string[] = [];
   const allMissed: string[] = [];
 
-  const derivePatched = () => {
-    let content = fs.readFileSync(extractedCliPath, "utf8");
+  const applyPatchesTo = (content: string) => {
     const applied: string[] = [];
     const missed: string[] = [];
 
@@ -1012,7 +1014,27 @@ const run = async () => {
       applied.push(...user.applied);
       missed.push(...user.missed);
     }
-    return { content: applied.length > 0 ? content : null, applied, missed };
+    return { content, applied, missed };
+  };
+
+  // graph variant: patches run over the joined module text so anchors that span
+  // two modules still match, then the result is split back into module files
+  const deriveGraphPatched = (dir: string) => {
+    const graph = readGraphText(dir);
+    const result = applyPatchesTo(graph.combined);
+    const parts = splitGraphText(graph, result.content);
+
+    const patchedModules = new Map<string, string>();
+    for (const [index, rel] of graph.modules.entries()) {
+      if (parts[index] !== graph.originals[index]) patchedModules.set(rel, parts[index]!);
+    }
+
+    return {
+      graph,
+      patchedModules: patchedModules.size > 0 ? patchedModules : null,
+      applied: result.applied,
+      missed: result.missed,
+    };
   };
 
   if (cached) {
@@ -1021,25 +1043,40 @@ const run = async () => {
     allMissed.push(...cached.missed);
     log.info("LAUNCHER", `Reused patched CLI ${patchKey}: ${cached.patchedPath ?? "(unpatched)"}`);
   } else {
-    const derived = derivePatched();
+    const derived = deriveGraphPatched(graphDir);
     allApplied.push(...derived.applied);
     allMissed.push(...derived.missed);
 
     if (patchKey) {
-      const entry = writePatchedAtomic(patchKey, derived.content, derived.applied, derived.missed);
+      const entry = writePatchedGraphAtomic(patchKey, graphDir, derived.patchedModules, derived.applied, derived.missed);
       if (entry.patchedPath) importPath = entry.patchedPath;
-    } else if (derived.content !== null) {
-      // cache disabled: keep the previous content-addressed temp file behaviour. Write to a
-      // unique temp path and rename into place — rename is atomic, so concurrent launchers
-      // (parallel lab runs) can never import a torn half-written bundle.
-      const hash = crypto.createHash("md5").update(derived.content).digest("hex").slice(0, 8);
-      const patchedPath = path.join(os.tmpdir(), `claude-cli-patched-${hash}.mjs`);
-      if (!fs.existsSync(patchedPath)) {
-        const stagingPath = `${patchedPath}.${process.pid}.staging`;
-        fs.writeFileSync(stagingPath, derived.content);
-        fs.renameSync(stagingPath, patchedPath);
+    } else if (derived.patchedModules !== null) {
+      // cache disabled: content-addressed temp graph copy. the copy embeds every
+      // unpatched file too (preamble, shims, untouched modules), so the key covers
+      // the source graph's identity (entry stat plus preamble version, the same
+      // identity computePatchKey trusts), not just the patched module text
+      const entryStat = fs.statSync(extractedCliPath);
+      const hasher = crypto
+        .createHash("md5")
+        .update(graphDir)
+        .update("\0")
+        .update(PREAMBLE_VERSION)
+        .update("\0")
+        .update(String(entryStat.size))
+        .update("\0")
+        .update(String(entryStat.mtimeMs))
+        .update("\0");
+      for (const [rel, content] of [...derived.patchedModules.entries()].sort()) {
+        hasher.update(rel).update("\0").update(content).update("\0");
       }
-      importPath = patchedPath;
+      const hash = hasher.digest("hex").slice(0, 8);
+      const tempGraphDir = path.join(os.tmpdir(), `claude-graph-patched-${hash}`);
+      const manifest = readGraphManifest(graphDir);
+      const entryPath = manifest ? path.join(tempGraphDir, manifest.entry) : null;
+      if (entryPath && !fs.existsSync(entryPath)) {
+        materializePatchedGraph(tempGraphDir, graphDir, derived.patchedModules);
+      }
+      if (entryPath) importPath = entryPath;
     }
 
     if (allApplied.length > 0) {
@@ -1054,23 +1091,51 @@ const run = async () => {
   // CCC_PATCH_CACHE=verify: re-derive and compare, so a key that misses an input shows up as a
   // warning here instead of as an unexplained behaviour change
   if (cached && cacheMode === "verify" && patchKey) {
-    const derived = derivePatched();
-    const actual = cached.patchedPath ? fs.readFileSync(cached.patchedPath, "utf8") : null;
-    const sameLabels =
-      derived.applied.join("\0") === cached.applied.join("\0") &&
-      derived.missed.join("\0") === cached.missed.join("\0");
-    if (derived.content !== actual || !sameLabels) {
-      log.warn("LAUNCHER", `Patch cache mismatch for ${patchKey}; rebuilding from source`);
-      dropPatchedEntry(patchKey);
-      const entry = writePatchedAtomic(patchKey, derived.content, derived.applied, derived.missed);
-      importPath = entry.patchedPath ?? extractedCliPath;
-      allApplied.length = 0;
-      allMissed.length = 0;
-      allApplied.push(...derived.applied);
-      allMissed.push(...derived.missed);
-    } else {
-      log.info("LAUNCHER", `Patch cache verified: ${patchKey}`);
-    }
+      const derived = deriveGraphPatched(graphDir);
+      const sameLabels =
+        derived.applied.join("\0") === cached.applied.join("\0") &&
+        derived.missed.join("\0") === cached.missed.join("\0");
+      let sameContent = (derived.patchedModules === null) === (cached.patchedPath === null);
+      if (sameContent && derived.patchedModules !== null && cached.patchedPath !== null) {
+        const manifest = readGraphManifest(graphDir);
+        const cachedGraphDir =
+          manifest && cached.patchedPath.endsWith(manifest.entry)
+            ? cached.patchedPath.slice(0, -manifest.entry.length - 1)
+            : null;
+        if (!cachedGraphDir) {
+          sameContent = false;
+        } else {
+          // every module is compared, patched or not: a key collision can leave
+          // the cached graph patched in modules the fresh derivation left alone,
+          // and that divergence must fail verification
+          for (const [index, rel] of derived.graph.modules.entries()) {
+            const content = derived.patchedModules.get(rel) ?? derived.graph.originals[index]!;
+            let cachedContent: string;
+            try {
+              cachedContent = fs.readFileSync(path.join(cachedGraphDir, rel), "utf8");
+            } catch {
+              sameContent = false;
+              break;
+            }
+            if (cachedContent.replaceAll(cachedGraphDir, graphDir) !== content) {
+              sameContent = false;
+              break;
+            }
+          }
+        }
+      }
+      if (!sameContent || !sameLabels) {
+        log.warn("LAUNCHER", `Patch cache mismatch for ${patchKey}; rebuilding from source`);
+        dropPatchedEntry(patchKey);
+        const entry = writePatchedGraphAtomic(patchKey, graphDir, derived.patchedModules, derived.applied, derived.missed);
+        importPath = entry.patchedPath ?? extractedCliPath;
+        allApplied.length = 0;
+        allMissed.length = 0;
+        allApplied.push(...derived.applied);
+        allMissed.push(...derived.missed);
+      } else {
+        log.info("LAUNCHER", `Patch cache verified: ${patchKey}`);
+      }
   }
 
   const total = allApplied.length + allMissed.length;

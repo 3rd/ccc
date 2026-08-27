@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { NATIVE_BUN_ENTRY_MARKER } from "./constants";
+import { NATIVE_BUNFS_ROOT_PREFIX } from "./constants";
 
 const PREAMBLE = [
   'import { createRequire } from "module";',
@@ -62,16 +62,17 @@ const PREAMBLE = [
   "    }",
   "    return StubWebSocket;",
   "  }",
-  "  // bun compiles some native assets (e.g. ripgrep.node) into the binary and references",
-  "  // them via /$bunfs/root/... specifiers. we cannot load these from the extracted JS;",
-  "  // CCC sets USE_BUILTIN_RIPGREP=0 so claude-code falls back to system ripgrep. if a",
-  "  // future bundle tries to require a new bunfs asset, surface a clear error rather than",
-  "  // a confusing MODULE_NOT_FOUND.",
-  '  if (typeof specifier === "string" && specifier.startsWith("/$bunfs/root/")) {',
+  "  // bun embeds native assets (napi addons, ripgrep.node) and requires them via",
+  "  // bunfs paths, substituted to the materialized graph dir at cache-write time.",
+  "  // the addons exist on disk but are not loaded under node: their node-ABI",
+  "  // compatibility is unverified, and every bundle call site falls back on a",
+  "  // throw (vendor-path probing; CCC sets USE_BUILTIN_RIPGREP=0 for system",
+  "  // ripgrep). the thrown error names the asset; a bare require failure would not.",
+  `  if (typeof specifier === "string" && specifier.startsWith("${NATIVE_BUNFS_ROOT_PREFIX}")) {`,
   "    throw new Error(",
-  '      "native-preamble: unexpected bunfs asset require: " + specifier + ". " +',
-  '      "The extracted bundle cannot load bun-embedded native assets. " +',
-  '      "If this is a new asset type, extend __require in src/native/preamble.ts."',
+  '      "native-preamble: refusing to load bun-embedded asset: " + specifier + ". " +',
+  '      "Materialized graph assets are not loaded under node. " +',
+  '      "If claude-code needs this asset, extend __require in src/native/preamble.ts."',
   "    );",
   "  }",
   "  return __baseRequire(specifier);",
@@ -429,12 +430,8 @@ const PREAMBLE = [
   "globalThis.__cccBun ??= __cccBun;",
   "globalThis.Bun ??= globalThis.__cccBun;",
   "var Bun = globalThis.Bun;",
-  'const __module = typeof module !== "undefined" ? module : { exports: {} };',
-  "const __exports = __module.exports;",
   "",
 ].join("\n");
-
-const ENTRY_INVOCATION = "\n__bun_entry(__exports, __require, __module, __filename__, __dirname__);\n";
 
 // Bun.Transpiler fallback for the `typeof Bun === "undefined"` branch only — dead
 // under CCC since the PREAMBLE always defines Bun. The live REPL transpiler is
@@ -461,47 +458,184 @@ const TRANSPILER_POLYFILL = [
 ].join("");
 
 const BUN_STRING_WIDTH_RE = /function ([\w$]+)\(([\w$]+)\){return Bun\.stringWidth\(\2,[\w$]+\)}/;
-const buildStringWidthReplacement = (fn: string, value: string) =>
-  `function ${fn}(${value}){return __cccStringWidth(${value})}`;
-
 const BUN_DOT_RE = /\bBun\./g;
 const GLOBAL_THIS_BUN_RE = /\bglobalThis\.Bun\b/g;
 
-export const PREAMBLE_VERSION = createHash("sha256")
-  .update(PREAMBLE)
-  .update(ENTRY_INVOCATION)
-  .update(TRANSPILER_BAIL)
-  .update(TRANSPILER_POLYFILL)
-  .update(String(BUN_STRING_WIDTH_RE))
-  .update(buildStringWidthReplacement("$", "_"))
-  .update(String(BUN_DOT_RE))
-  .update(String(GLOBAL_THIS_BUN_RE))
-  .digest("hex")
-  .slice(0, 16);
+// ---------------------------------------------------------------------------
+// bun standalone module-graph support (claude-code >= 2.1.242)
+//
+// The bundle is no longer one CJS blob but ~1400 separate ESM modules that
+// import each other via "/$bunfs/root/<name>" specifiers. Each module gets the
+// same Bun-API rewrites as the old bundle plus an injected import of the
+// preamble module below, so the shims are installed before any module body
+// runs, in the main thread and in worker_threads entries alike.
+// ---------------------------------------------------------------------------
 
-export const wrapForNode = (raw: Buffer) => {
-  let src = raw.toString("utf8");
+// Identity of the materialized layout itself: which files are emitted and
+// which of them the patch pipeline may rewrite. It feeds PREAMBLE_VERSION, so
+// changing the layout invalidates every cached graph.
+export const GRAPH_LAYOUT_VERSION = "graph-layout-2:preamble-patchable";
+
+export const GRAPH_PREAMBLE_MODULE_NAME = "__ccc_preamble.mjs";
+export const GRAPH_WS_SHIM_NAME = "__ccc_ws.mjs";
+export const GRAPH_NODE_FETCH_SHIM_NAME = "__ccc_node_fetch.mjs";
+
+// appended to the shared PREAMBLE text to form the graph preamble module.
+// `__cccBun` and `__require` are in scope from the PREAMBLE body above it.
+const GRAPH_PREAMBLE_EXTRAS = [
+  "",
+  "// bun.ant is an anthropic-custom native extension (peer credentials, memory",
+  "// pressure, prctl). every bundle call site catches and falls back, so a",
+  "// throwing stub selects those fallbacks under node.",
+  "const __cccAntUnavailable = () => { throw new Error(\"ccc bun shim: Bun.ant is unavailable under node\"); };",
+  "__cccBun.ant = {",
+  "  getPeerUid: __cccAntUnavailable,",
+  "  getPeerPid: __cccAntUnavailable,",
+  "  memoryPressureLevel: __cccAntUnavailable,",
+  "  setDumpable: __cccAntUnavailable,",
+  "};",
+  "__cccBun.TOML = {",
+  "  parse(text) {",
+  '    for (const pkg of ["smol-toml", "@iarna/toml", "toml"]) {',
+  "      try {",
+  "        const mod = __baseRequire(pkg);",
+  "        const parse = mod.parse ?? mod.default?.parse;",
+  '        if (typeof parse === "function") return parse(String(text));',
+  "      } catch {}",
+  "    }",
+  '    throw new Error("ccc bun shim: TOML.parse needs a toml package (smol-toml) on the require path");',
+  "  },",
+  "};",
+  "__cccBun.connect = (options) => new Promise((resolvePromise, rejectPromise) => {",
+  '  const net = __baseRequire("net");',
+  "  const socket = options.unix ? __baseRequire(\"net\").connect(options.unix) : net.connect({ host: options.hostname, port: options.port });",
+  "  const handlers = options.socket ?? {};",
+  "  let connected = false;",
+  "  let closeError = null;",
+  "  const bunSocket = {",
+  "    data: undefined,",
+  "    get remoteAddress() { return socket.remoteAddress; },",
+  "    get localPort() { return socket.localPort; },",
+  "    write: (chunk) => { if (socket.destroyed || socket.writableEnded) return 0; const buffer = __cccToBuffer(chunk); socket.write(buffer); return buffer.length; },",
+  "    end: () => socket.end(),",
+  "    terminate: () => socket.destroy(),",
+  "    ref: () => socket.ref(),",
+  "    unref: () => socket.unref(),",
+  "  };",
+  '  socket.once("connect", () => { connected = true; resolvePromise(bunSocket); handlers.open?.(bunSocket); });',
+  '  socket.on("data", (chunk) => handlers.data?.(bunSocket, chunk));',
+  '  socket.on("drain", () => handlers.drain?.(bunSocket));',
+  '  socket.on("close", () => { if (connected) handlers.close?.(bunSocket, closeError); });',
+  '  socket.on("error", (error) => { closeError = error; if (connected) handlers.error?.(bunSocket, error); else { handlers.connectError?.(bunSocket, error); rejectPromise(error); } });',
+  "});",
+  "// bun's import.meta.require: a CJS require scoped to the module. bun's text",
+  "// loader makes require of a text-loaded embedded file return its contents;",
+  "// __cccTextFiles is filled from the graph's own loader metadata at",
+  "// materialization time. everything else goes through the shimmed __require",
+  "// (ws/node-fetch); graph-root asset requires (the materialized napi addons)",
+  "// hit __require's bunfs guard and throw, and the bundle's call sites fall",
+  "// back to vendor-path probing.",
+  "__cccBun.__textFiles = new Set();",
+  "__cccBun.__importMetaRequire = (specifier) => {",
+  "  if (__cccBun.__textFiles.has(specifier)) {",
+  '    return __baseRequire("fs").readFileSync(specifier, "utf8");',
+  "  }",
+  "  return __require(specifier);",
+  "};",
+  '__cccBun.__wsImpl = () => __require("ws");',
+  '__cccBun.__nodeFetchImpl = () => __require("node-fetch");',
+  "",
+].join("\n");
+
+/**
+ * `textFileNames` are the bunfs paths of embedded files the graph marks with
+ * bun's text loader; `import.meta.require` of one returns its contents rather
+ * than loading it as a module.
+ */
+export const buildGraphPreambleModule = (textFileNames: readonly string[]) =>
+  PREAMBLE +
+  GRAPH_PREAMBLE_EXTRAS +
+  `__cccBun.__textFiles = new Set(${JSON.stringify(textFileNames)});\n`;
+
+const GRAPH_PREAMBLE_IMPORT = `import "${NATIVE_BUNFS_ROOT_PREFIX}${GRAPH_PREAMBLE_MODULE_NAME}";`;
+const GRAPH_WS_SHIM_SPECIFIER = `${NATIVE_BUNFS_ROOT_PREFIX}${GRAPH_WS_SHIM_NAME}`;
+const GRAPH_NODE_FETCH_SHIM_SPECIFIER = `${NATIVE_BUNFS_ROOT_PREFIX}${GRAPH_NODE_FETCH_SHIM_NAME}`;
+
+export const buildGraphWsShimModule = () =>
+  [
+    GRAPH_PREAMBLE_IMPORT,
+    "const impl = globalThis.__cccBun.__wsImpl();",
+    "export default impl;",
+    "",
+  ].join("\n");
+
+export const buildGraphNodeFetchShimModule = () =>
+  [
+    GRAPH_PREAMBLE_IMPORT,
+    "const impl = globalThis.__cccBun.__nodeFetchImpl();",
+    "export default impl;",
+    "export const Headers = globalThis.Headers;",
+    "export const Request = globalThis.Request;",
+    "export const Response = globalThis.Response;",
+    "",
+  ].join("\n");
+
+const IMPORT_META_REQUIRE_RE = /\bimport\.meta\.require\b/g;
+const WS_IMPORT_RE = /(\bfrom\s*)"ws"/g;
+const WS_DYNAMIC_IMPORT_RE = /\bimport\(\s*"ws"\s*\)/g;
+const NODE_FETCH_IMPORT_RE = /(\bfrom\s*)"node-fetch"/g;
+const NODE_FETCH_DYNAMIC_IMPORT_RE = /\bimport\(\s*"node-fetch"\s*\)/g;
+
+const buildStringWidthReplacement = (fn: string, value: string) =>
+  `function ${fn}(${value}){return globalThis.__cccBun.stringWidth(${value})}`;
+
+export const rewriteGraphModuleForNode = (raw: string): string => {
+  let src = raw;
 
   if (src.includes(TRANSPILER_BAIL)) {
     src = src.replace(TRANSPILER_BAIL, TRANSPILER_POLYFILL);
   }
-  src = src.replace(BUN_STRING_WIDTH_RE, (_match, fn, value) => buildStringWidthReplacement(fn, value));
+  // each module has its own scope and only imports the preamble for its side
+  // effects, so the replacement reaches the shim through the global
+  src = src.replace(BUN_STRING_WIDTH_RE, (_match, fn: string, value: string) =>
+    buildStringWidthReplacement(fn, value),
+  );
+  src = src.replace(IMPORT_META_REQUIRE_RE, "globalThis.__cccBun.__importMetaRequire");
+  // function replacers so the shim specifiers need no $-escaping
+  src = src.replace(WS_IMPORT_RE, (_match, from: string) => `${from}"${GRAPH_WS_SHIM_SPECIFIER}"`);
+  src = src.replace(WS_DYNAMIC_IMPORT_RE, () => `import("${GRAPH_WS_SHIM_SPECIFIER}")`);
+  src = src.replace(NODE_FETCH_IMPORT_RE, (_match, from: string) => `${from}"${GRAPH_NODE_FETCH_SHIM_SPECIFIER}"`);
+  src = src.replace(NODE_FETCH_DYNAMIC_IMPORT_RE, () => `import("${GRAPH_NODE_FETCH_SHIM_SPECIFIER}")`);
   src = src.replace(BUN_DOT_RE, "__cccBun.");
   src = src.replace(GLOBAL_THIS_BUN_RE, "globalThis.__cccBun");
 
-  const entryIdx = src.indexOf(NATIVE_BUN_ENTRY_MARKER);
-  if (entryIdx === -1) {
-    throw new Error(
-      `native-preamble: bun entry wrapper '${NATIVE_BUN_ENTRY_MARKER}' not found in extracted bundle. ` +
-        "The bundle wrapping shape changed. Update NATIVE_BUN_ENTRY_MARKER in src/native/constants.ts.",
-    );
-  }
-
+  // first statement of every module, so shims exist before any body runs
+  // (workers start their own module graph at an arbitrary module)
   const firstNl = src.indexOf("\n");
   const insertAt = firstNl === -1 ? 0 : firstNl + 1;
-
-  const withNamedEntry = `${src.slice(0, entryIdx)}const __bun_entry = ${src.slice(entryIdx)}`;
-  const withPreamble = withNamedEntry.slice(0, insertAt) + PREAMBLE + withNamedEntry.slice(insertAt);
-
-  return withPreamble + ENTRY_INVOCATION;
+  return src.slice(0, insertAt) + GRAPH_PREAMBLE_IMPORT + "\n" + src.slice(insertAt);
 };
+
+export const PREAMBLE_VERSION = createHash("sha256")
+  .update(PREAMBLE)
+  .update(TRANSPILER_BAIL)
+  .update(TRANSPILER_POLYFILL)
+  .update(String(BUN_STRING_WIDTH_RE))
+  .update(String(BUN_DOT_RE))
+  .update(String(GLOBAL_THIS_BUN_RE))
+  .update(GRAPH_PREAMBLE_EXTRAS)
+  .update(buildGraphPreambleModule([]))
+  .update(buildGraphWsShimModule())
+  .update(buildGraphNodeFetchShimModule())
+  .update(String(IMPORT_META_REQUIRE_RE))
+  .update(String(WS_IMPORT_RE))
+  .update(String(WS_DYNAMIC_IMPORT_RE))
+  .update(String(NODE_FETCH_IMPORT_RE))
+  .update(String(NODE_FETCH_DYNAMIC_IMPORT_RE))
+  .update(GRAPH_PREAMBLE_IMPORT)
+  .update(GRAPH_WS_SHIM_SPECIFIER)
+  .update(GRAPH_NODE_FETCH_SHIM_SPECIFIER)
+  .update(GRAPH_LAYOUT_VERSION)
+  .update(buildStringWidthReplacement("$", "_"))
+  .digest("hex")
+  .slice(0, 16);

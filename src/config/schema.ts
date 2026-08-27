@@ -126,6 +126,10 @@ const policyHelpersEntrySchema = policyHelperSchema.partial({ path: true }).exte
   // static managed-settings payload applied when no helper on the platform's chain is
   // configured, or the selected helper fails at startup or refresh
   defaultSettings: z.record(z.string(), z.unknown()).optional(),
+  // how the helper's output composes with the settings of the source that delivered it:
+  // "replace" (default) uses the output as the policy, "merge" deep-merges it over that
+  // source's own settings (v2.1.246)
+  outputBehavior: z.enum(["replace", "merge"]).optional(),
 });
 
 const marketplaceEntrySchema = z.object({
@@ -327,6 +331,10 @@ const baseSettingsSchema = z.object({
 
   // blocks startup until remote managed settings are freshly fetched; exits on failure (v2.1.92)
   forceRemoteSettingsRefresh: z.boolean().optional(),
+  // how the managed settings sources compose: "first-wins" (default) uses the highest-priority
+  // source alone, "merge" deep-merges server-managed > MDM > managed-settings.json. Honored only
+  // from the highest-priority source present (v2.1.246)
+  managedSourcesBehavior: z.enum(["first-wins", "merge"]).optional(),
   // managed-policy startup gate: exit if the running version is below this minimum (v2.1.163)
   requiredMinimumVersion: z.string().optional(),
   // managed-policy startup gate: exit if the running version is above this maximum (v2.1.163)
@@ -341,6 +349,9 @@ const baseSettingsSchema = z.object({
   // false turns off syncing the skills enabled on claude.ai; only false is honored, since the
   // feature is enabled server-side. Not read from project settings (v2.1.234)
   syncClaudeAiSkills: z.boolean().optional(),
+  // false turns off syncing the plugins enabled on claude.ai; only false is honored, since the
+  // feature is enabled server-side. Not read from project settings (v2.1.246)
+  syncClaudeAiPlugins: z.boolean().optional(),
   // custom per-subagent status line shown in the agent panel (v2.1.105)
   subagentStatusLine: z
     .object({
@@ -407,6 +418,12 @@ const baseSettingsSchema = z.object({
   // script outputting JSON with AWS credentials
   awsCredentialExport: z.string().optional(),
   cleanupPeriodDays: z.number().optional(),
+  // prompt cache TTL for the main conversation; unset = automatic. env
+  // CLAUDE_CODE_PROMPT_CACHE_TTL takes precedence (v2.1.246)
+  promptCacheTtl: z.enum(["5m", "1h"]).optional(),
+  // prompt cache TTL for subagents, workflows and helper requests; unset = automatic. env
+  // CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL takes precedence (v2.1.246)
+  subagentPromptCacheTtl: z.enum(["5m", "1h"]).optional(),
   companyAnnouncements: z.array(z.string()).optional(),
   enableAllProjectMcpServers: z.boolean().optional(),
   // specific MCP servers from .mcp.json to approve
@@ -481,6 +498,41 @@ const baseSettingsSchema = z.object({
   enforceAvailableModels: z.boolean().optional(),
   // override mapping from Anthropic model ID to provider-specific model ID (v2.1.73)
   modelOverrides: z.record(z.string(), z.string()).optional(),
+  // curated /model picker rows, independent of the built-in lineup; honored from managed,
+  // --settings/SDK and user settings only, highest-precedence source wins outright (v2.1.246)
+  modelPicker: z
+    .object({
+      options: z.array(
+        z.object({
+          model: z.string(),
+          label: z.string().optional(),
+          description: z.string().optional(),
+        }),
+      ),
+      // true shows only Default plus these rows, hiding the built-in lineup
+      replaceBuiltInOptions: z.boolean().optional(),
+    })
+    .optional(),
+  // contracted per-model rates used for every reported spend figure; managed settings only
+  // (or a host application that manages the model provider) (v2.1.246)
+  modelPricing: z
+    .object({
+      // scales every computed cost, overridden or not
+      multiplier: z.number().gt(0).max(1).optional(),
+      overrides: z
+        .record(
+          z.string(),
+          z.object({
+            input: z.number().min(0).max(10_000),
+            output: z.number().min(0).max(10_000),
+            cacheRead: z.number().min(0).max(10_000),
+            // prices both 5-minute and 1-hour cache writes
+            cacheWrite: z.number().min(0).max(10_000),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
   // glob patterns of CLAUDE.md files to exclude from loading (v2.1.51)
   claudeMdExcludes: z.array(z.string()).optional(),
   // CLAUDE.md-style instructions injected as organization-managed memory

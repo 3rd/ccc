@@ -3,14 +3,17 @@ import * as fs from "fs";
 import { createRequire } from "node:module";
 import * as path from "path";
 import { log } from "@/utils/log";
-import { readCached, writeCachedAtomic } from "./cache";
+import { readCachedGraph, writeCachedGraphAtomic } from "./cache";
 import { resolveNativeBinary, type NativeInfo } from "./detect";
-import { extractEmbeddedJs } from "./extract";
-import { PREAMBLE_VERSION, wrapForNode } from "./preamble";
+import { materializeGraph } from "./graph-materialize";
+import { parseModuleGraph } from "./module-graph";
+import { PREAMBLE_VERSION } from "./preamble";
 
 export interface ResolvedCli {
+  /** the materialized entry module inside graphDir */
   extractedCliPath: string;
   modulePackageJsonPath: string;
+  graphDir: string;
 }
 
 const WRAPPER_PACKAGE_NAME = "@anthropic-ai/claude-code";
@@ -51,25 +54,39 @@ const readWrapperVersion = (wrapperDir: string) => {
 
 const extractCli = (info: NativeInfo): ResolvedCli => {
   const modulePackageJsonPath = path.join(info.wrapperDir, "package.json");
-  const cached = readCached(info.version, info.binaryPath, PREAMBLE_VERSION);
-  if (cached) {
-    log.info("NATIVE", `using cached cli.js for ${info.version}: ${cached}`);
-    return { extractedCliPath: cached, modulePackageJsonPath };
+
+  const cachedGraph = readCachedGraph(info.version, info.binaryPath, PREAMBLE_VERSION);
+  if (cachedGraph) {
+    log.info("NATIVE", `using cached module graph for ${info.version}: ${cachedGraph.graphDir}`);
+    return {
+      extractedCliPath: cachedGraph.entryPath,
+      modulePackageJsonPath,
+      graphDir: cachedGraph.graphDir,
+    };
   }
 
-  log.info("NATIVE", `extracting cli.js from ${info.binaryPath} (${info.platformPkg})`);
+  log.info("NATIVE", `extracting cli from ${info.binaryPath} (${info.platformPkg})`);
+  const graph = parseModuleGraph(fs.readFileSync(info.binaryPath));
+  if (!graph) {
+    throw new Error(
+      `native-resolve: no bun module graph in ${info.binaryPath}. ` +
+        "The binary predates claude-code 2.1.242 or its embedding format changed; " +
+        "see NATIVE_GRAPH_* in src/native/constants.ts.",
+    );
+  }
 
-  const segment = extractEmbeddedJs(info.binaryPath);
+  const { files, manifest } = materializeGraph(graph);
   log.debug(
     "NATIVE",
-    `extracted segment offset=${segment.offset} length=${segment.length} sha256=${segment.sha256}`,
+    `extracted module graph: ${manifest.modules.length} modules, ${files.length} files, entry ${manifest.entry}`,
   );
-
-  const wrapped = wrapForNode(segment.content);
-  const cachedPath = writeCachedAtomic(info.version, wrapped, info.binaryPath, PREAMBLE_VERSION);
-  log.info("NATIVE", `cached extracted cli.js at ${cachedPath}`);
-
-  return { extractedCliPath: cachedPath, modulePackageJsonPath };
+  const written = writeCachedGraphAtomic(info.version, files, manifest, info.binaryPath, PREAMBLE_VERSION);
+  log.info("NATIVE", `cached module graph at ${written.graphDir}`);
+  return {
+    extractedCliPath: written.entryPath,
+    modulePackageJsonPath,
+    graphDir: written.graphDir,
+  };
 };
 
 export const resolveCliForLaunch = (wrapperDir: string): ResolvedCli => {
