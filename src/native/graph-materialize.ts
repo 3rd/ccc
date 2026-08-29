@@ -49,7 +49,7 @@ export const materializeGraph = (graph: ModuleGraph): MaterializedGraph => {
     if (file.format === "esm") {
       files.push({
         relPath,
-        contents: rewriteGraphModuleForNode(file.contents.toString("utf8")),
+        contents: rewriteGraphModuleForNode(file.contents.toString("utf8"), `${NATIVE_BUNFS_ROOT_PREFIX}${diskName}`),
         substitutePrefix: true,
       });
       modules.push(relPath);
