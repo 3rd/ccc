@@ -418,6 +418,9 @@ const baseSettingsSchema = z.object({
   // script outputting JSON with AWS credentials
   awsCredentialExport: z.string().optional(),
   cleanupPeriodDays: z.number().optional(),
+  // retention ceiling in days for transcripts written by desktop-host surfaces (Claude
+  // Desktop, Cowork), which are exempt from the cleanupPeriodDays sweep; 0 = no ceiling (v2.1.250)
+  desktopSessionCleanupPeriodDays: z.number().optional(),
   // prompt cache TTL for the main conversation; unset = automatic. env
   // CLAUDE_CODE_PROMPT_CACHE_TTL takes precedence (v2.1.246)
   promptCacheTtl: z.enum(["5m", "1h"]).optional(),
@@ -458,7 +461,12 @@ const baseSettingsSchema = z.object({
   emojiCompletionEnabled: z.boolean().optional(),
   spinnerTipsOverride: z
     .object({
-      tips: z.array(z.string()),
+      // strings or {id, text, cooldownSessions?, priority?} objects (v2.1.250)
+      tips: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])).optional(),
+      // JSON file of the same tip shapes; user/--settings/on-disk managed only, read once per process (v2.1.250)
+      tipsFile: z.string().optional(),
+      // prefix shown before custom tips in the spinner; default "Tip" (v2.1.250)
+      label: z.string().optional(),
       excludeDefault: z.boolean().optional(),
     })
     .optional(),

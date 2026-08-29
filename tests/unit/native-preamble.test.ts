@@ -8,17 +8,29 @@ import {
 
 const MODULE_HEADER = "// @bun @bytecode";
 const PREAMBLE_IMPORT = `import "/$bunfs/root/${GRAPH_PREAMBLE_MODULE_NAME}";`;
+const MODULE_SPECIFIER = "/$bunfs/root/module.js";
+const SELF_REGISTRATION =
+  `import * as __cccSelfNamespace from ${JSON.stringify(MODULE_SPECIFIER)};` +
+  `globalThis.__cccBun.__graphNamespaces.set(${JSON.stringify(MODULE_SPECIFIER)}, __cccSelfNamespace);`;
 
-const rewrite = (...lines: string[]) => rewriteGraphModuleForNode([MODULE_HEADER, ...lines].join("\n"));
+const rewrite = (...lines: string[]) =>
+  rewriteGraphModuleForNode([MODULE_HEADER, ...lines].join("\n"), MODULE_SPECIFIER);
 
 describe("rewriteGraphModuleForNode", () => {
-  test("injects the preamble import after the module's first line", () => {
+  test("injects the preamble import and namespace registration after the module's first line", () => {
     const rewritten = rewrite("const x = 1;");
-    expect(rewritten.split("\n").slice(0, 3)).toEqual([MODULE_HEADER, PREAMBLE_IMPORT, "const x = 1;"]);
+    expect(rewritten.split("\n").slice(0, 4)).toEqual([
+      MODULE_HEADER,
+      PREAMBLE_IMPORT,
+      SELF_REGISTRATION,
+      "const x = 1;",
+    ]);
   });
 
   test("prepends the preamble import when the module has a single line", () => {
-    expect(rewriteGraphModuleForNode("const x = 1;")).toBe(`${PREAMBLE_IMPORT}\nconst x = 1;`);
+    expect(rewriteGraphModuleForNode("const x = 1;", MODULE_SPECIFIER)).toBe(
+      `${PREAMBLE_IMPORT}\n${SELF_REGISTRATION}\nconst x = 1;`,
+    );
   });
 
   test("routes the Bun.stringWidth wrapper through the global shim", () => {

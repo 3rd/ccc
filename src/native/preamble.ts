@@ -1,3 +1,4 @@
+import { parse } from "acorn";
 import { createHash } from "crypto";
 import { NATIVE_BUNFS_ROOT_PREFIX } from "./constants";
 
@@ -69,6 +70,21 @@ const PREAMBLE = [
   "  // throw (vendor-path probing; CCC sets USE_BUILTIN_RIPGREP=0 for system",
   "  // ripgrep). the thrown error names the asset; a bare require failure would not.",
   `  if (typeof specifier === "string" && specifier.startsWith("${NATIVE_BUNFS_ROOT_PREFIX}")) {`,
+  "    // 2.1.248+ chunks require sibling ESM chunks synchronously at module top",
+  "    // level (import.meta.require of a chunk-*.js); bun resolves those from the",
+  "    // graph, and node >= 22.12 does the same via require(esm). when the target's",
+  "    // static closure reaches into the import cycle being evaluated, node refuses",
+  "    // (ERR_REQUIRE_CYCLE_MODULE) where bun would evaluate through the cycle with",
+  "    // partial namespaces; a lazy namespace defers resolution to first property",
+  "    // access, which for these interop requires happens after the cycle completes.",
+  '    if (specifier.endsWith(".js") || specifier.endsWith(".mjs")) {',
+  "      try {",
+  "        return __baseRequire(specifier);",
+  "      } catch (error) {",
+  '        if (error?.code !== "ERR_REQUIRE_CYCLE_MODULE") throw error;',
+  "        return __cccLazyNamespace(specifier);",
+  "      }",
+  "    }",
   "    throw new Error(",
   '      "native-preamble: refusing to load bun-embedded asset: " + specifier + ". " +',
   '      "Materialized graph assets are not loaded under node. " +',
@@ -76,6 +92,28 @@ const PREAMBLE = [
   "    );",
   "  }",
   "  return __baseRequire(specifier);",
+  "}",
+  "",
+  "const __cccLazyNamespaceCache = new Map();",
+  "function __cccLazyNamespace(specifier) {",
+  "  let cached = __cccLazyNamespaceCache.get(specifier);",
+  "  if (cached) return cached;",
+  "  let resolved;",
+  "  const resolve = () => (resolved ??= __baseRequire(specifier));",
+  "  cached = new Proxy({}, {",
+  "    get: (_target, property) => resolve()[property],",
+  "    has: (_target, property) => property in resolve(),",
+  "    ownKeys: () => Reflect.ownKeys(resolve()),",
+  "    // namespace properties are non-configurable, which a plain-object proxy",
+  "    // target must not report; force configurable to satisfy proxy invariants",
+  "    getOwnPropertyDescriptor: (_target, property) => {",
+  "      const descriptor = Reflect.getOwnPropertyDescriptor(resolve(), property);",
+  "      if (descriptor) descriptor.configurable = true;",
+  "      return descriptor;",
+  "    },",
+  "  });",
+  "  __cccLazyNamespaceCache.set(specifier, cached);",
+  "  return cached;",
   "}",
   "",
   "function __cccRequireDefault(specifier) {",
@@ -474,7 +512,7 @@ const GLOBAL_THIS_BUN_RE = /\bglobalThis\.Bun\b/g;
 // Identity of the materialized layout itself: which files are emitted and
 // which of them the patch pipeline may rewrite. It feeds PREAMBLE_VERSION, so
 // changing the layout invalidates every cached graph.
-export const GRAPH_LAYOUT_VERSION = "graph-layout-2:preamble-patchable";
+export const GRAPH_LAYOUT_VERSION = "graph-layout-3:chunk-requires-linked";
 
 export const GRAPH_PREAMBLE_MODULE_NAME = "__ccc_preamble.mjs";
 export const GRAPH_WS_SHIM_NAME = "__ccc_ws.mjs";
@@ -536,10 +574,17 @@ const GRAPH_PREAMBLE_EXTRAS = [
   "// hit __require's bunfs guard and throw, and the bundle's call sites fall",
   "// back to vendor-path probing.",
   "__cccBun.__textFiles = new Set();",
+  "// graph modules register their own namespace as their first body statement, so",
+  "// a require of a module that is mid-evaluation in the current import cycle —",
+  "// which node's require(esm) refuses — resolves to the (possibly partial)",
+  "// namespace, matching bun's in-cycle require semantics.",
+  "__cccBun.__graphNamespaces = new Map();",
   "__cccBun.__importMetaRequire = (specifier) => {",
   "  if (__cccBun.__textFiles.has(specifier)) {",
   '    return __baseRequire("fs").readFileSync(specifier, "utf8");',
   "  }",
+  "  const graphNamespace = __cccBun.__graphNamespaces.get(specifier);",
+  "  if (graphNamespace !== undefined) return graphNamespace;",
   "  return __require(specifier);",
   "};",
   '__cccBun.__wsImpl = () => __require("ws");',
@@ -589,8 +634,104 @@ const NODE_FETCH_DYNAMIC_IMPORT_RE = /\bimport\(\s*"node-fetch"\s*\)/g;
 const buildStringWidthReplacement = (fn: string, value: string) =>
   `function ${fn}(${value}){return globalThis.__cccBun.stringWidth(${value})}`;
 
-export const rewriteGraphModuleForNode = (raw: string): string => {
-  let src = raw;
+const CHUNK_REQUIRE_PRECHECK_RE = new RegExp(
+  `import\\.meta\\.require\\("${NATIVE_BUNFS_ROOT_PREFIX.replace(/\$/g, "\\$")}[^"]+\\.m?js"\\)`,
+);
+const CHUNK_SPECIFIER_RE = new RegExp(`^${NATIVE_BUNFS_ROOT_PREFIX.replace(/\$/g, "\\$")}.+\\.m?js$`);
+
+interface TopLevelChunkRequire {
+  start: number;
+  end: number;
+  specifier: string;
+}
+
+// a top-level import.meta.require of a sibling graph module blocks that
+// module's evaluation in bun, so it is a real evaluation edge; requires inside
+// functions run after the graph settles and stay on the runtime shim.
+const findTopLevelChunkRequires = (src: string): TopLevelChunkRequire[] => {
+  let ast: unknown;
+  try {
+    ast = parse(src, { ecmaVersion: "latest", sourceType: "module" });
+  } catch {
+    // unparseable module: leave every require on the runtime shim
+    return [];
+  }
+
+  const requires: TopLevelChunkRequire[] = [];
+  const isFunctionType = (type: string) =>
+    type === "FunctionDeclaration" || type === "FunctionExpression" || type === "ArrowFunctionExpression";
+
+  const visit = (node: Record<string, unknown>, isTopLevel: boolean, isIifeCallee = false) => {
+    const type = node.type as string;
+    // a sync IIFE body runs during module evaluation, so it stays top-level
+    const childTopLevel = isTopLevel && (!isFunctionType(type) || (isIifeCallee && node.async !== true));
+
+    if (type === "CallExpression" && isTopLevel) {
+      const callee = node.callee as Record<string, unknown>;
+      const args = node.arguments as Array<Record<string, unknown>>;
+      if (
+        callee.type === "MemberExpression" &&
+        (callee.object as Record<string, unknown>).type === "MetaProperty" &&
+        ((callee.property as Record<string, unknown>).name as string) === "require" &&
+        args.length === 1 &&
+        args[0]?.type === "Literal" &&
+        typeof args[0].value === "string" &&
+        CHUNK_SPECIFIER_RE.test(args[0].value)
+      ) {
+        requires.push({ start: node.start as number, end: node.end as number, specifier: args[0].value });
+        return;
+      }
+      if (isFunctionType(callee.type as string)) {
+        visit(callee, isTopLevel, true);
+        for (const argument of args) visit(argument, childTopLevel);
+        return;
+      }
+    }
+
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (item && typeof item === "object" && "type" in item) {
+            visit(item as Record<string, unknown>, childTopLevel);
+          }
+        }
+      } else if (value && typeof value === "object" && "type" in value) {
+        visit(value as Record<string, unknown>, childTopLevel);
+      }
+    }
+  };
+  visit(ast as Record<string, unknown>, true);
+  return requires;
+};
+
+// rewrites top-level requires of sibling graph modules into hoisted namespace
+// imports, so node links them as the evaluation edges bun treats them as and
+// orders import cycles the way bun does; an in-cycle require under node throws
+// ERR_REQUIRE_CYCLE_MODULE instead.
+const linkTopLevelChunkRequires = (src: string): string => {
+  if (!CHUNK_REQUIRE_PRECHECK_RE.test(src)) return src;
+  const requires = findTopLevelChunkRequires(src);
+  if (requires.length === 0) return src;
+
+  const namesBySpecifier = new Map<string, string>();
+  let out = src;
+  for (const { start, end, specifier } of [...requires].sort((a, b) => b.start - a.start)) {
+    let name = namesBySpecifier.get(specifier);
+    if (!name) {
+      name = `__cccGraphChunk${namesBySpecifier.size}`;
+      namesBySpecifier.set(specifier, name);
+    }
+    out = out.slice(0, start) + name + out.slice(end);
+  }
+  for (const [specifier, name] of namesBySpecifier) {
+    out += `\nimport * as ${name} from ${JSON.stringify(specifier)};`;
+  }
+  return out;
+};
+
+export const rewriteGraphModuleForNode = (raw: string, bunfsSpecifier: string): string => {
+  // must run first: it locates call sites by position in the raw source
+  let src = linkTopLevelChunkRequires(raw);
 
   if (src.includes(TRANSPILER_BAIL)) {
     src = src.replace(TRANSPILER_BAIL, TRANSPILER_POLYFILL);
@@ -610,10 +751,18 @@ export const rewriteGraphModuleForNode = (raw: string): string => {
   src = src.replace(GLOBAL_THIS_BUN_RE, "globalThis.__cccBun");
 
   // first statement of every module, so shims exist before any body runs
-  // (workers start their own module graph at an arbitrary module)
+  // (workers start their own module graph at an arbitrary module). the module
+  // then registers its own namespace under its bunfs specifier as its first
+  // body action, so __importMetaRequire can serve a require of a module that is
+  // mid-evaluation in the current import cycle — which node's require(esm)
+  // refuses — with the (possibly partial) namespace, matching bun's in-cycle
+  // require semantics. the self-import adds no cross-module evaluation edge.
+  const selfRegistration =
+    `import * as __cccSelfNamespace from ${JSON.stringify(bunfsSpecifier)};` +
+    `globalThis.__cccBun.__graphNamespaces.set(${JSON.stringify(bunfsSpecifier)}, __cccSelfNamespace);`;
   const firstNl = src.indexOf("\n");
   const insertAt = firstNl === -1 ? 0 : firstNl + 1;
-  return src.slice(0, insertAt) + GRAPH_PREAMBLE_IMPORT + "\n" + src.slice(insertAt);
+  return src.slice(0, insertAt) + GRAPH_PREAMBLE_IMPORT + "\n" + selfRegistration + "\n" + src.slice(insertAt);
 };
 
 export const PREAMBLE_VERSION = createHash("sha256")
