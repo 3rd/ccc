@@ -11,10 +11,12 @@ export type HookEventName =
   | "PermissionDenied"
   | "PermissionRequest"
   | "PostCompact"
+  | "PostModelSwitch"
   | "PostToolBatch"
   | "PostToolUse"
   | "PostToolUseFailure"
   | "PreCompact"
+  | "PreModelSwitch"
   | "PreToolUse"
   | "SessionEnd"
   | "SessionStart"
@@ -273,9 +275,21 @@ export interface UserPromptExpansionHookInput extends BaseHookInput {
 
 export interface SessionStartHookInput extends BaseHookInput {
   hook_event_name: "SessionStart";
-  source: "clear" | "compact" | "resume" | "startup";
+  source: "clear" | "compact" | "fork" | "resume" | "startup";
   agent_type?: string;
   model?: string;
+  session_title?: string;
+  // resume/fork: seconds since the resumed transcript's last assistant response (v2.1.251)
+  seconds_since_last_response?: number;
+  // resume/fork: the resumed transcript's last response input + cache_read +
+  // cache_creation + output tokens (v2.1.251)
+  context_tokens?: number;
+  // resume/fork: seconds_since_last_response exceeds the prompt-cache TTL, so
+  // the first request re-caches context_tokens (v2.1.251)
+  prompt_cache_likely_expired?: boolean;
+  // resume/fork: estimated cost of re-caching context_tokens on the session
+  // model — the managed modelPricing when set, otherwise list price (v2.1.251)
+  estimated_cache_write_usd?: number;
 }
 
 export interface SessionEndHookInput extends BaseHookInput {
@@ -398,6 +412,44 @@ export interface PostCompactHookInput extends BaseHookInput {
 export interface SetupHookInput extends BaseHookInput {
   hook_event_name: "Setup";
   trigger: "init" | "maintenance";
+}
+
+// shared payload of the model-switch hooks (v2.1.251)
+interface ModelSwitchHookFields {
+  // resolved model id the session was running before the switch
+  from_model: string;
+  // resolved model id the session runs after the switch
+  to_model: string;
+  // what was asked for (alias such as "opus", a full id, or null for "default")
+  requested_model: string | null;
+  // prompt tokens the next request re-sends: the last main-thread response's
+  // input + cache_read + cache_creation + output tokens (0 before the first response)
+  context_tokens: number;
+  // whether the current model's prompt cache is likely still warm (a switch then forfeits it)
+  prompt_cache_warm: boolean;
+  cache_ttl: "5m" | "1h";
+  // estimated cost of re-caching context_tokens on to_model at its cache-write
+  // rate — the managed modelPricing when set, otherwise list price; excludes the response
+  estimated_cache_write_usd: number;
+  // configured: priced at the managed modelPricing setting; catalog: list price;
+  // default: to_model unknown, the default tier was assumed
+  pricing: "catalog" | "configured" | "default";
+}
+
+// fires before a model switch applies; output can allow/deny/ask (v2.1.251)
+export interface PreModelSwitchHookInput extends BaseHookInput, ModelSwitchHookFields {
+  hook_event_name: "PreModelSwitch";
+  // command: /model, the /config Model row, or fast-mode promotion; picker: the
+  // interactive model picker; sdk: headless set_model (SDK, Remote Control, IDE)
+  source: "command" | "picker" | "sdk";
+}
+
+// fires after a model switch applied (v2.1.251)
+export interface PostModelSwitchHookInput extends BaseHookInput, ModelSwitchHookFields {
+  hook_event_name: "PostModelSwitch";
+  // adds auto (automatic fallback or other programmatic change) and resume
+  // (model restored while resuming a session) to the PreModelSwitch sources
+  source: "auto" | "command" | "picker" | "resume" | "sdk";
 }
 
 export interface SubagentStartHookInput extends BaseHookInput {
@@ -555,10 +607,12 @@ export type ClaudeHookInput =
   | PermissionDeniedHookInput
   | PermissionRequestHookInput
   | PostCompactHookInput
+  | PostModelSwitchHookInput
   | PostToolBatchHookInput
   | PostToolUseFailureHookInput
   | PostToolUseHookInput
   | PreCompactHookInput
+  | PreModelSwitchHookInput
   | PreToolUseHookInput
   | SessionEndHookInput
   | SessionStartHookInput
@@ -734,6 +788,24 @@ export interface PostToolUseFailureHookResponse extends BaseHookResponse {
   };
 }
 
+export interface PreModelSwitchHookResponse extends BaseHookResponse {
+  hookSpecificOutput?: {
+    hookEventName: "PreModelSwitch";
+    // same contract as PreToolUse: allow proceeds (skipping the interactive
+    // cache-miss confirm), deny cancels the switch, ask asks the user to
+    // confirm (a headless session refuses instead) (v2.1.251)
+    permissionDecision?: "allow" | "ask" | "deny";
+    permissionDecisionReason?: string;
+  };
+}
+
+export interface PostModelSwitchHookResponse extends BaseHookResponse {
+  hookSpecificOutput?: {
+    hookEventName: "PostModelSwitch";
+    additionalContext?: string;
+  };
+}
+
 export interface SetupHookResponse extends BaseHookResponse {
   hookSpecificOutput?: {
     hookEventName: "Setup";
@@ -828,10 +900,12 @@ export type HookResponse =
   | PermissionDeniedHookResponse
   | PermissionRequestHookResponse
   | PostCompactHookResponse
+  | PostModelSwitchHookResponse
   | PostToolBatchHookResponse
   | PostToolUseFailureHookResponse
   | PostToolUseHookResponse
   | PreCompactHookResponse
+  | PreModelSwitchHookResponse
   | PreToolUseHookResponse
   | SessionEndHookResponse
   | SessionStartHookResponse
@@ -897,6 +971,10 @@ export interface HookEventMap {
     input: PostCompactHookInput;
     response: PostCompactHookResponse | void;
   };
+  PostModelSwitch: {
+    input: PostModelSwitchHookInput;
+    response: PostModelSwitchHookResponse | void;
+  };
   PostToolBatch: {
     input: PostToolBatchHookInput;
     response: PostToolBatchHookResponse | void;
@@ -912,6 +990,10 @@ export interface HookEventMap {
   PreCompact: {
     input: PreCompactHookInput;
     response: PreCompactHookResponse | void;
+  };
+  PreModelSwitch: {
+    input: PreModelSwitchHookInput;
+    response: PreModelSwitchHookResponse | void;
   };
   PreToolUse: {
     input: PreToolUseHookInput;

@@ -57,8 +57,37 @@ export type StatusLineInput = {
       used_percentage: number;
       resets_at: number;
     };
+    // behind a Claude gateway, the fullest spend limit; used_percentage can
+    // exceed 100 once exceeded (v2.1.251)
+    spend_limit?: {
+      used_percentage: number;
+      resets_at: number;
+    };
+  };
+  // per-session prompt-cache state; absent before the first API request (v2.1.251)
+  prompt_cache?: {
+    warm: boolean;
+    caching_observed: boolean;
+    ttl: "5m" | "1h";
+    // unix epoch seconds; null when the cache never warmed
+    expires_at: number | null;
+    requests: number;
+    misses: number;
+    expected_rebuilds: number;
+    hit_ratio: number;
+    cache_write_tokens: number;
+    // tokens re-cached on unexpected misses
+    miss_recache_tokens: number;
+    // unix epoch seconds; null when no miss occurred
+    last_miss_at: number | null;
+    // tokens the next request would re-cache if the cache went cold
+    recache_tokens_if_cold: number;
   };
   exceeds_200k_tokens: boolean;
+  fast_mode: boolean;
+  thinking: {
+    enabled: boolean;
+  };
   // effective effort for the turn (/effort override ?? model catalog default_effort);
   // only present when the current model supports effort (v2.1.219)
   effort?: {

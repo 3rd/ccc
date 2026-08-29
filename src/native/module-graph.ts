@@ -62,6 +62,7 @@ const parseAt = (data: Buffer, trailerPos: number): ModuleGraph | null => {
     const nameLength = data.readUInt32LE(record + 4);
     const contentsOffset = data.readUInt32LE(record + 8);
     const contentsLength = data.readUInt32LE(record + 12);
+    const encoding = data.readUInt8(record + 48);
     const loader = data.readUInt8(record + 49);
     const format = MODULE_FORMATS[data.readUInt8(record + 50)] ?? "none";
 
@@ -73,9 +74,13 @@ const parseAt = (data: Buffer, trailerPos: number): ModuleGraph | null => {
     const name = fullName.slice(NATIVE_BUNFS_ROOT_PREFIX.length);
     if (name.length === 0 || name.includes("..") || name.startsWith("/")) return null;
 
-    const contents = Buffer.from(
-      data.subarray(base + contentsOffset, base + contentsOffset + contentsLength),
-    );
+    const raw = data.subarray(base + contentsOffset, base + contentsOffset + contentsLength);
+    // encoding byte: 0 binary, 1 latin1, 2 utf16. bun's runtime decodes utf16
+    // modules through this byte; node serves the materialized file's raw bytes,
+    // so utf16 contents must land on disk as utf8 or every reader sees NULs.
+    // latin1 module text is ASCII in practice and is written unchanged.
+    const contents =
+      encoding === 2 ? Buffer.from(Buffer.from(raw).toString("utf16le"), "utf8") : Buffer.from(raw);
     files.push({ name, contents, format, loader });
   }
 
