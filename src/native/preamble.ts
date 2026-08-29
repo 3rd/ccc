@@ -460,6 +460,14 @@ const PREAMBLE = [
   "  file: (pathOrFd) => new __cccBunFile(pathOrFd),",
   "  stdin: __cccBunStdin,",
   '  deepEquals: (a, b) => __baseRequire("util").isDeepStrictEqual(a, b),',
+  "  // 2.1.251+ ships embedded text assets zstd-compressed (.md.zst) and reads",
+  "  // them via Bun.zstdDecompress(Sync). node's zlib has both since 22.15/23.8;",
+  "  // the async node form is callback-style, bun's returns a promise.",
+  '  zstdDecompressSync: (data) => __baseRequire("zlib").zstdDecompressSync(data),',
+  "  zstdDecompress: (data) =>",
+  "    new Promise((resolvePromise, rejectPromise) =>",
+  '      __baseRequire("zlib").zstdDecompress(data, (error, result) => (error ? rejectPromise(error) : resolvePromise(result))),',
+  "    ),",
   "  // claude gateway features require the native bun binary; the bundle's own",
   '  // `typeof Bun>"u"` branch says as much. Clear errors beat "not a function".',
   '  serve: () => { throw new Error("ccc bun shim: serve() is not supported (claude gateway requires the native bun binary)"); },',
@@ -512,7 +520,7 @@ const GLOBAL_THIS_BUN_RE = /\bglobalThis\.Bun\b/g;
 // Identity of the materialized layout itself: which files are emitted and
 // which of them the patch pipeline may rewrite. It feeds PREAMBLE_VERSION, so
 // changing the layout invalidates every cached graph.
-export const GRAPH_LAYOUT_VERSION = "graph-layout-3:chunk-requires-linked";
+export const GRAPH_LAYOUT_VERSION = "graph-layout-4:utf16-assets-transcoded";
 
 export const GRAPH_PREAMBLE_MODULE_NAME = "__ccc_preamble.mjs";
 export const GRAPH_WS_SHIM_NAME = "__ccc_ws.mjs";

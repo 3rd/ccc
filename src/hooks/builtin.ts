@@ -89,6 +89,13 @@ const builtins: BuiltinCommands = {
     batchable: true,
     handler: eventRecorder.record,
   }),
+  PostModelSwitch: createHook({
+    event: "PostModelSwitch",
+    id: "builtin-recorder",
+    source: "builtin",
+    batchable: true,
+    handler: eventRecorder.record,
+  }),
   PostToolBatch: createHook({
     event: "PostToolBatch",
     id: "builtin-recorder",
@@ -112,6 +119,13 @@ const builtins: BuiltinCommands = {
   }),
   PreCompact: createHook({
     event: "PreCompact",
+    id: "builtin-recorder",
+    source: "builtin",
+    batchable: true,
+    handler: eventRecorder.record,
+  }),
+  PreModelSwitch: createHook({
+    event: "PreModelSwitch",
     id: "builtin-recorder",
     source: "builtin",
     batchable: true,
