@@ -495,6 +495,11 @@ const baseSettingsSchema = z.object({
   axScreenReader: z.boolean().optional(),
   // whether /rename updates terminal tab title (v2.1.51)
   terminalTitleFromRename: z.boolean().optional(),
+  // clock format for UI times: "auto" (locale default), "12-hour", "24-hour", "24-hour-utc",
+  // or a strftime pattern (any value containing "%"); other values read as "auto" (v2.1.257)
+  timeFormat: z.union([z.enum(["auto", "12-hour", "24-hour", "24-hour-utc"]), z.string()]).optional(),
+  // IANA time zone for UI times, e.g. "UTC" or "Europe/Dublin"; unknown names fall back to the system zone (v2.1.257)
+  timeZone: z.string().optional(),
   // enable/disable prompt suggestions (v2.1.51)
   promptSuggestionEnabled: z.boolean().optional(),
   // minimum version to stay on, prevents downgrades (v2.1.51)
@@ -515,6 +520,10 @@ const baseSettingsSchema = z.object({
           model: z.string(),
           label: z.string().optional(),
           description: z.string().optional(),
+          // for a model this CLI version does not know: ID of a known model whose client-side
+          // handling (prompt profile, capability/effort defaults) applies; label and sent model
+          // ID are unchanged (v2.1.257)
+          behavesAs: z.string().optional(),
         }),
       ),
       // true shows only Default plus these rows, hiding the built-in lineup
@@ -738,6 +747,9 @@ const baseSettingsSchema = z.object({
       disableBypassPermissionsMode: z.literal("disable").optional(),
       // disable auto mode (v2.1.71, managed settings)
       disableAutoMode: z.enum(["disable"]).optional(),
+      // refuse file-tool reads (Read, Grep, Glob, LSP) outside the working directories in every
+      // permission mode; true in any settings source wins (v2.1.257)
+      blockReadsOutsideWorkingDirectories: z.boolean().optional(),
     })
     .optional(),
 
