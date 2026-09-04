@@ -580,6 +580,19 @@ const baseSettingsSchema = z.object({
       }),
     )
     .optional(),
+  // managed settings only; the cli rejects anything but http/sse servers with an https url (v2.1.259)
+  managedMcpServers: z
+    .record(
+      z.string().regex(/^[A-Za-z0-9_-]+$/),
+      z.object({
+        type: z.enum(["http", "streamable-http", "sse"]),
+        url: z.string(),
+        headers: z.record(z.string(), z.string()).optional(),
+        timeout: z.number().optional(),
+        alwaysLoad: z.boolean().optional(),
+      }),
+    )
+    .optional(),
   // enterprise MCP server allowlist (v2.1.51)
   allowedMcpServers: z
     .array(
@@ -710,6 +723,12 @@ const baseSettingsSchema = z.object({
   ultracode: z.boolean().optional(),
   // @internal whether the user has accepted the multi-agent workflow usage warning (v2.1.152)
   skipWorkflowUsageWarning: z.boolean().optional(),
+  // @internal; the cli reads allowUnattendedServing from managed and user settings only (v2.1.259)
+  remoteTools: z
+    .object({
+      allowUnattendedServing: z.boolean().optional(),
+    })
+    .optional(),
 
   // controls the `command` plugin source (marketplace-declared command produces the plugin
   // directory); unset follows allowManagedHooksOnly; managed settings only (v2.1.229)
@@ -1053,6 +1072,14 @@ const baseSettingsSchema = z.object({
   askUserQuestionTimeout: z.enum(["60s", "5m", "10m", "never"]).optional(),
   teammateMode: z.enum(["auto", "tmux", "iterm2", "in-process"]).optional(), // default: "auto" (iterm2 v2.1.186)
   remoteControlAtStartup: z.boolean().optional(), // default: unset (tristate; undefined = "default")
+  // what a remote-control environment reports about this machine on registration; managed, --settings
+  // and user settings pick the level (most restrictive wins), project and local settings can only lower
+  // it; unset defers to the feature rollout (v2.1.260)
+  remoteControl: z
+    .object({
+      shareHostProfile: z.enum(["off", "basic", "full"]).optional(),
+    })
+    .optional(),
   autoUploadSessions: z.boolean().optional(), // default: unset (server-controlled)
   inputNeededNotifEnabled: z.boolean().optional(), // default: unset (server-controlled)
   agentPushNotifEnabled: z.boolean().optional(), // default: false
