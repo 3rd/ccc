@@ -1,3 +1,22 @@
+// closed set the cli reports as a prompt-cache miss cause (v2.1.260)
+export type PromptCacheMissCause =
+  | "system_prompt_changed"
+  | "tools_changed"
+  | "model_changed"
+  | "fast_mode_changed"
+  | "cache_scope_or_ttl_changed"
+  | "betas_changed"
+  | "effort_changed"
+  | "auto_mode_changed"
+  | "overage_changed"
+  | "extra_body_changed"
+  | "defer_loading_changed"
+  | "messages_rewritten"
+  | "ttl_expired_5m"
+  | "ttl_expired_1h"
+  | "likely_server_side"
+  | "unknown";
+
 export type StatusLineInput = {
   session_id: string;
   // human-readable session name set via /rename (optional)
@@ -74,14 +93,24 @@ export type StatusLineInput = {
     requests: number;
     misses: number;
     expected_rebuilds: number;
-    hit_ratio: number;
+    // null before any response reported cache tokens (v2.1.260)
+    hit_ratio: number | null;
     cache_write_tokens: number;
     // tokens re-cached on unexpected misses
     miss_recache_tokens: number;
     // unix epoch seconds; null when no miss occurred
     last_miss_at: number | null;
-    // tokens the next request would re-cache if the cache went cold
-    recache_tokens_if_cold: number;
+    // client-side heuristic for the most recent miss; null when none was diagnosed (v2.1.260)
+    last_miss_cause: {
+      causes: PromptCacheMissCause[];
+      tools_added?: number;
+      tools_removed?: number;
+      system_char_delta?: number;
+    } | null;
+    // misses per diagnosed cause this session (v2.1.260)
+    miss_causes: Partial<Record<PromptCacheMissCause, number>>;
+    // tokens the next request would re-cache if the cache went cold; null right after a compaction (v2.1.260)
+    recache_tokens_if_cold: number | null;
   };
   exceeds_200k_tokens: boolean;
   fast_mode: boolean;
