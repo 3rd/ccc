@@ -652,6 +652,7 @@ const run = async () => {
     appendSystemPromptFile?: string;
     // append to every Task-tool subagent's system prompt (print mode only) (v2.1.207)
     appendSubagentSystemPrompt?: string;
+    appendSubagentSystemPromptFile?: string;
     betas?: string[];
     maxTurns?: number;
     noSessionPersistence?: boolean;
@@ -854,6 +855,11 @@ const run = async () => {
   // --append-subagent-system-prompt (print mode only, v2.1.207)
   if (!hasCliArg("--append-subagent-system-prompt") && settingsCli.appendSubagentSystemPrompt) {
     args.push("--append-subagent-system-prompt", settingsCli.appendSubagentSystemPrompt);
+  }
+
+  // --append-subagent-system-prompt-file (print mode only, v2.1.261)
+  if (!hasCliArg("--append-subagent-system-prompt-file") && settingsCli.appendSubagentSystemPromptFile) {
+    args.push("--append-subagent-system-prompt-file", settingsCli.appendSubagentSystemPromptFile);
   }
 
   // --betas (comma-separated)
