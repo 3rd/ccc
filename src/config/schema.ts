@@ -224,6 +224,8 @@ const baseSettingsSchema = z.object({
       appendSystemPromptFile: z.string().optional(),
       // append to every Task-tool subagent's system prompt, propagated to nested subagents (print mode only, v2.1.207)
       appendSubagentSystemPrompt: z.string().optional(),
+      // read the subagent append prompt from a file; the CLI rejects combining it with appendSubagentSystemPrompt (print mode only, v2.1.261)
+      appendSubagentSystemPromptFile: z.string().optional(),
       // beta headers to include in API requests (API key users only)
       betas: z.array(z.string()).optional(),
       // limit number of agentic turns (print mode only)
@@ -285,6 +287,10 @@ const baseSettingsSchema = z.object({
   disableBundledSkills: z.boolean().optional(),
   // default shell for ! commands: bash (default) or powershell (v2.1.85)
   defaultShell: z.enum(["bash", "powershell"]).optional(),
+  // inline Bash/PowerShell output cap in chars, clamped to 4000-128000 (default 30000); overrides BASH_MAX_OUTPUT_LENGTH (v2.1.261)
+  bashOutputMaxChars: z.number().int().positive().optional(),
+  // inline TaskOutput cap in chars, clamped to 4000-128000 (default 32000); overrides TASK_MAX_OUTPUT_LENGTH (v2.1.261)
+  taskOutputMaxChars: z.number().int().positive().optional(),
   // customize spinner verbs (v2.1.23)
   spinnerVerbs: z
     .object({
@@ -1020,9 +1026,7 @@ const baseSettingsSchema = z.object({
     .enum(["auto", "dark", "light", "light-daltonized", "dark-daltonized", "light-ansi", "dark-ansi"])
     .optional(), // default: "dark"
   editorMode: z.enum(["normal", "vim"]).optional(), // default: "normal"
-  // word-editing key conventions in the prompt input: 'readline' matches Bash (Ctrl+W deletes
-  // to whitespace, punctuation separates words); 'classic' (default) keeps Unicode word
-  // segmentation (v2.1.238)
+  // deprecated, no effect: word-editing keys always follow readline conventions (v2.1.238, deprecated v2.1.261)
   keybindingFlavor: z.enum(["classic", "readline"]).optional(),
   // underline misspelled words in the prompt input using an installed aspell/hunspell/ispell;
   // read from user, flag and managed settings only — ignored in project settings (v2.1.235)
