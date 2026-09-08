@@ -27,7 +27,7 @@ export const getActiveProfileName = () => {
   return undefined;
 };
 
-/** merges profiles by name across config layers (env deep-merges within each profile) */
+/** merges profiles by name across config layers */
 export const mergeProfiles = (
   ...layers: (Record<string, Record<string, unknown>> | undefined)[]
 ): ProfileMap => {
