@@ -195,6 +195,10 @@ interface BaseHookInput {
   session_id: string;
   transcript_path: string;
   cwd: string;
+  // session scratchpad directory; present only when the scratchpad feature is on (v2.1.257)
+  scratchpad_dir?: string;
+  // id of the user prompt that started the current turn (v2.1.196)
+  prompt_id?: string;
   permission_mode?: PermissionMode;
   // present when hook fires from within a subagent (v2.1.64)
   agent_id?: string;

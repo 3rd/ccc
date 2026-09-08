@@ -130,6 +130,11 @@ const policyHelpersEntrySchema = policyHelperSchema.partial({ path: true }).exte
   // "replace" (default) uses the output as the policy, "merge" deep-merges it over that
   // source's own settings (v2.1.246)
   outputBehavior: z.enum(["replace", "merge"]).optional(),
+  // helper failed at startup with no static payload: "refuse" blocks startup, "continue" starts
+  // on the delivering source's settings; any other value acts as "refuse" (v2.1.265)
+  onFailure: z.enum(["continue", "refuse"]).optional(),
+  // extra helper attempts after launch failure, non-zero exit, or timeout; clamped to 5 (v2.1.265)
+  retries: z.number().int().min(0).optional(),
 });
 
 const marketplaceEntrySchema = z.object({

@@ -18,6 +18,8 @@ export const mergeMCPs = (...layers: (MCPServers | undefined)[]): MCPServers => 
   return result;
 };
 
+const ACCUMULATING_SETTINGS_KEYS = new Set(["env", "featureFlags"]);
+
 export const mergeSettings = (
   ...layers: (Record<string, unknown> | undefined)[]
 ): Record<string, unknown> => {
@@ -26,8 +28,7 @@ export const mergeSettings = (
     if (layer) {
       for (const [key, value] of Object.entries(layer)) {
         if (value !== undefined) {
-          // deep merge for 'env' object - env vars should accumulate, not replace
-          if (key === "env" && typeof value === "object" && value !== null) {
+          if (ACCUMULATING_SETTINGS_KEYS.has(key) && typeof value === "object" && value !== null) {
             result[key] = {
               ...(result[key] as Record<string, unknown> | undefined),
               ...value,
