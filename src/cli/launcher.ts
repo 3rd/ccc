@@ -186,6 +186,10 @@ const run = async () => {
     log.error("PLUGINS", `Plugin loading failed: ${error}`);
   }
 
+  for (const plugin of context.loadedPlugins) {
+    if (plugin.enabled) plugin.context.state.initialize();
+  }
+
   // build MCPs first so context.hasMCP() is available during prompt building
   const mcps = await startup.run("Build MCPs", async () =>
     (await import("@/config/builders/build-mcps")).buildMCPs(context),

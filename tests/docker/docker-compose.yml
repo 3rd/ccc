@@ -3,12 +3,8 @@ services:
     build:
       context: ../..
       dockerfile: tests/docker/Dockerfile
-    volumes:
-      - ../../src:/app/src:ro
-      - ../../tests:/app/tests
-      - test-home:/home/testuser
     environment:
-      - HOME=/home/testuser
+      - HOME=/home/bun
       - NODE_ENV=test
       - CCC_TEST_MODE=true
     tmpfs:
@@ -73,7 +69,6 @@ services:
     tty: true
 
 volumes:
-  test-home:
   test-home-launcher:
   test-home-config:
   test-home-shell:

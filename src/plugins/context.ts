@@ -1,6 +1,6 @@
 import type { Context } from "@/context/Context";
 import type { PluginManifest } from "./schema";
-import { createPluginState, type PluginState, type StateType } from "./state";
+import { createPluginState, type PluginState, type PluginStateData, type StateType } from "./state";
 
 export interface PluginMetadata<S = Record<string, unknown>> {
   name: string;
@@ -9,11 +9,24 @@ export interface PluginMetadata<S = Record<string, unknown>> {
   settings: S;
 }
 
-export interface PluginContext<S = Record<string, unknown>> extends Context {
+export interface PluginContext<S = Record<string, unknown>, State extends PluginStateData = PluginState> extends Context {
   plugin: PluginMetadata<S>;
-  state: PluginState;
+  state: State;
   getPlugin: (name: string) => PluginContext | undefined;
 }
+
+export type PluginStateContext<S = Record<string, unknown>> = PluginContext<S, PluginStateData>;
+
+export const updatePluginState = <S, R>(
+  context: PluginContext<S>,
+  operation: (context: PluginStateContext<S>) => R,
+  expectedRevision?: string,
+) => context.state.update((state) => {
+  const transactionContext: PluginStateContext<S> = Object.create(context, {
+    state: { value: state, enumerable: true },
+  });
+  return operation(transactionContext);
+}, expectedRevision);
 
 const pluginContextRegistry = new Map<string, PluginContext>();
 
