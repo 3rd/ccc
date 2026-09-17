@@ -26,7 +26,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.266",
+    "@anthropic-ai/claude-code": "2.1.274",
     "acorn": "8.18.0",
     "dotenv": "^17.3.1",
     "esbuild": "^0.28.0",
@@ -37,6 +37,7 @@
     "memfs": "^4.56.11",
     "picocolors": "^1.1.1",
     "picoprint": "^2.0.0",
+    "sharp": "^0.34.5",
     "smol-toml": "1.8.0",
     "zod": "^4.3.6",
     "zx": "^8.8.5"

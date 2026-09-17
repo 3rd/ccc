@@ -80,6 +80,7 @@ const launchHost = async (options: {
     cwd: options.directory,
     env: {
       ...process.env,
+      CCC_EVENTS_FILE: undefined,
       HOME: options.directory,
       DEBUG: options.debug ?? "1",
       CCC_BUN_EXEC_PATH: process.execPath,

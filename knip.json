@@ -17,7 +17,7 @@
     "@/*": ["./src/*"]
   },
   "ignore": ["tests/fixtures/**"],
-  "ignoreDependencies": ["dotenv", "smol-toml", "tsx"],
+  "ignoreDependencies": ["dotenv", "sharp", "smol-toml", "tsx"],
   "ignoreUnresolved": ["bun-types"],
   "rules": {
     "exports": "off",

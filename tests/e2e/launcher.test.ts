@@ -73,7 +73,8 @@ describe("launcher", () => {
     const spec = buildLaunchSpec({
       cliArgs: [],
       cwd: "/tmp/ccc-test",
-      env: { XDG_CACHE_HOME: "/tmp/ccc-test-cache" },
+      // an enclosing ccc session exports its own NODE_COMPILE_CACHE, which the wrapper honours
+      env: { XDG_CACHE_HOME: "/tmp/ccc-test-cache", NODE_COMPILE_CACHE: undefined },
       runtimeHostPath: expectedRuntimeHostPath,
     });
 

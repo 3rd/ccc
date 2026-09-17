@@ -402,6 +402,11 @@ const run = async () => {
         if (info.components.commands.length > 0) {
           console.log(`    Commands: ${info.components.commands.join(", ")}`);
         }
+
+        if (info.components.skills.length > 0) {
+          console.log(`    Skills: ${info.components.skills.join(", ")}`);
+        }
+
         if (info.components.agents.length > 0) {
           console.log(`    Agents: ${info.components.agents.join(", ")}`);
         }

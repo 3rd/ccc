@@ -36,6 +36,7 @@ export type HookEventName =
 export type HookMatcherType =
   | ({} & string)
   | "Agent"
+  | "AppifactRepl"
   | "AskUserQuestion"
   | "auto"
   | "Bash"
@@ -49,6 +50,7 @@ export type HookMatcherType =
   | "EnterWorktree"
   | "ExitPlanMode"
   | "ExitWorktree"
+  | "FetchInboxMessage"
   | "Glob"
   | "Grep"
   | "LSP"

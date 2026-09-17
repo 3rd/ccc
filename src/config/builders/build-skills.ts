@@ -12,6 +12,7 @@ import type {
 } from "@/types/skills";
 import type { ConfigLayer } from "@/utils/errors";
 import { normalizeHooksConfiguration } from "@/config/layers";
+import { getPluginSkills } from "@/plugins/registry";
 import { resolveConfigDirectoryPath } from "@/utils/config-directory";
 import { formatConfigError } from "@/utils/errors";
 import { log } from "@/utils/log";
@@ -142,6 +143,23 @@ const collectDescriptionBlock = (frontmatter: string[], startIndex: number): str
   return lines;
 };
 
+const foldFlowScalarLines = (lines: string[]): string => {
+  let folded = "";
+  let pendingBreaks = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === "") {
+      pendingBreaks += 1;
+      continue;
+    }
+
+    if (folded === "") folded = trimmed;
+    else folded += (pendingBreaks > 0 ? "\n".repeat(pendingBreaks) : " ") + trimmed;
+    pendingBreaks = 0;
+  }
+  return folded;
+};
+
 const readDescriptionFromFrontmatter = (content: string): string | null => {
   const split = splitFrontmatter(content);
   if (!split) return null;
@@ -152,9 +170,9 @@ const readDescriptionFromFrontmatter = (content: string): string | null => {
     if (!match) continue;
 
     const value = match[1]?.trim() ?? "";
-    if (!isYamlBlockScalar(value)) return parseYamlStringScalar(value);
-
     const block = collectDescriptionBlock(split.frontmatter, index);
+    if (!isYamlBlockScalar(value)) return parseYamlStringScalar(foldFlowScalarLines([value, ...block]));
+
     if (value.startsWith("|")) return block.join("\n").trim();
     return block.join(" ").replace(/\s+/gu, " ").trim();
   }
@@ -163,10 +181,6 @@ const readDescriptionFromFrontmatter = (content: string): string | null => {
 };
 
 const getDescriptionEndIndex = (frontmatter: string[], startIndex: number): number => {
-  const line = frontmatter[startIndex] ?? "";
-  const value = /^description:\s*(.*)$/u.exec(line)?.[1]?.trim() ?? "";
-  if (!isYamlBlockScalar(value)) return startIndex + 1;
-
   let endIndex = startIndex + 1;
   while (endIndex < frontmatter.length) {
     const next = frontmatter[endIndex] ?? "";
@@ -309,13 +323,13 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
     return null;
   }
 
-  if (typeof definition.description !== "string") {
+  const mode = normalizeSkillMode(definition.mode, skillName, skillPath);
+  if (!mode) return null;
+
+  if (typeof definition.description !== "string" && (mode !== "append" || definition.description !== undefined)) {
     log.warn("SKILLS", `Skill ${skillName} has invalid description in ${skillPath}`);
     return null;
   }
-
-  const mode = normalizeSkillMode(definition.mode, skillName, skillPath);
-  if (!mode) return null;
 
   const reserved = new Set([
     "agent",
@@ -333,10 +347,8 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
     "user-invocable",
   ]);
 
-  const frontmatter: Record<string, unknown> = {
-    name: resolvedName,
-    description: definition.description,
-  };
+  const frontmatter: Record<string, unknown> = { name: resolvedName };
+  if (definition.description !== undefined) frontmatter.description = definition.description;
 
   if (definition.model) frontmatter.model = definition.model;
   if (definition.context) frontmatter.context = definition.context;
@@ -396,6 +408,43 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
   return { name: resolvedName, content: skillMarkdown, files: definition.files ?? [], mode };
 };
 
+const buildSkillFiles = (
+  normalized: NonNullable<ReturnType<typeof normalizeSkillDefinition>>,
+  skillDir: string,
+  diskFiles: SkillFile[] = [],
+) => {
+  const fileMap = new Map<string, string>();
+  fileMap.set(SKILL_MD, normalized.content);
+
+  for (const file of diskFiles) {
+    if (fileMap.has(file.relativePath)) {
+      log.warn("SKILLS", `Duplicate skill file ${file.relativePath} in ${skillDir}`);
+      continue;
+    }
+    fileMap.set(file.relativePath, file.content);
+  }
+
+  for (const file of normalized.files) {
+    const normalizedPath = normalizeRelativePath(file.relativePath);
+    if (!normalizedPath) {
+      log.warn("SKILLS", `Ignoring invalid skill file path "${file.relativePath}" in ${skillDir}`);
+      continue;
+    }
+    if (normalizedPath === SKILL_MD) {
+      log.warn("SKILLS", `Ignoring inline ${SKILL_MD} override in ${skillDir}`);
+      continue;
+    }
+    if (fileMap.has(normalizedPath)) {
+      log.warn("SKILLS", `Overriding skill file ${normalizedPath} from ${skillDir}`);
+    }
+    fileMap.set(normalizedPath, file.content);
+  }
+
+  return Array.from(fileMap.entries()).map(([relativePath, content]) => {
+    return { relativePath, content };
+  });
+};
+
 const loadSkillFromTs = async (
   context: Context,
   skillDir: string,
@@ -421,39 +470,7 @@ const loadSkillFromTs = async (
 
     const exclude = new Set<string>([SKILL_MD, SKILL_TS]);
     const diskFiles = readSkillFiles(skillDir, exclude);
-    const fileMap = new Map<string, string>();
-    fileMap.set(SKILL_MD, normalized.content);
-
-    for (const file of diskFiles) {
-      if (fileMap.has(file.relativePath)) {
-        log.warn("SKILLS", `Duplicate skill file ${file.relativePath} in ${skillDir}`);
-        continue;
-      }
-      fileMap.set(file.relativePath, file.content);
-    }
-
-    for (const file of normalized.files) {
-      const normalizedPath = normalizeRelativePath(file.relativePath);
-      if (!normalizedPath) {
-        log.warn("SKILLS", `Ignoring invalid skill file path "${file.relativePath}" in ${skillDir}`);
-        continue;
-      }
-      if (normalizedPath === SKILL_MD) {
-        log.warn("SKILLS", `Ignoring inline ${SKILL_MD} override in ${skillDir}`);
-        continue;
-      }
-      if (fileMap.has(normalizedPath)) {
-        log.warn("SKILLS", `Overriding skill file ${normalizedPath} from ${skillDir}`);
-      }
-      fileMap.set(normalizedPath, file.content);
-    }
-
-    const files = Array.from(fileMap.entries()).map(([relativePath, content]) => {
-      return {
-        relativePath,
-        content,
-      };
-    });
+    const files = buildSkillFiles(normalized, skillDir, diskFiles);
 
     return {
       name: skillName,
@@ -550,6 +567,11 @@ export const buildSkills = async (context: Context): Promise<SkillBundle[]> => {
         });
         continue;
       }
+
+      const skillMd = bundle.files.find((file) => file.relativePath === SKILL_MD)?.content;
+      if (bundle.mode === "append" && !(skillMd && readDescriptionFromFrontmatter(skillMd))) {
+        throw new Error(`layer skill ${name}: a description is required when no same-named base skill exists`);
+      }
       skills.set(name, bundle);
     }
   };
@@ -575,6 +597,25 @@ export const buildSkills = async (context: Context): Promise<SkillBundle[]> => {
       context.project.projectConfig.name,
     );
     applyLayer(`project:${context.project.projectConfig.name}`, projectSkills);
+  }
+
+  for (const [name, { definition, plugin }] of getPluginSkills(context.loadedPlugins)) {
+    const normalized = normalizeSkillDefinition(
+      { ...definition, name },
+      name,
+      join(plugin.root, "index.ts"),
+    );
+    if (!normalized) {
+      continue;
+    }
+
+    const bundle: SkillBundle = {
+      name,
+      files: buildSkillFiles(normalized, plugin.root),
+      mode: normalized.mode,
+      trace: [{ layer: "plugin", name: plugin.manifest.name, mode: normalized.mode }],
+    };
+    applyLayer(`plugin:${plugin.manifest.name}`, new Map([[name, bundle]]));
   }
 
   return Array.from(skills.values()).sort((a, b) => a.name.localeCompare(b.name));

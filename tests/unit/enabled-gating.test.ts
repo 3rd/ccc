@@ -98,6 +98,59 @@ export default createSkill({
         expect(names).not.toContain("disabled");
       });
     });
+
+    test("preset append folds a plain multi-line base description into valid frontmatter", async () => {
+      await withTempConfig(async ({ configDir }) => {
+        await writeConfigFile(
+          configDir,
+          "global/skills/layered/SKILL.md",
+          `---
+name: layered
+description: Reviews a code area and returns findings without
+  changing it. Not for a brief follow-up.
+argument-hint: code area
+---
+
+base body
+`,
+        );
+        await writeConfigFile(
+          configDir,
+          "presets/ts/index.ts",
+          `
+import { createPreset } from "@/config/helpers";
+export default createPreset({ name: "ts", matcher: () => true });
+`,
+        );
+        await writeConfigFile(
+          configDir,
+          "presets/ts/skills/layered/SKILL.ts",
+          `
+import { createSkill } from "@/config/helpers";
+export default createSkill({
+  mode: "append",
+  description: "Adds the TypeScript lens.",
+  content: "preset body",
+});
+`,
+        );
+
+        const context = await createContext(configDir);
+        const skills = await buildSkills(context);
+        const md = skills.find((s) => s.name === "layered")?.files.find((f) => f.relativePath === "SKILL.md")?.content ?? "";
+        const frontmatterLines = (md.split("\n---\n")[0] ?? "").split("\n").slice(1);
+        const expectedDescription =
+          "Reviews a code area and returns findings without changing it. Not for a brief follow-up.\n\nAdds the TypeScript lens.";
+
+        expect(frontmatterLines).toEqual([
+          "name: layered",
+          `description: ${JSON.stringify(expectedDescription)}`,
+          "argument-hint: code area",
+        ]);
+        expect(md).toContain("base body");
+        expect(md).toContain("preset body");
+      });
+    });
   });
 
   describe("mcps", () => {
@@ -393,6 +446,87 @@ export default createPlugin({ enabled: false });
         // disabled plugins must not appear in the registry — getPlugin from
         // another plugin's context returns undefined.
         expect(getPluginContext("unregistered-plugin")).toBeUndefined();
+      });
+    });
+
+    test("enabled plugin skills render namespaced bundles with their invocation policy and support files", async () => {
+      await withTempConfig(async ({ configDir }) => {
+        const pluginRoot = join(configDir, "plugins/skill-plugin");
+        await writeConfigFile(
+          configDir,
+          "plugins/skill-plugin/index.ts",
+          `
+import { createPlugin } from "@/config/helpers";
+export default createPlugin({
+  skills: () => ({
+    start: {
+      description: "Starts the fixture workflow",
+      content: "Read [steps](references/steps.md). Request: $ARGUMENTS",
+      disableModelInvocation: true,
+      files: [{ relativePath: "references/steps.md", content: "Fixture steps" }],
+    },
+    hidden: { enabled: false, description: "Disabled fixture", content: "Unused" },
+  }),
+});
+`,
+        );
+
+        const context = await createContext(configDir);
+        const { plugins, errors } = await loadPlugins(
+          [buildDiscovered(pluginRoot, "skill-plugin")],
+          { "skill-plugin": true },
+          context,
+        );
+        expect(errors).toEqual([]);
+        context.loadedPlugins = plugins;
+
+        const skills = await buildSkills(context);
+        expect(skills).toEqual([{
+          name: "skill-plugin:start",
+          mode: "override",
+          trace: [{ layer: "plugin", name: "skill-plugin", mode: "override" }],
+          files: [
+            {
+              relativePath: "SKILL.md",
+              content: '---\nname: "skill-plugin:start"\ndescription: "Starts the fixture workflow"\ndisable-model-invocation: true\n---\n\nRead [steps](references/steps.md). Request: $ARGUMENTS\n',
+            },
+            { relativePath: "references/steps.md", content: "Fixture steps" },
+          ],
+        }]);
+        expect(getPluginInfo(plugins).map((info) => info.components.skills)).toEqual([["skill-plugin:start"]]);
+      });
+    });
+
+    test("disabled plugin skill factories are not evaluated or emitted", async () => {
+      await withTempConfig(async ({ configDir }) => {
+        clearPluginContextRegistry();
+
+        const pluginRoot = join(configDir, "plugins/disabled-skills");
+        await writeConfigFile(
+          configDir,
+          "plugins/disabled-skills/index.ts",
+          `
+import { createPlugin } from "@/config/helpers";
+export default createPlugin({
+  enabled: false,
+  skills: () => {
+    throw new Error("disabled skill factory executed");
+  },
+});
+`,
+        );
+
+        const context = await createContext(configDir);
+        const { plugins, errors } = await loadPlugins(
+          [buildDiscovered(pluginRoot, "disabled-skills")],
+          { "disabled-skills": true },
+          context,
+        );
+
+        expect(errors).toEqual([]);
+        context.loadedPlugins = plugins;
+        expect(await buildSkills(context)).toEqual([]);
+        expect(getPluginInfo(plugins).map((info) => info.components.skills)).toEqual([[]]);
       });
     });
 

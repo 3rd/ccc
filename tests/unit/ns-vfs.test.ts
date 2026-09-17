@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, test } from "bun:test";
-import { NS_ACTIVE_ENV, NS_KILL_SWITCH_ENV, namespacePrefix } from "@/vfs/ns-vfs";
+import { NOTIFY_SOCKET_ENV, NOTIFY_TOKEN_ENV, NS_ACTIVE_ENV, NS_KILL_SWITCH_ENV, namespacePrefix } from "@/vfs/ns-vfs";
 
 const projectRoot = resolve(import.meta.dir, "..", "..");
 const prefix = namespacePrefix(process.env);
@@ -150,13 +150,17 @@ cat > "$3"
 
   test("setup is inert without the active marker", async () => {
     const { setupNamespaceVfs } = await import("@/vfs/ns-vfs");
-    const prior = process.env[NS_ACTIVE_ENV];
-    delete process.env[NS_ACTIVE_ENV];
+    const cleared = [NS_ACTIVE_ENV, NOTIFY_SOCKET_ENV, NOTIFY_TOKEN_ENV];
+    const prior = Object.fromEntries(cleared.map((key) => [key, process.env[key]]));
+    for (const key of cleared) delete process.env[key];
+    const root = join(tmpdir(), `ccc-ns-inert-${process.pid}`);
     try {
-      expect(setupNamespaceVfs(["/tmp/ccc-ns-inert"], [])).toBe(false);
-      expect(existsSync("/tmp/ccc-ns-inert")).toBe(false);
+      expect(setupNamespaceVfs([root], [])).toBe(false);
+      expect(existsSync(root)).toBe(false);
     } finally {
-      if (prior !== undefined) process.env[NS_ACTIVE_ENV] = prior;
+      for (const [key, value] of Object.entries(prior)) {
+        if (value !== undefined) process.env[key] = value;
+      }
     }
   });
 });

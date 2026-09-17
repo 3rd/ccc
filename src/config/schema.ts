@@ -8,13 +8,13 @@ export const agentDefinitionSchema = z.object({
   model: z.string().optional(),
   skills: z.array(z.string()).optional(),
   mcpServers: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])).optional(),
-  maxTurns: z.number().optional(),
-  // critical reminder added to system prompt (v2.1.64)
-  criticalSystemReminder_EXPERIMENTAL: z.string().optional(),
+  maxTurns: z.number().int().positive().optional(),
   // auto-submitted as the first user turn when this agent is the main thread agent (v2.1.83)
   initialPrompt: z.string().optional(),
   // run this agent as a background task (non-blocking, fire-and-forget) when invoked (v2.1.89)
   background: z.boolean().optional(),
+  // run without user, project and local CLAUDE.md files when spawned as a subagent; managed policy files still load (v2.1.271)
+  omitClaudeMd: z.boolean().optional(),
   // scope for auto-loading agent memory files (v2.1.89)
   memory: z.enum(["user", "project", "local"]).optional(),
   // reasoning effort level: named level or integer (v2.1.89)
@@ -25,6 +25,12 @@ export const agentDefinitionSchema = z.object({
     .optional(),
   // run agent in an isolated git worktree, or a remote CCR sandbox; auto-cleaned when done (worktree v2.1.89, remote v2.1.178)
   isolation: z.enum(["worktree", "remote"]).optional(),
+  // agent type auto-spawned as a background observer whenever this agent runs; blank is treated as unset (v2.1.200)
+  observer: z.string().optional(),
+  // postamble appended after the harness-owned default to each activity digest sent to the observer; blank is treated as unset (v2.1.200)
+  observerMessage: z.string().optional(),
+  // false stops subagents this agent spawns from inheriting its observer; defaults to true (v2.1.218)
+  observeSubagents: z.boolean().optional(),
   // per-agent hooks: same shape as settings.hooks (event name → array of matchers)
   hooks: z
     .record(
@@ -292,6 +298,8 @@ const baseSettingsSchema = z.object({
   disableBundledSkills: z.boolean().optional(),
   // default shell for ! commands: bash (default) or powershell (v2.1.85)
   defaultShell: z.enum(["bash", "powershell"]).optional(),
+  // show a diff of files a Bash command changed (PostToolUse Bash hooks get the changed-file list in tool_response); default on; only user/flag/policy settings can enable it outside auto and bypassPermissions (v2.1.269)
+  bashEditDiffEnabled: z.boolean().optional(),
   // inline Bash/PowerShell output cap in chars, clamped to 4000-128000 (default 30000); overrides BASH_MAX_OUTPUT_LENGTH (v2.1.261)
   bashOutputMaxChars: z.number().int().positive().optional(),
   // inline TaskOutput cap in chars, clamped to 4000-128000 (default 32000); overrides TASK_MAX_OUTPUT_LENGTH (v2.1.261)
@@ -309,6 +317,8 @@ const baseSettingsSchema = z.object({
   fastModePerSessionOptIn: z.boolean().optional(),
   // persisted effort level for supported models (v2.1.111)
   effortLevel: z.enum(["low", "medium", "high", "xhigh"]).optional(),
+  // client-side cap on effort from /effort, /model, --effort, CLAUDE_CODE_EFFORT_LEVEL or a model default; lower of this and the org per-model cap, lowest across settings files wins; CLAUDE_CODE_EXTRA_BODY effort is not clamped (v2.1.269)
+  maxEffortLevel: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
   // per-model settings keyed by canonical model name (v2.1.239)
   modelSettings: z
     .record(
@@ -316,6 +326,8 @@ const baseSettingsSchema = z.object({
       z.object({
         // persisted effort level for this model
         effortLevel: z.enum(["low", "medium", "high", "xhigh"]).optional(),
+        // replaces top-level maxEffortLevel for this model within one settings file ("max" exempts it); lowest across files wins; key also matches dated, [1m], Bedrock and Vertex spellings (v2.1.269)
+        maxEffortLevel: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
       }),
     )
     .optional(),
@@ -334,7 +346,7 @@ const baseSettingsSchema = z.object({
   totalTokensReminder: z.enum(["off", "infinite", "fixed", "countdown", "padded-countdown"]).optional(),
   // @internal starting budget (tokens) for totalTokensReminder 'padded-countdown' mode; default 15000000;
   // server-controlled via GrowthBook, env CLAUDE_CODE_TOTAL_TOKENS_REMINDER_BUDGET overrides (v2.1.196)
-  totalTokensReminderBudget: z.number().optional(),
+  totalTokensReminderBudget: z.number().positive().optional(),
   // @internal emit the totalTokensReminder block after each regular user prompt and (for 'padded-countdown')
   // re-anchor the task budget at each user turn; default off; server-controlled via GrowthBook
   // tengu_lapis_anchor_user_turn, env CLAUDE_CODE_TOTAL_TOKENS_REMINDER_AFTER_USER_TURN overrides (v2.1.202)
@@ -428,10 +440,10 @@ const baseSettingsSchema = z.object({
   processWrapper: z.string().optional(),
   // script outputting JSON with AWS credentials
   awsCredentialExport: z.string().optional(),
-  cleanupPeriodDays: z.number().optional(),
+  cleanupPeriodDays: z.number().positive().optional(),
   // retention ceiling in days for transcripts written by desktop-host surfaces (Claude
   // Desktop, Cowork), which are exempt from the cleanupPeriodDays sweep; 0 = no ceiling (v2.1.250)
-  desktopSessionCleanupPeriodDays: z.number().optional(),
+  desktopSessionCleanupPeriodDays: z.number().min(0).optional(),
   // prompt cache TTL for the main conversation; unset = automatic. env
   // CLAUDE_CODE_PROMPT_CACHE_TTL takes precedence (v2.1.246)
   promptCacheTtl: z.enum(["5m", "1h"]).optional(),
@@ -447,6 +459,8 @@ const baseSettingsSchema = z.object({
   forceLoginMethod: z.enum(["claudeai", "console", "gateway"]).optional(),
   // @internal cloud gateway URL to pre-fill and auto-connect to during login, paired with forceLoginMethod: "gateway" (v2.1.162)
   forceLoginGatewayUrl: z.string().optional(),
+  // IPv4 CIDR blocks (at most 4, /8 to /32, non-overlapping, outside private space) where /login accepts a gateway over a direct connection from an address inside the same block; honored only from managed settings (v2.1.269)
+  gatewayInternalNetworks: z.array(z.string()).optional(),
   // auto-select organization UUID during login (requires forceLoginMethod)
   forceLoginOrgUUID: z.string().optional(),
   // script to generate dynamic OpenTelemetry headers
@@ -545,8 +559,8 @@ const baseSettingsSchema = z.object({
   // (or a host application that manages the model provider) (v2.1.246)
   modelPricing: z
     .object({
-      // scales every computed cost, overridden or not
-      multiplier: z.number().gt(0).max(1).optional(),
+      // scales every computed cost, overridden or not; above 1 marks up internal chargeback rates (v2.1.271)
+      multiplier: z.number().gt(0).max(10).optional(),
       overrides: z
         .record(
           z.string(),
@@ -636,6 +650,10 @@ const baseSettingsSchema = z.object({
   disableClaudeAiConnectors: z.boolean().optional(),
   // plugin enable/disable map: plugin-id@marketplace-id -> boolean | string[] (v2.1.61)
   enabledPlugins: z.record(z.string(), z.union([z.array(z.string()), z.boolean(), z.undefined()])).optional(),
+  // managed plugin ids whose hooks run first (outermost) in listed order; ids also in appendPlugins are prepended; setting it unseats the default outermost sec-default@builtin; honored only from managed settings, or user settings when none exist (v2.1.269)
+  prependPlugins: z.array(z.string()).optional(),
+  // managed plugin ids whose hooks run last (innermost, just above built-in plugins) in listed order; honored only from managed settings, or user settings when none exist (v2.1.269)
+  appendPlugins: z.array(z.string()).optional(),
   // additional marketplace sources for this repository (v2.1.61)
   extraKnownMarketplaces: z.record(z.string(), marketplaceEntrySchema).optional(),
   // alias for extraKnownMarketplaces: read exactly as that key; ignored with a warning when

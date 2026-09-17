@@ -9,7 +9,7 @@ export interface SkillFile {
 export type SkillLayerMode = "append" | "override";
 
 export interface SkillLayerTrace {
-  layer: "global" | "preset" | "project";
+  layer: "global" | "preset" | "project" | "plugin";
   name?: string;
   mode: SkillLayerMode;
 }
@@ -24,8 +24,8 @@ export interface SkillBundle {
 export interface SkillDefinition {
   /** Skill name (defaults to directory name if omitted). */
   name?: string;
-  /** Required description used for skill discovery. */
-  description: string;
+  /** Description used for skill discovery; optional only for append-mode layers, which keep the base description. */
+  description?: string;
   /** How this skill layer combines with earlier matching skill names. */
   mode?: SkillLayerMode;
   /** Markdown instructions content (body of SKILL.md). */

@@ -1,5 +1,6 @@
 import type { HooksConfiguration } from "@/types/hooks";
 import type { MCPServers } from "@/types/mcps";
+import type { SkillDefinition } from "@/types/skills";
 import { normalizeHookDefinition } from "@/config/layers";
 import type {
   AgentConfig,
@@ -12,6 +13,11 @@ import type {
 
 export interface PluginWorkflowEntry {
   config: WorkflowConfig;
+  plugin: LoadedPlugin;
+}
+
+interface PluginSkillEntry {
+  definition: SkillDefinition;
   plugin: LoadedPlugin;
 }
 
@@ -32,6 +38,26 @@ export const getPluginCommands = (plugins: LoadedPlugin[]): Record<string, Comma
   }
 
   return commands;
+};
+
+export const getPluginSkills = (plugins: LoadedPlugin[]) => {
+  const skills = new Map<string, PluginSkillEntry>();
+
+  for (const plugin of plugins) {
+    if (!plugin.enabled || !plugin.definition.skills) {
+      continue;
+    }
+
+    for (const [name, definition] of Object.entries(plugin.definition.skills(plugin.context))) {
+      if (definition.enabled === false) {
+        continue;
+      }
+
+      skills.set(namespace(plugin.manifest.name, name), { definition, plugin });
+    }
+  }
+
+  return skills;
 };
 
 export const getPluginAgents = (plugins: LoadedPlugin[]): Record<string, AgentConfig> => {
@@ -183,6 +209,7 @@ export const getPluginInfo = (plugins: LoadedPlugin[]): PluginInfo[] => {
       root: plugin.root,
       components: {
         commands,
+        skills: [...getPluginSkills([plugin]).keys()],
         agents,
         workflows,
         mcps,

@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { HooksConfiguration } from "@/types/hooks";
 import type { MCPServers } from "@/types/mcps";
+import type { SkillDefinition } from "@/types/skills";
 import type { PluginContext } from "./context";
 import type { PluginManifest } from "./schema";
 import type { StateType } from "./state";
@@ -37,6 +38,7 @@ export interface PluginDefinition<S = Record<string, unknown>> {
   hooks?: (context: PluginContext<S>) => HooksConfiguration;
   mcps?: (context: PluginContext<S>) => MCPServers;
   commands?: (context: PluginContext<S>) => Record<string, CommandConfig>;
+  skills?: (context: PluginContext<S>) => Record<string, SkillDefinition>;
   agents?: (context: PluginContext<S>) => Record<string, AgentConfig>;
   workflows?: (context: PluginContext<S>) => Record<string, WorkflowConfig>;
   prompts?: (context: PluginContext<S>) => {
@@ -65,6 +67,7 @@ export interface PluginInfo {
   root: string;
   components: {
     commands: string[];
+    skills: string[];
     agents: string[];
     workflows: string[];
     mcps: string[];
