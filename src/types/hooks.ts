@@ -74,7 +74,6 @@ export type HookMatcherType =
   | "TaskCreate"
   | "TaskGet"
   | "TaskList"
-  | "TaskOutput"
   | "TaskStop"
   | "TaskUpdate"
   | "TodoWrite"

@@ -302,7 +302,7 @@ const baseSettingsSchema = z.object({
   bashEditDiffEnabled: z.boolean().optional(),
   // inline Bash/PowerShell output cap in chars, clamped to 4000-128000 (default 30000); overrides BASH_MAX_OUTPUT_LENGTH (v2.1.261)
   bashOutputMaxChars: z.number().int().positive().optional(),
-  // inline TaskOutput cap in chars, clamped to 4000-128000 (default 32000); overrides TASK_MAX_OUTPUT_LENGTH (v2.1.261)
+  // deprecated, no effect: the TaskOutput tool was removed and background task output is read with Read; TASK_MAX_OUTPUT_LENGTH is gone too (v2.1.261, deprecated v2.1.277)
   taskOutputMaxChars: z.number().int().positive().optional(),
   // customize spinner verbs (v2.1.23)
   spinnerVerbs: z

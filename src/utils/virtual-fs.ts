@@ -1277,6 +1277,7 @@ const monkeyPatchFS = ({
     "readdir",
     "readdirSync",
     "readFileSync",
+    "realpath",
     "realpathSync",
     "statSync",
   ]);
@@ -1295,7 +1296,7 @@ const monkeyPatchFS = ({
     const original = descriptor.value;
     if (typeof original !== "function") continue;
 
-    (fsDefault as Record<string, unknown>)[method] = function (this: typeof fsDefault, ...args: unknown[]) {
+    const wrapped = function (this: typeof fsDefault, ...args: unknown[]) {
       if (
         method.toLowerCase().includes("dir") ||
         method.toLowerCase().includes("read") ||
@@ -1317,6 +1318,16 @@ const monkeyPatchFS = ({
       }
       return original.apply(this, args);
     };
+    for (const key of Reflect.ownKeys(original)) {
+      if (key === "length" || key === "name" || key === "prototype") {
+        continue;
+      }
+      const staticDescriptor = Object.getOwnPropertyDescriptor(original, key);
+      if (staticDescriptor) {
+        Object.defineProperty(wrapped, key, staticDescriptor);
+      }
+    }
+    (fsDefault as Record<string, unknown>)[method] = wrapped;
   }
 
   if (fsDefault.openSync) {
@@ -1585,27 +1596,46 @@ const monkeyPatchFS = ({
     });
   }
 
+  const resolveVirtualRealpath = (label: string, filePath: PathLike) => {
+    if (typeof filePath !== "string") return null;
+    const virtualCategory = findVirtualCategory(filePath);
+    if (virtualCategory) {
+      log.vfs(`${label}("${filePath}") => returning as-is (virtual)`);
+      return virtualCategory.normalized;
+    }
+    if (filePath.includes(".claude")) {
+      log.vfs(`${label}("${filePath}") called`);
+    }
+    return null;
+  };
+
   if (fsDefault.realpathSync) {
     const origRealpathSync = fsDefault.realpathSync;
-    const patchedRealpathSync = function (
-      this: any,
-      filePath: PathLike,
-      options?: BufferEncoding | { encoding?: BufferEncoding | null },
-    ) {
-      if (typeof filePath === "string") {
-        const virtualCategory = findVirtualCategory(filePath);
-        if (virtualCategory) {
-          log.vfs(`realpathSync("${filePath}") => returning as-is (virtual)`);
-          return virtualCategory.normalized;
-        }
-        if (filePath.includes(".claude")) {
-          log.vfs(`realpathSync("${filePath}") called`);
-        }
-      }
-      return Reflect.apply(origRealpathSync, this, [filePath, options]);
-    } as typeof fsDefault.realpathSync;
-    patchedRealpathSync.native = origRealpathSync.native;
+    const wrapRealpathSync = (original: typeof fsDefault.realpathSync.native, label: string) =>
+      function (this: typeof fsDefault, filePath: PathLike, options?: BufferEncoding | { encoding?: BufferEncoding | null }) {
+        return resolveVirtualRealpath(label, filePath) ?? Reflect.apply(original, this, [filePath, options]);
+      };
+    const patchedRealpathSync = wrapRealpathSync(origRealpathSync, "realpathSync") as typeof fsDefault.realpathSync;
+    patchedRealpathSync.native = wrapRealpathSync(origRealpathSync.native, "realpathSync.native") as typeof fsDefault.realpathSync.native;
     fsDefault.realpathSync = patchedRealpathSync;
+  }
+
+  if (fsDefault.realpath) {
+    const origRealpath = fsDefault.realpath;
+    const wrapRealpath = (original: typeof fsDefault.realpath.native, label: string) =>
+      function (this: typeof fsDefault, filePath: PathLike, ...rest: unknown[]) {
+        const virtual = resolveVirtualRealpath(label, filePath);
+        if (virtual === null) {
+          return Reflect.apply(original, this, [filePath, ...rest]);
+        }
+        const callback = rest[rest.length - 1];
+        if (typeof callback === "function") {
+          process.nextTick(callback, null, virtual);
+        }
+      };
+    const patchedRealpath = wrapRealpath(origRealpath, "realpath") as typeof fsDefault.realpath;
+    patchedRealpath.native = wrapRealpath(origRealpath.native, "realpath.native") as typeof fsDefault.realpath.native;
+    fsDefault.realpath = patchedRealpath;
   }
 
   const origProcessBinding = process.binding;
