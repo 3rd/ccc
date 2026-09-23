@@ -380,7 +380,8 @@ const runHook = async (id: string, scope: HookAgentScope = "main", source?: Hook
   const fn = getHook(id);
   if (!fn) {
     console.error("Hook not found:", id);
-    process.exit(2);
+    const isStopEvent = input.hook_event_name === "Stop" || input.hook_event_name === "SubagentStop";
+    process.exit(isStopEvent ? 1 : 2);
   }
 
   try {

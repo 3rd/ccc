@@ -130,6 +130,33 @@ console.log(JSON.stringify({
     }
   });
 
+  test("measures plain ASCII by length and other text by display columns", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-string-width-"));
+
+    try {
+      const scriptPath = join(directory, "preamble.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+console.log(JSON.stringify(["/review-api-design ~ Reviews an API.", "ab\\x1B[31mcd\\x1B[0m", "a\\tb", "x\\u4F60\\u597Dy", "\\u{1F44D}", ""].map((text) => __cccBun.stringWidth(text))));
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([36, 4, 2, 6, 2, 0]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("slices by visible columns with ANSI styles preserved and sleeps synchronously", () => {
     const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-slice-ansi-"));
     try {
