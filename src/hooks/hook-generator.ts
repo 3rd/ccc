@@ -57,6 +57,8 @@ export const setInternalHookCommandSource = (hook: HookCommand, source: HookBatc
 const generateHookId = <E extends HookEventName>(eventName: E, stableId: string) =>
   `hook_${eventName}_${stableId}`;
 
+export const getHookIdEventName = (hookId: string) => /^hook_([A-Za-z]+)_/.exec(hookId)?.[1];
+
 const getRunnerPath = () => {
   return join(dirname(__dirname), "cli", "runner.ts");
 };

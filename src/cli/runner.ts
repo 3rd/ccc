@@ -7,12 +7,13 @@ import { doesHookBatchEntryMatchInput } from "@/hooks/batching";
 import { eventRecorder } from "@/hooks/event-recorder";
 import {
   getHook,
+  getHookIdEventName,
   type HookAgentScope,
   type HookBatchCommandEntry,
   type HookBatchCommandSource,
   isSubagentLocalHookInput,
 } from "@/hooks/hook-generator";
-import type { ClaudeHookInput } from "@/types/hooks";
+import type { ClaudeHookInput, HookEventName } from "@/types/hooks";
 import type { MCPServers } from "@/types/mcps";
 import { isMCPLayerDisabled } from "@/types/mcps";
 import { buildPlugins } from "@/config/builders/build-plugins";
@@ -250,13 +251,24 @@ const loadCCCPlugins = async (context: Context) => {
   return loadResult.plugins;
 };
 
-const readHookInput = async (): Promise<ClaudeHookInput> => {
+const NON_BLOCKING_FAILURE_EVENTS = new Set<string | undefined>([
+  "PostToolBatch",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "Stop",
+  "SubagentStop",
+] satisfies HookEventName[]);
+
+const getFailureExitCode = (eventName: string | undefined) => (NON_BLOCKING_FAILURE_EVENTS.has(eventName) ? 1 : 2);
+
+const readHookInput = async (eventName: string | undefined): Promise<ClaudeHookInput> => {
+  const failureExitCode = getFailureExitCode(eventName);
   let inputJson: string;
   try {
     inputJson = await readStdin();
   } catch (error) {
     console.error(error instanceof Error ? error.message : `Failed to read hook input: ${String(error)}`);
-    process.exit(2);
+    process.exit(failureExitCode);
   }
 
   try {
@@ -269,12 +281,12 @@ const readHookInput = async (): Promise<ClaudeHookInput> => {
       !("cwd" in parsed)
     ) {
       console.error("Invalid hook input shape:", parsed);
-      process.exit(2);
+      process.exit(failureExitCode);
     }
     return parsed as ClaudeHookInput;
   } catch (error) {
     console.error("Invalid hook input JSON:", error);
-    process.exit(2);
+    process.exit(failureExitCode);
   }
 };
 
@@ -359,7 +371,7 @@ const decodeBatchEntries = (payload: string): HookBatchCommandEntry[] => {
 };
 
 const runHook = async (id: string, scope: HookAgentScope = "main", source?: HookBatchCommandSource) => {
-  const input = await readHookInput();
+  const input = await readHookInput(getHookIdEventName(id));
   if (scope === "main" && isSubagentLocalHookInput(input)) {
     process.exit(0);
   }
@@ -380,8 +392,7 @@ const runHook = async (id: string, scope: HookAgentScope = "main", source?: Hook
   const fn = getHook(id);
   if (!fn) {
     console.error("Hook not found:", id);
-    const isStopEvent = input.hook_event_name === "Stop" || input.hook_event_name === "SubagentStop";
-    process.exit(isStopEvent ? 1 : 2);
+    process.exit(getFailureExitCode(input.hook_event_name));
   }
 
   try {
@@ -399,8 +410,9 @@ const runHook = async (id: string, scope: HookAgentScope = "main", source?: Hook
 };
 
 const runHookBatch = async (payload: string) => {
-  const input = await readHookInput();
   const entries = decodeBatchEntries(payload);
+  const [firstEntry] = entries;
+  const input = await readHookInput(firstEntry && getHookIdEventName(firstEntry.hookId));
   const matchingEntries = entries.filter((entry) => doesHookBatchEntryMatchInput(entry, input));
 
   if (matchingEntries.length === 0) {

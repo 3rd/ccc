@@ -448,6 +448,39 @@ describe("hook generator scope", () => {
     }
   });
 
+  test("runner reports a post-tool batch stdin timeout as a non-blocking failure", async () => {
+    const payload = Buffer.from(
+      JSON.stringify([{ hookId: "hook_PostToolBatch_global-probe", matchers: [], scope: "main", source: "builtin" }]),
+      "utf8",
+    ).toString("base64url");
+    const child = spawn("bun", [runnerPath, "hook-batch", payload], {
+      env: {
+        ...process.env,
+        ...fastTimeoutEnv,
+        CCC_INSTANCE_ID: "runner-post-tool-batch-timeout-test",
+        CCC_CONFIG_DIR: configDir,
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.stdin.write("{\"hook_event_name\":\"PostToolBatch\"");
+
+    try {
+      const exitCode = await waitForExit(child, 2000);
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("Hook stdin idle timeout after 100ms");
+    } finally {
+      child.stdin.destroy();
+      child.kill("SIGKILL");
+      await waitForExit(child, 5000);
+    }
+  });
+
   test("runner fails on total stdin timeout when incomplete input keeps streaming", async () => {
     const child = spawn("bun", [runnerPath, "hook", "hook_SessionStart_global-session-start", "main", "config"], {
       env: {

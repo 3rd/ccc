@@ -515,6 +515,8 @@ const baseSettingsSchema = z.object({
   skipDangerousModePermissionPrompt: z.boolean().optional(),
   // disable syntax highlighting in diffs (v2.1.51)
   syntaxHighlightingDisabled: z.boolean().optional(),
+  // terminal columns that response prose wraps at; tables and code blocks keep the full width (v2.1.282)
+  maxProseWidth: z.number().int().min(40).optional(),
   // render screen-reader friendly output (flat text, no decorative borders/animations);
   // overridden by CLAUDE_AX_SCREEN_READER env and --ax-screen-reader flag (v2.1.181)
   axScreenReader: z.boolean().optional(),
@@ -645,6 +647,9 @@ const baseSettingsSchema = z.object({
   // when true (managed settings only), claude.ai cloud MCP connectors load alongside managed-mcp.json
   // instead of being suppressed by its exclusive-control lockdown (v2.1.149)
   allowAllClaudeAiMcps: z.boolean().optional(),
+  // when true in device managed settings, the built-in Claude in Chrome MCP server runs alongside
+  // managed-mcp.json instead of being blocked by its exclusive-control lockdown (v2.1.282)
+  allowClaudeInChromeWithManagedMcp: z.boolean().optional(),
   // when true in any settings source, claude.ai MCP cloud connectors are not auto-fetched or
   // connected; any-source-true wins (a project-level false cannot override a user-level true) (v2.1.182)
   disableClaudeAiConnectors: z.boolean().optional(),

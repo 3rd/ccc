@@ -361,4 +361,57 @@ console.log("ok");
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  test("gzips request bodies for Bun's fetch compress option under Node", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-compress-"));
+
+    try {
+      const scriptPath = join(directory, "preamble.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+const { createServer } = await import("node:http");
+const { gunzipSync } = await import("node:zlib");
+const server = createServer((request, response) => {
+  const chunks = [];
+  request.on("data", (chunk) => chunks.push(chunk));
+  request.on("end", () => {
+    const raw = Buffer.concat(chunks);
+    const encoding = request.headers["content-encoding"] ?? null;
+    const text = encoding === "gzip" ? gunzipSync(raw).toString("utf8") : raw.toString("utf8");
+    response.end(JSON.stringify({ encoding, wireBytes: raw.length, text }));
+  });
+});
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const url = \`http://127.0.0.1:\${server.address().port}/v1/messages\`;
+const body = JSON.stringify({ messages: "x".repeat(8192) });
+const J = 9;
+const L = { method: "POST", headers: new Headers({ "content-type": "application/json" }), body };
+L.compress = J === void 0 ? "gzip" : { encoding: "gzip", level: J };
+const compressed = await (await fetch(url, L)).json();
+const plain = await (await fetch(url, { method: "POST", body })).json();
+server.close();
+console.log(JSON.stringify({ compressed, plain, bodyLength: body.length }));
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+
+      const { compressed, plain, bodyLength } = JSON.parse(result.stdout.trim());
+      expect(compressed.encoding).toBe("gzip");
+      expect(compressed.wireBytes).toBeLessThan(200);
+      expect(compressed.text.length).toBe(bodyLength);
+      expect(plain).toEqual({ encoding: null, wireBytes: bodyLength, text: compressed.text });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
