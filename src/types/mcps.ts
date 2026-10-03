@@ -22,6 +22,7 @@ export interface StdioMCPConfig extends MCPEnabledFlag {
   autoEnable?: string;
   // always include this server's tools in the prompt; never defer behind tool search (v2.1.121)
   alwaysLoad?: boolean;
+  bareElicitationCapability?: boolean;
 }
 
 export interface HttpMCPConfig extends MCPEnabledFlag {
@@ -33,6 +34,7 @@ export interface HttpMCPConfig extends MCPEnabledFlag {
   filter?: MCPToolFilter;
   autoEnable?: string;
   alwaysLoad?: boolean;
+  bareElicitationCapability?: boolean;
 }
 
 export interface SseMCPConfig extends MCPEnabledFlag {
@@ -44,6 +46,7 @@ export interface SseMCPConfig extends MCPEnabledFlag {
   filter?: MCPToolFilter;
   autoEnable?: string;
   alwaysLoad?: boolean;
+  bareElicitationCapability?: boolean;
 }
 
 export type ClaudeMCPConfig = HttpMCPConfig | SseMCPConfig | StdioMCPConfig;

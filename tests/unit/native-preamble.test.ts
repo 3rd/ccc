@@ -362,6 +362,39 @@ console.log("ok");
     }
   });
 
+  test("hashes gzip request-body blocks through Bun.SHA256 and Bun.hash.crc32 under Node", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-hash-"));
+
+    try {
+      const scriptPath = join(directory, "preamble.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+const e = Buffer.from("hello");
+const s = Buffer.alloc(4);
+s.writeUInt32LE(__cccBun.hash.crc32(e), 0);
+console.log(JSON.stringify({ sha256: __cccBun.SHA256.hash(e.subarray(0, e.length), "base64"), crc32: s.readUInt32LE(0) }));
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout.trim())).toEqual({
+        sha256: "LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=",
+        crc32: 907060870,
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("gzips request bodies for Bun's fetch compress option under Node", () => {
     const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-compress-"));
 
