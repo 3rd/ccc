@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod/v4";
 import {
   buildGraphPreambleModule,
   GRAPH_NODE_FETCH_SHIM_NAME,
@@ -217,6 +218,8 @@ for (let i = 0; i < count; i++) segmented.push([native.graphemes[cells[2 * i]], 
 const runTable = [];
 for (let r = 0; r <= Math.max(...segmented.map((c) => c[3])); r++) runTable.push([native.sgrKeys[runs[2 * r]], native.sgrCloseKeys[runs[2 * r]], native.uris[runs[2 * r + 1]]]);
 const tooSmall = native.segment("abc", new Int32Array(4), new Int32Array(4), false);
+const loneEscapeCells = new Int32Array(8);
+const loneEscapeCount = native.segment("\\x1B\\x1B[31mx\\x1B", loneEscapeCells, new Int32Array(8), false);
 const screen = new Int32Array(2 * 12);
 const charIndices = native.graphemes.map((_, i) => 100 + i);
 const runWords = runTable.map((_, r) => pack(r + 1, 0, 0));
@@ -224,7 +227,7 @@ const painted = native.paint(screen, 12, 1, 0, cells, count, undefined, charIndi
 const row = [];
 for (let x = 0; x < 12; x++) row.push([screen[2 * x], screen[2 * x + 1] >>> 17, screen[2 * x + 1] & 3]);
 const set = native.setCell(screen, 12, 10, 0, 7, pack(9, 0, 1));
-console.log(JSON.stringify({ count, segmented, runTable, tooSmall, paint: [painted % 1048576, Math.floor(painted / 1048576) % 65536, Math.floor(painted / 68719476736)], row, set: [set % 1048576, Math.floor(set / 1048576) % 65536], tail: [screen[20], screen[21] & 3, screen[22], screen[23] & 3] }));
+console.log(JSON.stringify({ count, segmented, runTable, tooSmall, loneEscapes: [loneEscapeCount, native.graphemes[loneEscapeCells[0]], loneEscapeCells[1] >>> 10], paint: [painted % 1048576, Math.floor(painted / 1048576) % 65536, Math.floor(painted / 68719476736)], row, set: [set % 1048576, Math.floor(set / 1048576) % 65536], tail: [screen[20], screen[21] & 3, screen[22], screen[23] & 3] }));
 `);
       const result = spawnSync("node", [scriptPath], {
         cwd: directory,
@@ -258,6 +261,7 @@ console.log(JSON.stringify({ count, segmented, runTable, tooSmall, paint: [paint
           ["", "", ""],
         ],
         tooSmall: -3,
+        loneEscapes: [1, "x", 1],
         // columns 1..10 painted: a b 你(wide+spacer) tab→8 c ￼ d
         paint: [11, 1, 11],
         row: [
@@ -277,6 +281,74 @@ console.log(JSON.stringify({ count, segmented, runTable, tooSmall, paint: [paint
         set: [12, 10],
         tail: [7, 1, 1, 2],
       });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("segments long styled graphemes through buffer resizing without excessive native memory growth", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-cell-memory-"));
+
+    try {
+      const scriptPath = join(directory, "preamble.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+const native = new __cccBun.ant.CellSegmenter({ ambiguousIsNarrow: true, substitute: [], screen: {
+  widthMask: 3, narrow: 0, wide: 1, spacerTail: 2, spacerHead: 3, emptyCharIndex: 0, spacerCharIndex: 1, emptyWord: 0, tabWidth: 8,
+} });
+const text = "\\x1B[31m" + "e\\u0301\\u{1F469}\\u200D\\u{1F4BB}".repeat(2000) + "\\x1B[0m";
+const initialMaxRssKiB = process.resourceUsage().maxRSS;
+const required = native.segment(text, new Int32Array(512), new Int32Array(512), false);
+const cells = new Int32Array(8000), runs = new Int32Array(8000);
+const counts = [];
+for (let i = 0; i < 3; i++) {
+  counts.push(native.segment(text, cells, runs, false));
+}
+
+const graphemes = [];
+let hasConsistentCells = true;
+for (let i = 0; i < 4000; i++) {
+  const grapheme = native.graphemes[cells[2 * i]];
+  const packed = cells[2 * i + 1];
+  const isCombining = i % 2 === 0;
+  if (grapheme !== (isCombining ? "e\\u0301" : "\\u{1F469}\\u200D\\u{1F4BB}") || (packed & 255) !== (isCombining ? 1 : 2) || packed >>> 10 !== 1) {
+    hasConsistentCells = false;
+  }
+
+  if (i < 2 || i >= 3998) {
+    graphemes.push(grapheme);
+  }
+}
+
+console.log(JSON.stringify({
+  required, counts, graphemes, hasConsistentCells,
+  style: [native.sgrKeys[runs[2]], native.sgrCloseKeys[runs[2]]],
+  maxRssGrowthKiB: process.resourceUsage().maxRSS - initialMaxRssKiB,
+}));
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+
+      const metrics: unknown = JSON.parse(result.stdout);
+      expect(metrics).toMatchObject({
+        required: -4000,
+        counts: [4000, 4000, 4000],
+        graphemes: ["e\u0301", "👩‍💻", "e\u0301", "👩‍💻"],
+        hasConsistentCells: true,
+        style: ["\x1B[31m", "\x1B[39m"],
+      });
+      const { maxRssGrowthKiB } = z.object({ maxRssGrowthKiB: z.number() }).parse(metrics);
+      expect(maxRssGrowthKiB).toBeLessThan(32 * 1024);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
