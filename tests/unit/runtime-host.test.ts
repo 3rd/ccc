@@ -13,6 +13,7 @@ import {
 import {
   PREPARATION_LAUNCHER_PATH_ENV,
   RUNTIME_HOST_PAYLOAD_FD_ENV,
+  RUNTIME_HOST_PID_ENV,
 } from "@/cli/runtime-host-process";
 
 const temporaryDirectories: string[] = [];
@@ -58,6 +59,9 @@ const payload = ${JSON.stringify(payload)};
 payload.environment = Object.fromEntries(Object.entries(process.env).filter((entry) => entry[1] !== undefined));
 delete payload.environment.${RUNTIME_HOST_PAYLOAD_FD_ENV};
 delete payload.environment.${PREPARATION_LAUNCHER_PATH_ENV};
+delete payload.environment.${RUNTIME_HOST_PID_ENV};
+
+fs.writeFileSync(${JSON.stringify(join(directory, "runtime-host-pid"))}, String(process.env.${RUNTIME_HOST_PID_ENV}));
 fs.writeFileSync(Number(process.env.${RUNTIME_HOST_PAYLOAD_FD_ENV}), JSON.stringify(payload));
 `,
   );
@@ -145,7 +149,7 @@ describe("runtime host", () => {
     expect(withoutTsxNodeOptions("--require=/tmp/register.cjs")).toBe("--require=/tmp/register.cjs");
   });
 
-  test("prepares in Bun, then imports the target in the original Node host", async () => {
+  test("prepares in Bun with the host's pid, then imports the target in that Node host", async () => {
     const directory = makeTemporaryDirectory();
     const resultPath = join(directory, "result.json");
     const runtimeLogPath = join(directory, "runtime.log");
@@ -176,6 +180,7 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({
       featureFlags: { runtimeTest: true },
       prompt: "runtime prompt",
     });
+    expect(readFileSync(join(directory, "runtime-host-pid"), "utf8")).toBe(String(hostPid));
     expect(result.argv.slice(2)).toEqual(["--runtime-test"]);
     expect(result.argv[0]).toContain("node");
     expect(existsSync(result.eventsFile)).toBe(false);

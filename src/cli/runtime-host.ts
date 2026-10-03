@@ -14,6 +14,7 @@ import {
   PREPARATION_LAUNCHER_PATH_ENV,
   RUNTIME_HOST_PAYLOAD_FD,
   RUNTIME_HOST_PAYLOAD_FD_ENV,
+  RUNTIME_HOST_PID_ENV,
 } from "./runtime-host-process";
 
 export interface RuntimeHostPayload {
@@ -146,7 +147,11 @@ const readPreparationPayload = async (onSpawn: (child: ChildProcess) => void) =>
   const bunPath = process.env.CCC_BUN_EXEC_PATH?.trim() || "bun";
   const child = spawn(bunPath, [launcherPath, ...process.argv.slice(2)], {
     cwd: process.cwd(),
-    env: { ...process.env, [RUNTIME_HOST_PAYLOAD_FD_ENV]: String(RUNTIME_HOST_PAYLOAD_FD) },
+    env: {
+      ...process.env,
+      [RUNTIME_HOST_PAYLOAD_FD_ENV]: String(RUNTIME_HOST_PAYLOAD_FD),
+      [RUNTIME_HOST_PID_ENV]: String(process.pid),
+    },
     stdio: ["inherit", "inherit", "inherit", "pipe"],
   });
   onSpawn(child);

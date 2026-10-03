@@ -23,6 +23,18 @@ const COMPILE_FLAGS = ["-O2", "-Wall", "-Werror"];
 
 export const NS_ACTIVE_ENV = "CCC_NS_VFS_ACTIVE";
 export const NS_KILL_SWITCH_ENV = "CCC_NS_VFS";
+export const NOTIFY_SOCKET_ENV = "AGENTS_VFS_NOTIFY_SOCKET";
+export const NOTIFY_TOKEN_ENV = "AGENTS_VFS_NOTIFY_TOKEN";
+const NOTIFY_TOKEN_HEX_BYTES = 64;
+const NOTIFY_REGISTER_TIMEOUT_MS = 30_000;
+
+const getNotifySupervisor = (env: NodeJS.ProcessEnv) => {
+  const socketName = env[NOTIFY_SOCKET_ENV];
+  const token = env[NOTIFY_TOKEN_ENV];
+  if (!socketName || !token || token.length !== NOTIFY_TOKEN_HEX_BYTES) return;
+
+  return { socketName, token };
+};
 
 const unshareFlags = (): string[] => [
   "-U",
@@ -39,6 +51,8 @@ const unshareFlags = (): string[] => [
  * enabled and functional on this machine, or null to launch without it.
  */
 export const namespacePrefix = (env: NodeJS.ProcessEnv): string[] | null => {
+  if (getNotifySupervisor(env)) return null;
+
   if (env[NS_KILL_SWITCH_ENV] === "0") {
     log.vfs("Namespace VFS disabled via CCC_NS_VFS=0");
     return null;
@@ -89,11 +103,6 @@ export type NsVfsFile = {
   content: string | Buffer;
 };
 
-export const NOTIFY_SOCKET_ENV = "AGENTS_VFS_NOTIFY_SOCKET";
-export const NOTIFY_TOKEN_ENV = "AGENTS_VFS_NOTIFY_TOKEN";
-const NOTIFY_TOKEN_HEX_BYTES = 64;
-const NOTIFY_REGISTER_TIMEOUT_MS = 30_000;
-
 const notifyEntry = (op: "F" | "D", nativePath: string, content?: Buffer): Buffer => {
   const path = Buffer.from(nativePath, "utf8");
   const header = Buffer.alloc(op === "D" ? 4 : 12);
@@ -113,9 +122,9 @@ const notifyEntry = (op: "F" | "D", nativePath: string, content?: Buffer): Buffe
  * returns. Returns false when no supervisor is configured, which is the standalone-ccc path.
  */
 const registerWithNotifySupervisor = (roots: string[], files: NsVfsFile[]): boolean => {
-  const socketName = process.env[NOTIFY_SOCKET_ENV];
-  const token = process.env[NOTIFY_TOKEN_ENV];
-  if (!socketName || !token || token.length !== NOTIFY_TOKEN_HEX_BYTES) return false;
+  const supervisor = getNotifySupervisor(process.env);
+  if (!supervisor) return false;
+  const { socketName, token } = supervisor;
 
   const entries = [
     ...roots.map((root) => notifyEntry("D", root)),

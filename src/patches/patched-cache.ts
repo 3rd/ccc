@@ -9,6 +9,8 @@ import { BUILTIN_PATCHES_VERSION, patchSetDigest, type RuntimePatch } from "./cl
 const CACHE_SUBPATH = path.join("ccc", "claude-cli-patched");
 const GRAPH_DIR_NAME = "graph";
 const META_FILE_NAME = "meta.json";
+const USERS_DIR_NAME = "users";
+const RETIRED_DIR_PREFIX = ".retired-";
 const KEY_VERSION = "ccc-patch-cache-v1";
 const MAX_CACHED_ENTRIES = 4;
 
@@ -48,6 +50,7 @@ interface PatchCacheMeta extends PatchCacheEntry {
 const xdgCacheHome = () => process.env.XDG_CACHE_HOME?.trim() || path.join(os.homedir(), ".cache");
 const cacheRoot = () => path.join(xdgCacheHome(), CACHE_SUBPATH);
 const entryDir = (key: string) => path.join(cacheRoot(), key);
+const getEntryPrunersDir = (key: string) => path.join(`${cacheRoot()}-pruners`, key);
 
 export const computePatchKey = (input: PatchCacheKeyInput): string => {
   // size + mtime of the graph entry rather than a content hash: this is the identity
@@ -212,23 +215,131 @@ export const writePatchedGraphAtomic = (
   }
 };
 
-/** Keeps the newest entries by mtime, sparing dirs still inside the prune grace. Write-path only: a warm hit must not readdir. */
+const isProcessRunning = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
+};
+
+type ProcessMarkerStatus = "running" | "exited" | "unregistered";
+
+const sweepProcessMarkers = (dir: string) => {
+  let names: string[];
+
+  try {
+    names = fs.readdirSync(dir);
+  } catch (error) {
+    const isMissing = error instanceof Error && "code" in error && error.code === "ENOENT";
+    if (isMissing) return "unregistered";
+
+    throw error;
+  }
+
+  let status: ProcessMarkerStatus = "exited";
+
+  for (const name of names) {
+    const pid = Number(name.split("-")[0]);
+    const isValidPid = Number.isSafeInteger(pid) && pid > 0;
+    const isRunningProcess = isValidPid && isProcessRunning(pid);
+    if (isRunningProcess) {
+      status = "running";
+    } else {
+      fs.rmSync(path.join(dir, name), { force: true });
+    }
+  }
+
+  return status;
+};
+
+export const registerPatchedEntryUser = (key: string, pid: number) => {
+  const usersDir = path.join(entryDir(key), USERS_DIR_NAME);
+  const userPath = path.join(usersDir, String(pid));
+
+  try {
+    fs.mkdirSync(usersDir, { recursive: true });
+    fs.writeFileSync(userPath, "");
+
+    const prunerStatus = sweepProcessMarkers(getEntryPrunersDir(key));
+    return prunerStatus !== "running" && fs.existsSync(userPath);
+  } catch (error) {
+    const hasErrorCode = error instanceof Error && "code" in error;
+    const code = hasErrorCode ? String(error.code) : "unknown";
+    log.warn("PATCH-CACHE", `could not register pid ${pid} in ${usersDir} (${code}); using an uncached graph`);
+    return false;
+  }
+};
+
+const isRetiredDirName = (name: string) => name.startsWith(RETIRED_DIR_PREFIX);
+
+const retirePatchedEntry = (root: string, dir: string) => {
+  const retiredDir = path.join(root, `${RETIRED_DIR_PREFIX}${path.basename(dir)}-${process.pid}-${randomBytes(4).toString("hex")}`);
+
+  try {
+    fs.renameSync(dir, retiredDir);
+  } catch (error) {
+    const isAlreadyRetired = error instanceof Error && "code" in error && error.code === "ENOENT";
+    if (isAlreadyRetired) return;
+
+    throw error;
+  }
+
+  fs.rmSync(retiredDir, { recursive: true, force: true });
+  log.debug("PATCH-CACHE", `pruned ${dir}`);
+};
+
+const prunePatchedEntry = (dir: string, mtimeMs: number) => {
+  const prunersDir = getEntryPrunersDir(path.basename(dir));
+  fs.mkdirSync(prunersDir, { recursive: true });
+  sweepProcessMarkers(prunersDir);
+
+  const prunerPath = path.join(prunersDir, `${process.pid}-${randomBytes(4).toString("hex")}`);
+  fs.writeFileSync(prunerPath, "", { flag: "wx" });
+
+  try {
+    const userStatus = sweepProcessMarkers(path.join(dir, USERS_DIR_NAME));
+    const isUnregisteredInGrace = userStatus === "unregistered" && Date.now() - mtimeMs < GRAPH_PRUNE_GRACE_MS;
+    const shouldKeep = userStatus === "running" || isUnregisteredInGrace;
+    if (shouldKeep) return;
+
+    retirePatchedEntry(path.dirname(dir), dir);
+  } finally {
+    fs.rmSync(prunerPath, { force: true });
+
+    try {
+      fs.rmdirSync(prunersDir);
+    } catch (error) {
+      const isConcurrentCleanup =
+        error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTEMPTY");
+      if (!isConcurrentCleanup) {
+        throw error;
+      }
+    }
+  }
+};
+
+/** Keeps the newest entries by mtime plus entries whose registered users still run; unregistered entries keep the prune grace. Write-path only: a warm hit must not scan other entries. */
 export const prunePatchedCache = (keepKey: string): void => {
   try {
     const root = cacheRoot();
-    const entries = fs
-      .readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name !== keepKey)
+    const dirs = fs.readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name !== keepKey);
+
+    for (const retired of dirs.filter((entry) => isRetiredDirName(entry.name))) {
+      fs.rmSync(path.join(root, retired.name), { recursive: true, force: true });
+    }
+
+    const entries = dirs
+      .filter((entry) => !isRetiredDirName(entry.name))
       .map((entry) => {
         const dir = path.join(root, entry.name);
         return { dir, mtimeMs: fs.statSync(dir).mtimeMs };
       })
       .sort((left, right) => right.mtimeMs - left.mtimeMs);
 
-    for (const stale of entries.slice(Math.max(0, MAX_CACHED_ENTRIES - 1))) {
-      if (Date.now() - stale.mtimeMs < GRAPH_PRUNE_GRACE_MS) continue;
-      fs.rmSync(stale.dir, { recursive: true, force: true });
-      log.debug("PATCH-CACHE", `pruned ${stale.dir}`);
+    for (const entry of entries.slice(MAX_CACHED_ENTRIES - 1)) {
+      prunePatchedEntry(entry.dir, entry.mtimeMs);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -237,8 +348,18 @@ export const prunePatchedCache = (keepKey: string): void => {
 };
 
 export const dropPatchedEntry = (key: string): void => {
+  const dir = entryDir(key);
+
   try {
-    fs.rmSync(entryDir(key), { recursive: true, force: true });
+    fs.rmSync(path.join(dir, META_FILE_NAME), { force: true });
+
+    for (const name of fs.readdirSync(dir)) {
+      if (name === USERS_DIR_NAME) {
+        continue;
+      }
+
+      fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+    }
   } catch {
     // best-effort
   }

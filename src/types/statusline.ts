@@ -81,6 +81,10 @@ export type StatusLineInput = {
     spend_limit?: {
       used_percentage: number;
       resets_at: number;
+      // present together, only when the gateway meters the limit in USD (v2.1.284)
+      used_usd?: number;
+      limit_usd?: number;
+      period?: "daily" | "weekly" | "monthly";
     };
   };
   // per-session prompt-cache state; absent before the first API request (v2.1.251)

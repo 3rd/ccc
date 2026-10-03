@@ -19,8 +19,9 @@ export type RuntimePatch =
 //
 // minified identifiers rotate every build; three bundle generations are handled:
 //   - 2.1.227+: the readers moved into a class with unminified method names —
-//     `getFeatureValueWithSource(e,t)` (sync, source-aware) plus the async
-//     boolean gates `checkGateCachedOrBlocking(e)` / `checkSecurityRestrictionGate(e)`,
+//     `getFeatureValueWithSource(e,t)` (sync, source-aware), the async value reader
+//     `getFeatureValueBlocking(e,t)`, plus the async boolean gates
+//     `checkGateCachedOrBlocking(e)` / `checkSecurityRestrictionGate(e)`,
 //     each opening with `let X=this.getEnvironmentOverrides();if(X&&FLAG in X)...`.
 //     method names survive minification, so they anchor directly.
 //   - 2.1.203–2.1.226: a source-aware sync reader whose body starts with
@@ -51,16 +52,17 @@ const growthbookSyncFlagOverride: RuntimePatch = {
       /getFeatureValueWithSource\(([\w$]+),[\w$]+\)\{(?=let [\w$]+=this\.getEnvironmentOverrides\(\);if\([\w$]+&&\1 in [\w$]+\)return\{value:[\w$]+\[\1\],source:"override"\};)/;
     const classAsyncBoolRe =
       /async (?:checkGateCachedOrBlocking|checkSecurityRestrictionGate)\(([\w$]+)\)\{(?=let [\w$]+=this\.getEnvironmentOverrides\(\);if\([\w$]+&&\1 in [\w$]+\)return Boolean\([\w$]+\[\1\]\);)/g;
+    const classAsyncValueRe =
+      /async getFeatureValueBlocking\(([\w$]+),[\w$]+\)\{(?=let [\w$]+=this\.getEnvironmentOverrides\(\);if\([\w$]+&&\1 in [\w$]+\)return [\w$]+\[\1\];)/;
 
     const withClassSync = content.replace(
       classSyncRe,
       (match, flag) => `${match}${guard(flag)}return{value:__cccFF[${flag}],source:"override"};}`,
     );
     if (withClassSync !== content)
-      return withClassSync.replace(
-        classAsyncBoolRe,
-        (match, flag) => `${match}${guard(flag)}return Boolean(__cccFF[${flag}]);}`,
-      );
+      return withClassSync
+        .replace(classAsyncBoolRe, (match, flag) => `${match}${guard(flag)}return Boolean(__cccFF[${flag}]);}`)
+        .replace(classAsyncValueRe, (match, flag) => `${match}${guard(flag)}return __cccFF[${flag}];}`);
 
     const sourceAwareSyncRe =
       /function ([\w$]+)\(([\w$]+),([\w$]+)\){(?=let [\w$]+=[\w$]+\(\);if\([\w$]+&&\2 in [\w$]+\)return\{value:[\w$]+\[\2\],source:"override"\};)(?=[^]{0,800}?cachedGrowthBookFeatures)/;

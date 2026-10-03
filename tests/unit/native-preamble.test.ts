@@ -136,7 +136,7 @@ console.log(JSON.stringify({
     try {
       const scriptPath = join(directory, "preamble.mjs");
       writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
-console.log(JSON.stringify(["/review-api-design ~ Reviews an API.", "ab\\x1B[31mcd\\x1B[0m", "a\\tb", "x\\u4F60\\u597Dy", "\\u{1F44D}", ""].map((text) => __cccBun.stringWidth(text))));
+console.log(JSON.stringify(["/review-api-design ~ Reviews an API.", "ab\\x1B[31mcd\\x1B[0m", "a\\tb", "x\\u4F60\\u597Dy", "\\u{1F44D}", "\\u25FB \\u2714", "\\u2714\\uFE0F", ""].map((text) => __cccBun.stringWidth(text))));
 `);
       const result = spawnSync("node", [scriptPath], {
         cwd: directory,
@@ -151,7 +151,7 @@ console.log(JSON.stringify(["/review-api-design ~ Reviews an API.", "ab\\x1B[31m
       expect(result.error).toBeUndefined();
       expect(result.stderr).toBe("");
       expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual([36, 4, 2, 6, 2, 0]);
+      expect(JSON.parse(result.stdout)).toEqual([36, 4, 2, 6, 2, 3, 2, 0]);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

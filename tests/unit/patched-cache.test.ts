@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { spawnSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -8,7 +9,9 @@ import {
   computePatchKey,
   dropPatchedEntry,
   patchCacheMode,
+  prunePatchedCache,
   readPatched,
+  registerPatchedEntryUser,
   writePatchedGraphAtomic,
 } from "@/patches/patched-cache";
 
@@ -174,17 +177,21 @@ describe("patched cache entries", () => {
     expect(readPatched("broken")).toBeNull();
   });
 
-  test("leaves no staging files behind and can drop an entry", () => {
+  test("leaves no staging files behind and drops an entry while keeping its registered users", () => {
     const cacheHome = useTempCacheHome();
     writePatchedGraphAtomic("dropme", writeSourceGraph(), patchOf("patched-module"), [], []);
     const entryDir = path.join(cacheHome, "ccc", "claude-cli-patched", "dropme");
     expect(fs.readdirSync(entryDir).sort()).toEqual(["graph", "meta.json"]);
 
+    registerPatchedEntryUser("dropme", process.pid);
     dropPatchedEntry("dropme");
+
     expect(readPatched("dropme")).toBeNull();
+    expect(fs.readdirSync(entryDir)).toEqual(["users"]);
+    expect(fs.readdirSync(path.join(entryDir, "users"))).toEqual([String(process.pid)]);
   });
 
-  test("prunes entries beyond the count cap once their grace period has passed", () => {
+  test("prunes unregistered entries beyond the count cap once their grace period has passed", () => {
     const cacheHome = useTempCacheHome();
     const source = writeSourceGraph();
     const root = path.join(cacheHome, "ccc", "claude-cli-patched");
@@ -204,7 +211,7 @@ describe("patched cache entries", () => {
     expect(fs.existsSync(path.join(root, "k1"))).toBe(false);
   });
 
-  test("keeps entries beyond the count cap while their grace period lasts", () => {
+  test("keeps unregistered entries beyond the count cap while their grace period lasts", () => {
     const cacheHome = useTempCacheHome();
     const source = writeSourceGraph();
     for (const key of ["k1", "k2", "k3", "k4", "k5", "k6"]) {
@@ -214,6 +221,112 @@ describe("patched cache entries", () => {
     // a session launched from any of these may still lazily import its graph
     const root = path.join(cacheHome, "ccc", "claude-cli-patched");
     expect(fs.readdirSync(root).sort()).toEqual(["k1", "k2", "k3", "k4", "k5", "k6"]);
+  });
+
+  test("prunes exited-user entries and interrupted retirements beyond the count cap, even inside the grace period", () => {
+    const cacheHome = useTempCacheHome();
+    const source = writeSourceGraph();
+    const root = path.join(cacheHome, "ccc", "claude-cli-patched");
+    for (const key of ["k1", "k2", "k3", "k4", "k5", "k6"]) {
+      writePatchedGraphAtomic(key, source, patchOf(`patched-${key}`), [], []);
+    }
+
+    const exitedPid = spawnSync("true").pid;
+    for (const [index, key] of ["k1", "k2", "k3", "k4", "k5", "k6"].entries()) {
+      registerPatchedEntryUser(key, exitedPid);
+      const recent = new Date(Date.now() - (6 - index) * 60_000);
+      fs.utimesSync(path.join(root, key), recent, recent);
+    }
+
+    fs.mkdirSync(path.join(root, ".retired-k0-1-abcd", "graph"), { recursive: true });
+    writePatchedGraphAtomic("k7", source, patchOf("patched-k7"), [], []);
+
+    expect(fs.readdirSync(root).sort()).toEqual(["k4", "k5", "k6", "k7"]);
+  });
+
+  test("keeps a registered entry beyond the count cap while its user runs, even past the grace period", () => {
+    const cacheHome = useTempCacheHome();
+    const source = writeSourceGraph();
+    const root = path.join(cacheHome, "ccc", "claude-cli-patched");
+    for (const key of ["k1", "k2", "k3", "k4", "k5", "k6"]) {
+      writePatchedGraphAtomic(key, source, patchOf(`patched-${key}`), [], []);
+    }
+
+    const prunersDir = path.join(`${root}-pruners`, "k1");
+    fs.mkdirSync(prunersDir, { recursive: true });
+    fs.writeFileSync(path.join(prunersDir, `${spawnSync("true").pid}-interrupted`), "");
+    expect(registerPatchedEntryUser("k1", process.pid)).toBe(true);
+
+    for (const [index, key] of ["k1", "k2", "k3", "k4", "k5"].entries()) {
+      const aged = new Date(Date.now() - GRAPH_PRUNE_GRACE_MS - (5 - index) * 60_000);
+      fs.utimesSync(path.join(root, key), aged, aged);
+    }
+
+    writePatchedGraphAtomic("k7", source, patchOf("patched-k7"), [], []);
+
+    expect(fs.readdirSync(root).sort()).toEqual(["k1", "k4", "k5", "k6", "k7"]);
+    expect(readPatched("k1")).not.toBeNull();
+  });
+
+  test("keeps a graph importable when acquisition overlaps retirement", async () => {
+    const cacheHome = useTempCacheHome();
+    const source = writeSourceGraph('export default "graph-value";');
+    const root = path.join(cacheHome, "ccc", "claude-cli-patched");
+
+    for (const key of ["k1", "k2", "k3", "k4", "k5"]) {
+      writePatchedGraphAtomic(key, source, patchOf('export default "graph-value";'), [], []);
+    }
+
+    const exitedPid = spawnSync("true").pid;
+    registerPatchedEntryUser("k1", exitedPid);
+    const recent = new Date(Date.now() - 60_000);
+    fs.utimesSync(path.join(root, "k1"), recent, recent);
+
+    const acquiredPathFile = path.join(cacheHome, "acquired-path");
+    const renameSync = fs.renameSync;
+    const rename = spyOn(fs, "renameSync").mockImplementationOnce((from, to) => {
+      const preparation = spawnSync(process.execPath, ["--eval", `
+import assert from "node:assert/strict";
+import { materializePatchedGraph, registerPatchedEntryUser, readPatched } from ${JSON.stringify(path.resolve("src/patches/patched-cache.ts"))};
+const canUseCache = registerPatchedEntryUser("k1", ${process.pid});
+assert.equal(canUseCache, false);
+const acquiredPath = canUseCache
+  ? readPatched("k1")?.patchedPath
+  : materializePatchedGraph(${JSON.stringify(path.join(cacheHome, "uncached-graph"))}, ${JSON.stringify(source)}, new Map());
+if (!acquiredPath) throw new Error("Missing acquired graph");
+process.stdout.write(acquiredPath);
+`], { encoding: "utf8", timeout: 10_000 });
+      expect(preparation.status).toBe(0);
+
+      fs.writeFileSync(acquiredPathFile, preparation.stdout);
+
+      renameSync(from, to);
+    });
+
+    try {
+      prunePatchedCache("k5");
+    } finally {
+      rename.mockRestore();
+    }
+
+    const imported = await import(fs.readFileSync(acquiredPathFile, "utf8"));
+    expect(imported.default).toBe("graph-value");
+  });
+
+  test("rejects acquisition when retirement finishes during registration", () => {
+    const cacheHome = useTempCacheHome();
+    const dir = path.join(cacheHome, "ccc", "claude-cli-patched", "retired");
+    const writeFileSync = fs.writeFileSync;
+    const write = spyOn(fs, "writeFileSync").mockImplementationOnce((file, data, options) => {
+      writeFileSync(file, data, options);
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    try {
+      expect(registerPatchedEntryUser("retired", process.pid)).toBe(false);
+    } finally {
+      write.mockRestore();
+    }
   });
 
   test("a cache hit restarts the entry's grace period", () => {

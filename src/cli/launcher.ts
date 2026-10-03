@@ -12,7 +12,7 @@ import type { RuntimePatch } from "@/patches/cli-patches";
 import { log } from "@/utils/log";
 import { createStartupLogger } from "@/utils/startup";
 import type { RuntimeHostPayload } from "./runtime-host";
-import { PREPARATION_LAUNCHER_PATH_ENV, RUNTIME_HOST_PAYLOAD_FD_ENV } from "./runtime-host-process";
+import { PREPARATION_LAUNCHER_PATH_ENV, RUNTIME_HOST_PAYLOAD_FD_ENV, RUNTIME_HOST_PID_ENV } from "./runtime-host-process";
 
 type ResolveResult = ResolvedCli & { source: string };
 
@@ -643,7 +643,6 @@ const run = async () => {
     fallbackModel?: string;
     settingSources?: ("local" | "project" | "user")[];
     strictMcpConfig?: boolean;
-    loopy?: boolean;
     init?: boolean;
     initOnly?: boolean;
     maintenance?: boolean;
@@ -779,11 +778,6 @@ const run = async () => {
   // --strict-mcp-config
   if (!hasCliArg("--strict-mcp-config") && settingsCli.strictMcpConfig) {
     args.push("--strict-mcp-config");
-  }
-
-  // --loopy
-  if (!hasCliArg("--loopy") && settingsCli.loopy) {
-    args.push("--loopy");
   }
 
   // --init (v2.1.10)
@@ -990,14 +984,21 @@ const run = async () => {
 
   const patchTask = startup.start("Apply runtime patches");
   const { applyBuiltInPatches, applyUserPatches } = await import("@/patches/cli-patches");
-  const { computePatchKey, dropPatchedEntry, materializePatchedGraph, patchCacheMode, readPatched, writePatchedGraphAtomic } =
-    await import("@/patches/patched-cache");
+  const {
+    computePatchKey,
+    dropPatchedEntry,
+    materializePatchedGraph,
+    patchCacheMode,
+    readPatched,
+    registerPatchedEntryUser,
+    writePatchedGraphAtomic,
+  } = await import("@/patches/patched-cache");
   const { PREAMBLE_VERSION } = await import("@/native/preamble");
   const { readGraphManifest } = await import("@/native/cache");
   const { readGraphText, splitGraphText } = await import("@/native/graph-text");
   const patchList = patches ?? [];
   const cacheMode = patchCacheMode();
-  const patchKey =
+  let patchKey =
     cacheMode === "off" ? undefined : (
       computePatchKey({
         extractedCliPath,
@@ -1006,6 +1007,18 @@ const run = async () => {
         salt: process.env.CCC_PATCH_CACHE_SALT,
       })
     );
+
+  const runtimeHostPid = Number(process.env[RUNTIME_HOST_PID_ENV]);
+  const isValidRuntimeHostPid = Number.isSafeInteger(runtimeHostPid) && runtimeHostPid > 0;
+  if (!isValidRuntimeHostPid) {
+    throw new Error(`Invalid ${RUNTIME_HOST_PID_ENV}: ${process.env[RUNTIME_HOST_PID_ENV]}`);
+  }
+
+  const shouldBypassPatchCache = patchKey !== undefined && !registerPatchedEntryUser(patchKey, runtimeHostPid);
+  if (shouldBypassPatchCache) {
+    patchKey = undefined;
+  }
+
   const cached = patchKey ? readPatched(patchKey) : null;
 
   // these drive the stale-patch report below, so a cache hit has to restore them too
@@ -1188,6 +1201,7 @@ const run = async () => {
   if (startupMessagesEnabled) process.stdout.write("\n");
   delete runtimePayload.environment[RUNTIME_HOST_PAYLOAD_FD_ENV];
   delete runtimePayload.environment[PREPARATION_LAUNCHER_PATH_ENV];
+  delete runtimePayload.environment[RUNTIME_HOST_PID_ENV];
   delete runtimePayload.environment.CCC_BUN_EXEC_PATH;
   const payloadFd = Number(process.env[RUNTIME_HOST_PAYLOAD_FD_ENV]);
   if (!Number.isInteger(payloadFd) || payloadFd < 0) throw new Error("Invalid CCC runtime payload descriptor");

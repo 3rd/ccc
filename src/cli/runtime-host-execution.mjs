@@ -4,7 +4,10 @@ const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM"];
 
 export const replaceOrSpawnRuntimeHost = (nodeBinary, runtimeHostPath, forwardedArgs, environment) => {
   const args = [runtimeHostPath, ...forwardedArgs];
-  if (typeof process.execve === "function") {
+  const hasProcessOwnedVfs = [environment.AGENTS_VFS_IMAGE_PATH, environment.AGENTS_VFS_MUTABLE_PATH].some(
+    (path) => path?.startsWith(`/proc/${process.pid}/fd/`),
+  );
+  if (typeof process.execve === "function" && !hasProcessOwnedVfs) {
     process.execve(nodeBinary, [nodeBinary, ...args], environment);
     return;
   }

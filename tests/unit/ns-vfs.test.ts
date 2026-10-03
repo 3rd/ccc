@@ -6,15 +6,18 @@ import { describe, expect, test } from "bun:test";
 import { NOTIFY_SOCKET_ENV, NOTIFY_TOKEN_ENV, NS_ACTIVE_ENV, NS_KILL_SWITCH_ENV, namespacePrefix } from "@/vfs/ns-vfs";
 
 const projectRoot = resolve(import.meta.dir, "..", "..");
-const prefix = namespacePrefix(process.env);
+const prefix = namespacePrefix({ [NS_KILL_SWITCH_ENV]: process.env[NS_KILL_SWITCH_ENV] });
 const canRun = prefix !== null;
 
-const VIRTUAL_ROOT = join(tmpdir(), `ccc-ns-vfs-test-${process.pid}`);
-
-const innerScript = `
+describe.if(canRun)("namespace VFS", () => {
+  test("mounts tmpfs, writes content, children see it, outside does not", () => {
+    const virtualRoot = mkdtempSync(join(tmpdir(), "ccc-ns-vfs-test-"));
+    const innerScript = `
+delete process.env.${NOTIFY_SOCKET_ENV};
+delete process.env.${NOTIFY_TOKEN_ENV};
 const { setupNamespaceVfs } = await import("${join(projectRoot, "src", "vfs", "ns-vfs.ts")}");
 const { spawnSync } = await import("child_process");
-const root = ${JSON.stringify(VIRTUAL_ROOT)};
+const root = ${JSON.stringify(virtualRoot)};
 const ok = setupNamespaceVfs([root], [
   { nativePath: root + "/demo/SKILL.md", content: "# ns demo\\n" },
   { nativePath: root + "/demo/references/notes.md", content: "ns notes\\n" },
@@ -25,32 +28,34 @@ const nested = spawnSync("bash", ["-c", "cat " + root + "/demo/SKILL.md"], { enc
 console.log(JSON.stringify({ ok, cat: cat.stdout, ls: ls.stdout, nested: nested.stdout }));
 `;
 
-describe.if(canRun)("namespace VFS", () => {
-  test("mounts tmpfs, writes content, children see it, outside does not", () => {
-    const result = spawnSync(
-      prefix![0]!,
-      [...prefix!.slice(1), "bun", "-e", innerScript],
-      {
-        encoding: "utf8",
-        cwd: projectRoot,
-        env: { ...process.env, [NS_ACTIVE_ENV]: "1" },
-        timeout: 60_000,
-      },
-    );
-    expect(result.status).toBe(0);
-    const parsed = JSON.parse(result.stdout.trim().split("\n").at(-1)!) as {
-      ok: boolean;
-      cat: string;
-      ls: string;
-      nested: string;
-    };
-    expect(parsed.ok).toBe(true);
-    expect(parsed.cat).toBe("ns notes\n");
-    expect(parsed.ls.split("\n").filter(Boolean).sort()).toEqual(["SKILL.md", "references"]);
-    expect(parsed.nested).toBe("# ns demo\n");
+    try {
+      const result = spawnSync(
+        prefix![0]!,
+        [...prefix!.slice(1), "bun", "-e", innerScript],
+        {
+          encoding: "utf8",
+          cwd: projectRoot,
+          env: { ...process.env, [NS_ACTIVE_ENV]: "1" },
+          timeout: 60_000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim().split("\n").at(-1)!) as {
+        ok: boolean;
+        cat: string;
+        ls: string;
+        nested: string;
+      };
+      expect(parsed.ok).toBe(true);
+      expect(parsed.cat).toBe("ns notes\n");
+      expect(parsed.ls.split("\n").filter(Boolean).sort()).toEqual(["SKILL.md", "references"]);
+      expect(parsed.nested).toBe("# ns demo\n");
 
-    // outside the namespace only the empty mountpoint dir may exist
-    if (existsSync(VIRTUAL_ROOT)) expect(readdirSync(VIRTUAL_ROOT)).toEqual([]);
+      // outside the namespace only the empty mountpoint dir may exist
+      expect(readdirSync(virtualRoot)).toEqual([]);
+    } finally {
+      rmSync(virtualRoot, { recursive: true, force: true });
+    }
   });
 });
 
@@ -79,6 +84,7 @@ cat > "$3"
     process.env.CCC_BUN_EXEC_PATH = senderPath;
 
     try {
+      expect(namespacePrefix({ [NOTIFY_SOCKET_ENV]: capturePath, [NOTIFY_TOKEN_ENV]: token })).toBeNull();
       expect(
         setupNamespaceVfs(["/virtual/root"], [
           { nativePath: "/virtual/root/file.txt", content: "contents" },

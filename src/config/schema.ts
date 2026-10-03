@@ -201,8 +201,6 @@ const baseSettingsSchema = z.object({
       settingSources: z.array(z.enum(["user", "project", "local"])).optional(),
       // only use specified MCP config, ignore others
       strictMcpConfig: z.boolean().optional(),
-      // enable loopy for -p
-      loopy: z.boolean().optional(),
       // trigger Setup hook
       init: z.boolean().optional(),
       // run Setup hook and exit
@@ -463,6 +461,10 @@ const baseSettingsSchema = z.object({
   gatewayInternalNetworks: z.array(z.string()).optional(),
   // auto-select organization UUID during login (requires forceLoginMethod)
   forceLoginOrgUUID: z.string().optional(),
+  // unset allows every provider, empty allows none; customEndpoint only for a URL pinned in the same managed env; managed settings only (v2.1.285)
+  allowedProviders: z
+    .array(z.enum(["anthropic", "customEndpoint", "bedrock", "vertex", "foundry", "anthropicAws", "mantle", "gateway"]))
+    .optional(),
   // script to generate dynamic OpenTelemetry headers
   otelHeadersHelper: z.string().optional(),
   // git/PR attribution settings (replaces deprecated includeCoAuthoredBy)
@@ -536,6 +538,10 @@ const baseSettingsSchema = z.object({
   // when true, also constrains Default model selection to availableModels; no effect
   // when availableModels is unset/empty; typically managed settings (v2.1.175)
   enforceAvailableModels: z.boolean().optional(),
+  // "exact" stops an availableModels ID entry from allowing later versions; managed settings only (v2.1.283)
+  availableModelsMatch: z.enum(["prefix", "exact"]).optional(),
+  // blocks models even when availableModels allows them; managed settings only (v2.1.283)
+  deniedModels: z.array(z.string()).optional(),
   // override mapping from Anthropic model ID to provider-specific model ID (v2.1.73)
   modelOverrides: z.record(z.string(), z.string()).optional(),
   // curated /model picker rows, independent of the built-in lineup; honored from managed,

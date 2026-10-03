@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { runInNewContext } from "node:vm";
 import { applyBuiltInPatches, applyUserPatches } from "@/patches/cli-patches";
 
 describe("applyBuiltInPatches", () => {
@@ -13,6 +14,24 @@ describe("applyBuiltInPatches", () => {
       "growthbook-sync-flag-override",
       "disable-find-grep-shadow",
     ]);
+  });
+
+  test("featureFlags win over every class-based GrowthBook reader", async () => {
+    const content = `class GB{getEnvironmentOverrides(){return null}
+getFeatureValueWithSource(e,n){let r=this.getEnvironmentOverrides();if(r&&e in r)return{value:r[e],source:"override"};return{value:n,source:"default"}}
+async checkGateCachedOrBlocking(e){let r=this.getEnvironmentOverrides();if(r&&e in r)return Boolean(r[e]);return!1}
+async getFeatureValueBlocking(e,n){let r=this.getEnvironmentOverrides();if(r&&e in r)return r[e];return n}}
+const gb=new GB();Promise.all([gb.getFeatureValueWithSource("flag",0).value,gb.checkGateCachedOrBlocking("gate"),gb.getFeatureValueBlocking("flag",0)])`;
+    const next = applyBuiltInPatches(content);
+
+    const values = await runInNewContext(next.content, {
+      globalThis: { __cccFeatureFlags: { flag: 7, gate: true } },
+      process: { env: {} },
+      Promise,
+    });
+
+    expect(next.applied).toContain("growthbook-sync-flag-override");
+    expect(values).toEqual([7, true, 7]);
   });
 
   test("reports misses when built-in replacements do not match", () => {

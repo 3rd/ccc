@@ -877,6 +877,8 @@ export interface MessageDisplayHookResponse extends BaseHookResponse {
 }
 
 export interface ElicitationHookResponse extends BaseHookResponse {
+  decision?: "block";
+  reason?: string;
   hookSpecificOutput?: {
     hookEventName: "Elicitation";
     action?: "accept" | "cancel" | "decline";
@@ -885,6 +887,8 @@ export interface ElicitationHookResponse extends BaseHookResponse {
 }
 
 export interface ElicitationResultHookResponse extends BaseHookResponse {
+  decision?: "block";
+  reason?: string;
   hookSpecificOutput?: {
     hookEventName: "ElicitationResult";
     action?: "accept" | "cancel" | "decline";
