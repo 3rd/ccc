@@ -35,17 +35,37 @@ const getTypeScriptRunner = (env: NodeJS.ProcessEnv) => env.CCC_TYPESCRIPT_RUNNE
 const getNodeBinary = (env: NodeJS.ProcessEnv) => env.CCC_NODE?.trim() || "node";
 
 const MAX_COMPILE_CACHE_ENTRIES = 8000;
+const RETAINED_COMPILE_CACHE_ENTRIES = 6000;
 
-const compileCacheEntryCount = (dir: string) => {
-  let count = 0;
+const listCompileCacheEntries = (dir: string) => {
+  const entryPaths: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const entryPath = join(dir, entry.name);
+
     if (!entry.isDirectory()) {
-      count += 1;
+      entryPaths.push(entryPath);
       continue;
     }
-    count += fs.readdirSync(join(dir, entry.name)).length;
+
+    for (const name of fs.readdirSync(entryPath)) {
+      entryPaths.push(join(entryPath, name));
+    }
   }
-  return count;
+
+  return entryPaths;
+};
+
+const pruneOldestCompileCacheEntries = (dir: string) => {
+  const entryPaths = listCompileCacheEntries(dir);
+  if (entryPaths.length <= MAX_COMPILE_CACHE_ENTRIES) return;
+
+  const newestFirst = entryPaths
+    .map((entryPath) => ({ entryPath, writtenAtMs: fs.statSync(entryPath).mtimeMs }))
+    .sort((a, b) => b.writtenAtMs - a.writtenAtMs);
+
+  for (const { entryPath } of newestFirst.slice(RETAINED_COMPILE_CACHE_ENTRIES)) {
+    fs.rmSync(entryPath, { recursive: true, force: true });
+  }
 };
 
 const resolveCompileCacheDir = (env: NodeJS.ProcessEnv) => {
@@ -55,9 +75,7 @@ const resolveCompileCacheDir = (env: NodeJS.ProcessEnv) => {
   const cacheHome = env.XDG_CACHE_HOME?.trim() || join(homedir(), ".cache");
   const dir = join(cacheHome, "ccc", "v8-compile-cache");
   try {
-    if (compileCacheEntryCount(dir) > MAX_COMPILE_CACHE_ENTRIES) {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+    pruneOldestCompileCacheEntries(dir);
   } catch {
     // absent or unreadable: node creates it, or silently skips caching
   }

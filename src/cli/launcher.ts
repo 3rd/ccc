@@ -658,7 +658,7 @@ const run = async () => {
     teammateMode?: "auto" | "in-process" | "tmux";
     appendSystemPrompt?: string;
     appendSystemPromptFile?: string;
-    // append to every Task-tool subagent's system prompt (print mode only) (v2.1.207)
+    // append to every Task-tool subagent's system prompt (v2.1.207)
     appendSubagentSystemPrompt?: string;
     appendSubagentSystemPromptFile?: string;
     betas?: string[];
@@ -855,12 +855,20 @@ const run = async () => {
     args.push("--append-system-prompt-file", settingsCli.appendSystemPromptFile);
   }
 
-  // --append-subagent-system-prompt (print mode only, v2.1.207)
+  // --append-subagent-system-prompt (v2.1.207)
+  const hasSubagentPromptSource =
+    hasCliArg("--append-subagent-system-prompt") ||
+    hasCliArg("--append-subagent-system-prompt-file") ||
+    settingsCli.appendSubagentSystemPromptFile !== undefined;
+  const shouldShareMainPrompt = !hasSubagentPromptSource && systemPrompt !== "";
+
   if (!hasCliArg("--append-subagent-system-prompt") && settingsCli.appendSubagentSystemPrompt) {
     args.push("--append-subagent-system-prompt", settingsCli.appendSubagentSystemPrompt);
+  } else if (shouldShareMainPrompt) {
+    args.push("--append-subagent-system-prompt", systemPrompt);
   }
 
-  // --append-subagent-system-prompt-file (print mode only, v2.1.261)
+  // --append-subagent-system-prompt-file (v2.1.261)
   if (!hasCliArg("--append-subagent-system-prompt-file") && settingsCli.appendSubagentSystemPromptFile) {
     args.push("--append-subagent-system-prompt-file", settingsCli.appendSubagentSystemPromptFile);
   }
@@ -1199,10 +1207,13 @@ const run = async () => {
 
   launchTask.done();
   if (startupMessagesEnabled) process.stdout.write("\n");
+
   delete runtimePayload.environment[RUNTIME_HOST_PAYLOAD_FD_ENV];
   delete runtimePayload.environment[PREPARATION_LAUNCHER_PATH_ENV];
   delete runtimePayload.environment[RUNTIME_HOST_PID_ENV];
   delete runtimePayload.environment.CCC_BUN_EXEC_PATH;
+  delete runtimePayload.environment.CCC_PATCH_CACHE_SALT;
+
   const payloadFd = Number(process.env[RUNTIME_HOST_PAYLOAD_FD_ENV]);
   if (!Number.isInteger(payloadFd) || payloadFd < 0) throw new Error("Invalid CCC runtime payload descriptor");
   fs.writeFileSync(payloadFd, JSON.stringify(runtimePayload));

@@ -231,9 +231,9 @@ const baseSettingsSchema = z.object({
       appendSystemPrompt: z.string().optional(),
       // load additional system prompt from file and append (print mode only)
       appendSystemPromptFile: z.string().optional(),
-      // append to every Task-tool subagent's system prompt, propagated to nested subagents (print mode only, v2.1.207)
+      // append to every Task-tool subagent's system prompt, propagated to nested subagents (v2.1.207)
       appendSubagentSystemPrompt: z.string().optional(),
-      // read the subagent append prompt from a file; the CLI rejects combining it with appendSubagentSystemPrompt (print mode only, v2.1.261)
+      // read the subagent append prompt from a file; the CLI rejects combining it with appendSubagentSystemPrompt (v2.1.261)
       appendSubagentSystemPromptFile: z.string().optional(),
       // beta headers to include in API requests (API key users only)
       betas: z.array(z.string()).optional(),

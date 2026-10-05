@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { buildLaunchSpec } from "@/cli/launcher-wrapper";
 import { assertExitCode, assertStderrEmpty, assertStdoutContains } from "../utils/assertions";
 import { LAUNCHER_ROOT, runCCC } from "../utils/test-runner";
 
-const expectedLauncherPath = join(LAUNCHER_ROOT, "src/cli/launcher.ts");
 const expectedDoruRunnerPath = join(LAUNCHER_ROOT, "src/cli/doru-runtime-host-runner.mjs");
 const expectedRunnerPath = join(LAUNCHER_ROOT, "src/cli/runtime-host-runner.mjs");
 const expectedRuntimeHostPath = "/tmp/ccc-runtime-host.mjs";
@@ -80,6 +79,41 @@ describe("launcher", () => {
 
     expect(spec.env.NODE_COMPILE_CACHE).toBe("/tmp/ccc-test-cache/ccc/v8-compile-cache");
   });
+
+  test("wrapper prunes the oldest compile cache entries once the cache exceeds its cap", () => {
+    const cacheHome = mkdtempSync(join(tmpdir(), "ccc-compile-cache-test-"));
+    const versionDir = join(cacheHome, "ccc", "v8-compile-cache", "v24-x64-test");
+    const olderEntrySource = join(cacheHome, "older-entry");
+    const newerEntrySource = join(cacheHome, "newer-entry");
+
+    try {
+      mkdirSync(versionDir, { recursive: true });
+      writeFileSync(olderEntrySource, "");
+      utimesSync(olderEntrySource, 1_700_000_000, 1_700_000_000);
+      writeFileSync(newerEntrySource, "");
+
+      for (let index = 0; index < 2001; index += 1) {
+        linkSync(olderEntrySource, join(versionDir, `older-${index}`));
+      }
+
+      for (let index = 0; index < 6000; index += 1) {
+        linkSync(newerEntrySource, join(versionDir, `newer-${index}`));
+      }
+
+      buildLaunchSpec({
+        cliArgs: [],
+        cwd: "/tmp/ccc-test",
+        env: { XDG_CACHE_HOME: cacheHome, NODE_COMPILE_CACHE: undefined },
+        runtimeHostPath: expectedRuntimeHostPath,
+      });
+
+      const retainedNames = readdirSync(versionDir);
+      expect(retainedNames).toHaveLength(6000);
+      expect(retainedNames.every((name) => name.startsWith("newer-"))).toBe(true);
+    } finally {
+      rmSync(cacheHome, { force: true, recursive: true });
+    }
+  }, 30_000);
 
   test("wrapper honours an explicit compile cache dir and the kill switch", () => {
     const explicit = buildLaunchSpec({

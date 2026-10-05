@@ -39,6 +39,8 @@ bun add -g tsx
 \
 Bun must also be available on `PATH` at runtime because CCC launches hook and statusline helpers with `bun`.
 \
+Node.js 24 or newer must be available on `PATH` (or set `CCC_NODE`) because CCC runs Claude Code under Node.
+\
 To update it to the latest version do a `bun update`.
 
 ### 2. Customize your config

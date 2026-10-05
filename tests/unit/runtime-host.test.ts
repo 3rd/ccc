@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -72,11 +72,12 @@ const launchHost = async (options: {
   directory: string;
   debug?: string;
   fakeClaudeSource: string;
+  graphRoot?: string;
   runtimeLogPath?: string;
 }) => {
-  const fakeClaudePath = join(options.directory, "fake-claude.mjs");
+  const fakeClaudePath = join(options.graphRoot ?? options.directory, "fake-claude.mjs");
   writeFileSync(fakeClaudePath, options.fakeClaudeSource);
-  const payload = makePayload(options.directory, pathToFileURL(fakeClaudePath).href);
+  const payload = makePayload(options.directory, fakeClaudePath);
   payload.runtimeLogPath = options.runtimeLogPath;
   const preparationPath = writePreparationScript(options.directory, payload);
   const hostPath = await buildRuntimeHost();
@@ -187,6 +188,52 @@ fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({
     expect(readFileSync(runtimeLogPath, "utf8")).toContain("CLAUDE.md");
   });
 
+  test("imports graph modules once, under their real path, through a symlinked graph root", async () => {
+    const directory = makeTemporaryDirectory();
+    const realRoot = join(directory, "graph-root");
+    const linkedRoot = join(directory, "linked-root");
+    const resultPath = join(directory, "result.json");
+    mkdirSync(realRoot);
+    symlinkSync(realRoot, linkedRoot);
+    const resolvedRoot = realpathSync(realRoot);
+
+    writeFileSync(join(realRoot, "package.json"), '{"type":"module"}\n');
+    writeFileSync(
+      join(realRoot, "chunk-shared.js"),
+      `globalThis.sharedEvaluations = (globalThis.sharedEvaluations ?? 0) + 1;
+export const sharedUrl = import.meta.url;
+`,
+    );
+    writeFileSync(
+      join(realRoot, "chunk-user.js"),
+      `export { sharedUrl } from ${JSON.stringify(join(resolvedRoot, "chunk-shared.js"))};
+`,
+    );
+
+    const child = await launchHost({
+      directory,
+      graphRoot: linkedRoot,
+      fakeClaudeSource: `import fs from "node:fs";
+import { sharedUrl } from ${JSON.stringify(join(linkedRoot, "chunk-shared.js"))};
+import { sharedUrl as userSharedUrl } from ${JSON.stringify(join(linkedRoot, "chunk-user.js"))};
+fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({
+  entryUrl: import.meta.url,
+  sharedUrl,
+  userSharedUrl,
+  sharedEvaluations: globalThis.sharedEvaluations,
+}));
+`,
+    });
+
+    expect(await waitForClose(child)).toBe(0);
+    expect(JSON.parse(readFileSync(resultPath, "utf8"))).toEqual({
+      entryUrl: pathToFileURL(join(resolvedRoot, "fake-claude.mjs")).href,
+      sharedUrl: pathToFileURL(join(resolvedRoot, "chunk-shared.js")).href,
+      userSharedUrl: pathToFileURL(join(resolvedRoot, "chunk-shared.js")).href,
+      sharedEvaluations: 1,
+    });
+  });
+
   test("preserves VFS diagnostics when DEBUG writes to stdout", async () => {
     const directory = makeTemporaryDirectory();
     const runtimeLogPath = join(directory, "runtime.log");
@@ -225,6 +272,29 @@ fs.readFileSync(os.homedir() + "/.claude/CLAUDE.md", "utf8");
 
     expect(await waitForClose(child)).not.toBe(0);
     expect(await stderr).toContain("CCC preparation terminated by SIGTERM");
+  });
+
+  test("refuses to start on Node releases older than 24", async () => {
+    const directory = makeTemporaryDirectory();
+    const preloadPath = join(directory, "node-22.cjs");
+    writeFileSync(
+      preloadPath,
+      'Object.defineProperty(process, "versions", { value: { ...process.versions, node: "22.14.0" } });\n',
+    );
+    const hostPath = await buildRuntimeHost();
+    const child = spawn("node", ["--require", preloadPath, hostPath], {
+      cwd: directory,
+      env: {
+        ...process.env,
+        CCC_BUN_EXEC_PATH: process.execPath,
+        [PREPARATION_LAUNCHER_PATH_ENV]: join(directory, "prepare.mjs"),
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const stderr = new Response(child.stderr).text();
+
+    expect(await waitForClose(child)).not.toBe(0);
+    expect(await stderr).toContain("CCC requires Node.js 24 or newer");
   });
 
   test("the runner fallback forwards termination signals to the Node host", async () => {

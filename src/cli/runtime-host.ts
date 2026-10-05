@@ -1,8 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { appendFileSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import * as nodeModule from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   installVirtualFileSystem,
@@ -174,6 +175,24 @@ const readPreparationPayload = async (onSpawn: (child: ChildProcess) => void) =>
   return { ...result, serializedPayload: payloadChunks.join("") };
 };
 
+const MINIMUM_NODE_MAJOR_VERSION = 24;
+
+const GRAPH_MODULE_FILE_NAME = /^[\w.-]+\.m?js$/;
+
+const registerGraphModuleResolution = (importPath: string) => {
+  const graphRoot = `${dirname(importPath)}/`;
+  const graphRootUrl = `${pathToFileURL(realpathSync(graphRoot)).href}/`;
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (!specifier.startsWith(graphRoot)) return nextResolve(specifier, context);
+
+      const fileName = specifier.slice(graphRoot.length);
+      if (!GRAPH_MODULE_FILE_NAME.test(fileName)) return nextResolve(specifier, context);
+      return { url: graphRootUrl + fileName, format: "module", shortCircuit: true };
+    },
+  });
+};
+
 const applyPreparedEnvironment = (environment: Record<string, string>) => {
   for (const key of Object.keys(process.env)) {
     if (!(key in environment)) delete process.env[key];
@@ -182,6 +201,13 @@ const applyPreparedEnvironment = (environment: Record<string, string>) => {
 };
 
 export const runRuntimeHost = async () => {
+  const nodeMajorVersion = Number(process.versions.node.split(".")[0]);
+  if (nodeMajorVersion < MINIMUM_NODE_MAJOR_VERSION) {
+    throw new Error(
+      `CCC requires Node.js ${MINIMUM_NODE_MAJOR_VERSION} or newer, but ${process.execPath} is ${process.version}. Put a newer node on PATH or set CCC_NODE.`,
+    );
+  }
+
   const cleanupEventsFile = createEventsFileOwner();
   let preparationChild: ChildProcess | undefined;
   const stop = (signal: NodeJS.Signals) => {
@@ -221,6 +247,7 @@ export const runRuntimeHost = async () => {
   process.setSourceMapsEnabled(false);
   removeTsxFromNodeOptions();
 
+  registerGraphModuleResolution(payload.importPath);
   await import(payload.importPath);
 };
 
