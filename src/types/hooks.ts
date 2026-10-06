@@ -61,6 +61,7 @@ export type HookMatcherType =
   | "MultiEdit"
   | "NotebookEdit"
   | "NotebookRead"
+  | "OfferChromeSetup"
   | "PowerShell"
   | "PushNotification"
   | "Read"

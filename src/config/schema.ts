@@ -1093,6 +1093,8 @@ const baseSettingsSchema = z.object({
   autoCompactEnabled: z.boolean().optional(), // default: true
   // @internal precompute the compaction summary in the background before it is needed; only applies when auto-compact is on (v2.1.179)
   precomputeCompactionEnabled: z.boolean().optional(),
+  // false stops compaction of a long conversation while the session is idle; true does not turn it on (v2.1.290)
+  idleCompaction: z.boolean().optional(),
   autoScrollEnabled: z.boolean().optional(), // default: true
   fileCheckpointingEnabled: z.boolean().optional(), // default: true
   // auto-switch model when safety filters block a message; off may stop the chat instead (v2.1.160)

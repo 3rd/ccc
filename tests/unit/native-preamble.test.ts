@@ -434,6 +434,34 @@ console.log("ok");
     }
   });
 
+  test("reports the entry script as Bun.main so the source-checkout probe stays off", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-main-"));
+
+    try {
+      const scriptPath = join(directory, "cli.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+function GE(){return!0}function bu(){return typeof Bun<"u"&&__cccBun.isStandaloneExecutable===!0}function wus(){if(!GE()||bu())return!1;let t=__cccBun.main;if(/^(?:\\/\\$bunfs\\/|B:[\\\\/]~BUN[\\\\/])/.test(t))return!1;return/\\.[cm]?tsx?$/.test(t)}
+console.log(JSON.stringify({main:__cccBun.main,isSourceCheckout:wus()}));
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ main: scriptPath, isSourceCheckout: false });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("hashes gzip request-body blocks through Bun.SHA256 and Bun.hash.crc32 under Node", () => {
     const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-hash-"));
 

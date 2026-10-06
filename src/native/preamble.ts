@@ -510,6 +510,7 @@ const PREAMBLE = [
   "  embeddedFiles: [],",
   '  version: "0.0.0-ccc-node-shim",',
   "  isStandaloneExecutable: false,",
+  "  get main() { return process.argv[1]; },",
   "  semver: { order: __cccCompareVersions, satisfies: __cccSemverSatisfies },",
   "  which: __cccWhich,",
   "  stringWidth: __cccStringWidth,",
