@@ -13,7 +13,16 @@ describe("applyBuiltInPatches", () => {
     expect(next.missed).toEqual([
       "growthbook-sync-flag-override",
       "disable-find-grep-shadow",
+      "builtin-plugin-hooks-in-memory",
     ]);
+  });
+
+  test("built-in plugin hooks load in memory without a folder", () => {
+    const content = `function du(){return!1}var Ht=(e,o,r)=>({module:e,scan:o,folder:r});var kB=(e,o,r)=>du()?Ht(o,r(),e):{module:o,folder:e};kB(void 0,"hooks",()=>"scan")`;
+    const next = applyBuiltInPatches(content);
+
+    expect(next.applied).toContain("builtin-plugin-hooks-in-memory");
+    expect(runInNewContext(next.content)).toEqual({ module: "hooks", scan: "scan", folder: undefined });
   });
 
   test("featureFlags win over every class-based GrowthBook reader", async () => {
@@ -44,6 +53,7 @@ const gb=new GB();Promise.all([gb.getFeatureValueWithSource("flag",0).value,gb.c
       '"security-review" => "zsecurityreview"',
       "growthbook-sync-flag-override",
       "disable-find-grep-shadow",
+      "builtin-plugin-hooks-in-memory",
     ]);
   });
 });

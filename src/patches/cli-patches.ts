@@ -114,6 +114,19 @@ const disableFindGrepShadow: RuntimePatch = {
   },
 };
 
+const builtinPluginHooksInMemory: RuntimePatch = {
+  name: "builtin-plugin-hooks-in-memory",
+  fn: (content) => {
+    const re =
+      /=\(([\w$]+),([\w$]+),([\w$]+)\)=>[\w$]+\(\)\?([\w$]+)\(\2,\3\(\),\1\):\{module:\2,folder:\1\}/;
+    return content.replace(
+      re,
+      (_match, folder, hooksModule, scan, inMemory) =>
+        `=(${folder},${hooksModule},${scan})=>${inMemory}(${hooksModule},${scan}(),${folder})`,
+    );
+  },
+};
+
 // built-in string replacements
 const builtInStringPatches: RuntimePatch[] = [
   // disable unwanted features
@@ -121,6 +134,7 @@ const builtInStringPatches: RuntimePatch[] = [
 
   growthbookSyncFlagOverride,
   disableFindGrepShadow,
+  builtinPluginHooksInMemory,
 ];
 
 const labelFor = (patch: RuntimePatch) =>

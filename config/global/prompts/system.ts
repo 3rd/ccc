@@ -1,6 +1,6 @@
 import { createPrompt } from "@/config/helpers";
 
-// System prompts build the "custom" output style
+// appended to Claude Code's system prompt and to every subagent's
 export default createPrompt((context) => {
   const isGitRepo = context.isGitRepo();
   const platform = context.getPlatform();

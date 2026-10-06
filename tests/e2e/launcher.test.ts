@@ -1,6 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { randomUUID } from "crypto";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "fs";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
 import { buildLaunchSpec } from "@/cli/launcher-wrapper";
 import { assertExitCode, assertStderrEmpty, assertStdoutContains } from "../utils/assertions";
@@ -32,6 +46,91 @@ node "$runner_path"
     fakeBinDir,
     runnerPathFile,
   };
+};
+
+const createClaudeRunDirectories = () => {
+  const root = mkdtempSync(join(tmpdir(), "ccc-print-mode-"));
+  const home = join(root, "home");
+  const configDir = join(root, "config");
+  mkdirSync(home);
+  mkdirSync(join(configDir, "global", "prompts"), { recursive: true });
+
+  return { root, home, configDir };
+};
+
+const readClaudeArgv = (directories: ReturnType<typeof createClaudeRunDirectories>, claudeArgs: string[]) => {
+  const payloadPath = join(directories.root, "payload.json");
+  const payloadDescriptor = openSync(payloadPath, "w");
+
+  try {
+    Bun.spawnSync(["bun", join(LAUNCHER_ROOT, "src/cli/launcher.ts"), ...claudeArgs], {
+      cwd: directories.root,
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: directories.home,
+        XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"),
+        CCC_CONFIG_DIR: directories.configDir,
+        CCC_NS_VFS: "0",
+        CCC_RUNTIME_PAYLOAD_FD: "3",
+        CCC_RUNTIME_HOST_PID: String(process.pid),
+      },
+      stdio: ["ignore", "ignore", "ignore", payloadDescriptor],
+    });
+  } finally {
+    closeSync(payloadDescriptor);
+  }
+
+  const payload: { claudeArgv: string[] } = JSON.parse(readFileSync(payloadPath, "utf8"));
+  return payload.claudeArgv;
+};
+
+const captureMessageRequests = async (
+  directories: ReturnType<typeof createClaudeRunDirectories>,
+  claudeArgs: string[],
+  environment: Record<string, string> = {},
+) => {
+  const messageBodies: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    routes: {
+      "/v1/messages": async (request) => {
+        messageBodies.push(await request.text());
+        return Response.json(
+          { type: "error", error: { type: "invalid_request_error", message: "captured by test" } },
+          { status: 400 },
+        );
+      },
+    },
+    fetch: () => Response.json({}),
+  });
+
+  try {
+    const claude = Bun.spawn(["bun", join(LAUNCHER_ROOT, "src/cli/launcher-wrapper.ts"), ...claudeArgs], {
+      cwd: directories.root,
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: directories.home,
+        SHELL: "/bin/bash",
+        LANG: "C.UTF-8",
+        TERM: "dumb",
+        XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"),
+        CCC_CONFIG_DIR: directories.configDir,
+        CCC_NS_VFS: "0",
+        ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.port}`,
+        ANTHROPIC_API_KEY: "test-key-not-real",
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+        ...environment,
+      },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await claude.exited;
+  } finally {
+    server.stop(true);
+  }
+
+  return messageBodies;
 };
 
 describe("launcher", () => {
@@ -268,6 +367,110 @@ describe("launcher", () => {
     // should contain content from the user prompt
     assertStdoutContains(result.stdout, "Test User Prompt");
   });
+
+  test("--dump-config writes the prepared configuration", async () => {
+    const userPromptResult = await runCCC({
+      projectDir: "typescript-basic",
+      configFixture: "full-featured",
+      args: ["--print-user-prompt"],
+    });
+    const result = await runCCC({
+      projectDir: "typescript-basic",
+      configFixture: "full-featured",
+      args: ["--dump-config"],
+    });
+    const stdout = result.stdout.trimEnd();
+    const dumpDir = stdout.slice(stdout.lastIndexOf("\n") + 1);
+    const dumpRoot = join(LAUNCHER_ROOT, "tests", "fixtures", "projects", "typescript-basic", ".config-dump");
+    expect(dumpDir.startsWith(`${dumpRoot}/`)).toBe(true);
+
+    try {
+      assertExitCode(result.exitCode, 0);
+      const userPrompt = readFileSync(join(dumpDir, "user.md"), "utf8");
+      expect(userPrompt).toContain("Test User Prompt");
+      expect(userPrompt).toBe(userPromptResult.stdout.replace(/\n$/, ""));
+
+      const settings = JSON.parse(readFileSync(join(dumpDir, "settings.json"), "utf8"));
+      expect(settings.env.TEST_GLOBAL).toBe("true");
+      expect(settings.env.TEST_API_KEY).toBe("[redacted]");
+
+      const claudeState = JSON.parse(readFileSync(join(dumpDir, "claude.json"), "utf8"));
+      expect(Object.keys(claudeState).filter((key) => key !== "cachedGrowthBookFeatures")).toEqual([]);
+
+      expect(readFileSync(join(dumpRoot, ".gitignore"), "utf8")).toBe("*\n");
+    } finally {
+      rmSync(dumpRoot, { force: true, recursive: true });
+    }
+  });
+
+  test("print mode sends the user prompt to the API without a real CLAUDE.md", async () => {
+    const directories = createClaudeRunDirectories();
+    writeFileSync(join(directories.configDir, "global", "prompts", "user.md"), "Print mode marker 7f3a91\n");
+
+    try {
+      const messageBodies = await captureMessageRequests(directories, ["-p", "say hi"]);
+
+      expect(messageBodies.some((body) => body.includes("Print mode marker 7f3a91"))).toBe(true);
+      expect(existsSync(join(directories.home, ".claude", "CLAUDE.md"))).toBe(false);
+    } finally {
+      rmSync(directories.root, { force: true, recursive: true });
+    }
+  }, 180_000);
+
+  test("multi-value settings flags leave a leading prompt for Claude", async () => {
+    const directories = createClaudeRunDirectories();
+    writeFileSync(
+      join(directories.configDir, "global", "settings.ts"),
+      `export default { cli: { addDir: [${JSON.stringify(directories.root)}] } };\n`,
+    );
+
+    try {
+      const messageBodies = await captureMessageRequests(directories, ["Leading prompt marker 4c81d2", "-p"]);
+
+      expect(messageBodies.some((body) => body.includes("Leading prompt marker 4c81d2"))).toBe(true);
+    } finally {
+      rmSync(directories.root, { force: true, recursive: true });
+    }
+  }, 180_000);
+
+  test("channel flags passed as --flag=value replace the configured channels", () => {
+    const directories = createClaudeRunDirectories();
+    writeFileSync(
+      join(directories.configDir, "global", "settings.ts"),
+      `export default { cli: { channels: ["plugin:configured@market"], dangerouslyLoadDevelopmentChannels: ["server:configured-dev"] } };\n`,
+    );
+
+    try {
+      const claudeArgv = readClaudeArgv(directories, [
+        "--channels=plugin:manual@market",
+        "--dangerously-load-development-channels=server:manual-dev",
+      ]);
+
+      expect(claudeArgv.filter((arg) => arg.includes("channels"))).toEqual([
+        "--channels=plugin:manual@market",
+        "--dangerously-load-development-channels=server:manual-dev",
+      ]);
+    } finally {
+      rmSync(directories.root, { force: true, recursive: true });
+    }
+  }, 120_000);
+
+  test("a settings flag with an optional value leaves a leading prompt for Claude", async () => {
+    const directories = createClaudeRunDirectories();
+    const instanceId = randomUUID();
+    writeFileSync(join(directories.configDir, "global", "settings.ts"), "export default { cli: { debug: true } };\n");
+
+    try {
+      const messageBodies = await captureMessageRequests(directories, ["Leading prompt marker 9d07e5", "-p"], {
+        CCC_PRESEEDED_INSTANCE_ID: instanceId,
+      });
+
+      expect(messageBodies.some((body) => body.includes("Leading prompt marker 9d07e5"))).toBe(true);
+    } finally {
+      rmSync(directories.root, { force: true, recursive: true });
+      rmSync(join(LAUNCHER_ROOT, ".cache", instanceId), { force: true, recursive: true });
+    }
+  }, 180_000);
 
   test("--doctor runs diagnostics", async () => {
     const result = await runCCC({

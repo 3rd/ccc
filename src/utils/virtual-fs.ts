@@ -15,6 +15,7 @@ import fsDefault, {
   type Dirent,
   type OpenDirOptions,
   type PathLike,
+  type StatOptions,
   type StatSyncOptions,
 } from "fs";
 import { createFsFromVolume, Volume } from "memfs";
@@ -25,7 +26,7 @@ import * as path from "path";
 import type { FileHandle } from "fs/promises";
 import type { SkillBundle } from "@/types/skills";
 import { type NsVfsFile, setupNamespaceVfs } from "@/vfs/ns-vfs";
-import { ensureFileExists } from "./fs";
+import { ensureDirectoryExists } from "./fs";
 import { log } from "./log";
 
 type ReadFileSyncOptions = BufferEncoding | { encoding?: BufferEncoding | null; flag?: string } | null;
@@ -386,6 +387,44 @@ const monkeyPatchFS = ({
     if ((typeof filePath === "string" || Buffer.isBuffer(filePath)) && vol.existsSync(filePath)) return true;
     return Reflect.apply(origExistsSync, this, [filePath]) as boolean;
   };
+
+  const createVirtualNotFoundError = (syscall: "lstat" | "stat", filePath: string) => {
+    const error = new Error(`ENOENT: no such file or directory, ${syscall} '${filePath}'`) as NodeJS.ErrnoException;
+    error.code = "ENOENT";
+    error.path = filePath;
+    return error;
+  };
+
+  const findVirtualStatTarget = (filePath: unknown, syscall: "lstat" | "stat") => {
+    const isLookupPath = typeof filePath === "string" || Buffer.isBuffer(filePath);
+    if (!isLookupPath) return null;
+
+    const requestedPath = String(filePath);
+    const virtualPath = resolveVirtualPath(requestedPath);
+    if (virtualPath && vol.existsSync(virtualPath)) return virtualPath;
+
+    if (findVirtualCategory(requestedPath)) {
+      throw createVirtualNotFoundError(syscall, requestedPath);
+    }
+
+    const resolved = path.normalize(path.resolve(requestedPath));
+    const isVirtualFile = vol.existsSync(resolved) && vol.statSync(resolved).isFile();
+    return isVirtualFile ? resolved : null;
+  };
+
+  const statVirtualPath = (filePath: PathLike, syscall: "lstat" | "stat", options?: StatSyncOptions) => {
+    try {
+      const virtualPath = findVirtualStatTarget(filePath, syscall);
+      if (!virtualPath) return null;
+
+      return { stats: options?.bigint ? vol.statSync(virtualPath, { bigint: true }) : vol.statSync(virtualPath) };
+    } catch (error) {
+      if (options?.throwIfNoEntry === false) return { stats: undefined };
+
+      throw error;
+    }
+  };
+
   (fsDefault as { -readonly [K in keyof typeof fsDefault]: (typeof fsDefault)[K] }).statSync = function (
     filePath: PathLike,
     options?: StatSyncOptions,
@@ -393,25 +432,10 @@ const monkeyPatchFS = ({
     if (typeof filePath === "string" && filePath.includes(".claude/commands")) {
       log.vfs(`statSync("${filePath}") called`);
     }
-    const virtualCategory = findVirtualCategory(filePath);
-    if (virtualCategory) {
-      try {
-        if (vol.existsSync(virtualCategory.normalized)) {
-          return vol.statSync(virtualCategory.normalized) as ReturnType<typeof fsDefault.statSync>;
-        }
-      } catch {}
-      const error = new Error(
-        `ENOENT: no such file or directory, stat '${filePath}'`,
-      ) as NodeJS.ErrnoException;
-      error.code = "ENOENT";
-      error.path = String(filePath);
-      throw error;
-    }
-    try {
-      if ((typeof filePath === "string" || Buffer.isBuffer(filePath)) && vol.existsSync(filePath)) {
-        return vol.statSync(filePath) as ReturnType<typeof fsDefault.statSync>;
-      }
-    } catch {}
+
+    const virtualStat = statVirtualPath(filePath, "stat", options);
+    if (virtualStat) return virtualStat.stats as ReturnType<typeof fsDefault.statSync>;
+
     // @ts-expect-error
     return Reflect.apply(origStatSync, this, [filePath, options]);
   } as typeof fsDefault.statSync;
@@ -1001,25 +1025,31 @@ const monkeyPatchFS = ({
             log.vfs(`fs.promises.stat(<FileHandle:${meta.path}>) => virtual handle`);
             return handle.stat(options);
           }
-          if (typeof filePath === "string") {
-            for (const candidate of gatherVirtualCandidates(filePath)) {
-              if (vol.existsSync(candidate)) {
-                log.vfs(`fs.promises.stat("${filePath}") => virtual (${candidate})`);
-                return volPromises.stat(candidate as any, options);
-              }
-            }
 
-            if (findVirtualCategory(filePath)) {
-              const error = new Error(
-                `ENOENT: no such file or directory, stat '${filePath}'`,
-              ) as NodeJS.ErrnoException;
-              error.code = "ENOENT";
-              error.path = filePath;
-              throw error;
-            }
+          const virtualPath = findVirtualStatTarget(filePath, "stat");
+          if (virtualPath) {
+            log.vfs(`fs.promises.stat("${filePath}") => virtual (${virtualPath})`);
+            return volPromises.stat(virtualPath as any, options);
           }
 
           return origPromisesStat(filePath as PathLike, options);
+        },
+        writable: true,
+        configurable: true,
+      });
+    }
+
+    if (fsDefault.promises.lstat) {
+      const origPromisesLstat = fsDefault.promises.lstat.bind(fsDefault.promises);
+      Object.defineProperty(fsDefault.promises, "lstat", {
+        async value(filePath: PathLike, options?: StatOptions) {
+          const virtualPath = findVirtualStatTarget(filePath, "lstat");
+          if (virtualPath) {
+            log.vfs(`fs.promises.lstat("${filePath}") => virtual (${virtualPath})`);
+            return volPromises.lstat(virtualPath, options);
+          }
+
+          return origPromisesLstat(filePath, options);
         },
         writable: true,
         configurable: true,
@@ -1269,6 +1299,7 @@ const monkeyPatchFS = ({
   const allFsMethods = Object.getOwnPropertyNames(fsDefault);
   const alreadyPatched = new Set([
     "existsSync",
+    "lstat",
     "lstatSync",
     "open",
     "opendir",
@@ -1279,6 +1310,7 @@ const monkeyPatchFS = ({
     "readFileSync",
     "realpath",
     "realpathSync",
+    "stat",
     "statSync",
   ]);
 
@@ -1589,12 +1621,49 @@ const monkeyPatchFS = ({
         if (typeof filePath === "string" && filePath.includes(".claude")) {
           log.vfs(`lstatSync("${filePath}") called`);
         }
+
+        const virtualStat = statVirtualPath(filePath, "lstat", options);
+        if (virtualStat) return virtualStat.stats as ReturnType<typeof fsDefault.lstatSync>;
+
         return Reflect.apply(origLstatSync, this, [filePath, options]);
       },
       writable: true,
       configurable: true,
     });
   }
+
+  const patchStatCallback = (syscall: "lstat" | "stat") => {
+    const original = fsDefault[syscall];
+    Object.defineProperty(fsDefault, syscall, {
+      value(this: unknown, filePath: PathLike, ...rest: unknown[]) {
+        const callback = rest.at(-1);
+        if (typeof callback !== "function") return Reflect.apply(original, this, [filePath, ...rest]);
+
+        let virtualPath: string | null;
+
+        try {
+          virtualPath = findVirtualStatTarget(filePath, syscall);
+        } catch (error) {
+          process.nextTick(callback, error);
+          return;
+        }
+
+        if (!virtualPath) return Reflect.apply(original, this, [filePath, ...rest]);
+
+        log.vfs(`fs.${syscall}("${filePath}") => virtual (${virtualPath})`);
+        const options = rest.length > 1 ? (rest[0] as StatOptions) : undefined;
+        volPromises[syscall](virtualPath, options).then(
+          (stats) => callback(null, stats),
+          (error: unknown) => callback(error),
+        );
+      },
+      writable: true,
+      configurable: true,
+    });
+  };
+
+  patchStatCallback("stat");
+  patchStatCallback("lstat");
 
   const resolveVirtualRealpath = (label: string, filePath: PathLike) => {
     if (typeof filePath !== "string") return null;
@@ -1938,16 +2007,30 @@ export const validatePreparedVirtualFileSystem = (value: unknown): PreparedVirtu
   };
 };
 
+export const resolveVirtualFileSystemPaths = () => ({
+  claudeStatePath: path.join(os.homedir(), ".claude.json"),
+  settingsJsonPath: path.join(os.homedir(), ".claude", "settings.json"),
+  claudeMdPath: path.join(os.homedir(), ".claude", "CLAUDE.md"),
+  commandsPath: path.normalize(path.resolve(os.homedir(), ".claude", "commands")),
+  agentsPath: path.normalize(path.resolve(os.homedir(), ".claude", "agents")),
+  skillsPath: path.normalize(path.resolve(os.homedir(), ".claude", "skills")),
+  rulesPath: path.normalize(path.resolve(os.homedir(), ".claude", "rules")),
+  outputStylesPath: path.normalize(path.resolve(os.homedir(), ".claude", "output-styles")),
+  workflowsPath: path.normalize(path.resolve(os.homedir(), ".claude", "workflows")),
+});
+
 export const prepareVirtualFileSystem = (args: VirtualFileSystemOptions): PreparedVirtualFileSystem => {
-  const claudeStatePath = path.join(os.homedir(), ".claude.json");
-  const settingsJsonPath = path.join(os.homedir(), ".claude", "settings.json");
-  const claudeMdPath = path.join(os.homedir(), ".claude", "CLAUDE.md");
-  const commandsPath = path.normalize(path.resolve(os.homedir(), ".claude", "commands"));
-  const agentsPath = path.normalize(path.resolve(os.homedir(), ".claude", "agents"));
-  const skillsPath = path.normalize(path.resolve(os.homedir(), ".claude", "skills"));
-  const rulesPath = path.normalize(path.resolve(os.homedir(), ".claude", "rules"));
-  const outputStylesPath = path.normalize(path.resolve(os.homedir(), ".claude", "output-styles"));
-  const workflowsPath = path.normalize(path.resolve(os.homedir(), ".claude", "workflows"));
+  const {
+    claudeStatePath,
+    settingsJsonPath,
+    claudeMdPath,
+    commandsPath,
+    agentsPath,
+    skillsPath,
+    rulesPath,
+    outputStylesPath,
+    workflowsPath,
+  } = resolveVirtualFileSystemPaths();
 
   log.vfs("Initializing virtual filesystem");
 
@@ -2214,9 +2297,35 @@ export const prepareVirtualFileSystem = (args: VirtualFileSystemOptions): Prepar
     log.vfs(`Virtual directory contents: ${vol.readdirSync(workflowsPath)}`);
   }
 
-  // ensure files exists - workaround for discovery issues
-  // TODO: remove since we can monkey patch now
-  ensureFileExists(claudeMdPath);
+  const files = Object.entries(vol.toJSON()).flatMap(([filePath, content]) => {
+    if (content === null) return [];
+
+    return [{ path: filePath, content }];
+  });
+
+  return {
+    version: 1,
+    files,
+    commandsPath: args.commands ? commandsPath : undefined,
+    virtualCommands: virtualCommandFiles,
+    workingDirectory: args.workingDirectory,
+    disableParentClaudeMds: args.disableParentClaudeMds,
+    agentsPath: args.agents ? agentsPath : undefined,
+    virtualAgents: virtualAgentFiles,
+    skillsPath: args.skills ? skillsPath : undefined,
+    virtualSkills: virtualSkillDirs,
+    rulesPath: args.rules ? rulesPath : undefined,
+    outputStylesPath: args.outputStyles ? outputStylesPath : undefined,
+    workflowsPath: args.workflows ? workflowsPath : undefined,
+    virtualRoots: Array.from(virtualRoots),
+  };
+};
+
+export const exposeVirtualCategoriesToChildren = (args: VirtualFileSystemOptions) => {
+  const { claudeMdPath, commandsPath, agentsPath, skillsPath, rulesPath, outputStylesPath, workflowsPath } =
+    resolveVirtualFileSystemPaths();
+
+  ensureDirectoryExists(path.dirname(claudeMdPath));
 
   // expose the virtual content categories to child processes (shell tools,
   // subagent CLIs) by writing them into session-private tmpfs mounts (the
@@ -2251,28 +2360,6 @@ export const prepareVirtualFileSystem = (args: VirtualFileSystemOptions): Prepar
     }
   }
   setupNamespaceVfs(nsRoots, nsFiles);
-
-  const files = Object.entries(vol.toJSON()).flatMap(([filePath, content]) => {
-    if (content === null) return [];
-    return [{ path: filePath, content }];
-  });
-
-  return {
-    version: 1,
-    files,
-    commandsPath: args.commands ? commandsPath : undefined,
-    virtualCommands: virtualCommandFiles,
-    workingDirectory: args.workingDirectory,
-    disableParentClaudeMds: args.disableParentClaudeMds,
-    agentsPath: args.agents ? agentsPath : undefined,
-    virtualAgents: virtualAgentFiles,
-    skillsPath: args.skills ? skillsPath : undefined,
-    virtualSkills: virtualSkillDirs,
-    rulesPath: args.rules ? rulesPath : undefined,
-    outputStylesPath: args.outputStyles ? outputStylesPath : undefined,
-    workflowsPath: args.workflows ? workflowsPath : undefined,
-    virtualRoots: Array.from(virtualRoots),
-  };
 };
 
 export const installVirtualFileSystem = (input: PreparedVirtualFileSystem) => {

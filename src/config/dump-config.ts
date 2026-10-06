@@ -1,141 +1,161 @@
-import * as fsSync from "fs";
 import * as fs from "fs/promises";
-import * as os from "os";
 import * as path from "path";
 import type { Context } from "@/context/Context";
-import type { SkillBundle } from "@/types/skills";
-import { setupVirtualFileSystem } from "@/utils/virtual-fs";
+import {
+  prepareVirtualFileSystem,
+  resolveVirtualFileSystemPaths,
+  type VirtualFileSystemOptions,
+} from "@/utils/virtual-fs";
+
+const isInsideDirectory = (directory: string, filePath: string) => {
+  const relativePath = path.relative(directory, filePath);
+  const isOutside = relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath);
+  return relativePath !== "" && !isOutside;
+};
+
+const REDACTED_VALUE = "[redacted]";
+const SECRET_NAME_PATTERN = /token|key|secret|password|auth|credential|cookie/i;
+const CCC_MANAGED_CLAUDE_STATE_KEYS = ["cachedGrowthBookFeatures"];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const redactSecretValues = (values: unknown) => {
+  if (!isRecord(values)) return values;
+
+  return Object.fromEntries(
+    Object.entries(values).map(([name, value]) => [name, SECRET_NAME_PATTERN.test(name) ? REDACTED_VALUE : value]),
+  );
+};
+
+const parseJsonObject = (json: string, label: string) => {
+  const value: unknown = JSON.parse(json);
+  if (!isRecord(value)) {
+    throw new Error(`--dump-config expected ${label} to be a JSON object`);
+  }
+
+  return value;
+};
+
+const redactSettingsJson = (settingsJson: string) => {
+  const settings = parseJsonObject(settingsJson, "settings.json");
+  if (settings.env === undefined) return settingsJson;
+
+  return JSON.stringify({ ...settings, env: redactSecretValues(settings.env) }, null, 2);
+};
+
+const selectManagedClaudeState = (claudeStateJson: string, claudeStateKeys: string[]) => {
+  const managedKeys = new Set([...CCC_MANAGED_CLAUDE_STATE_KEYS, ...claudeStateKeys]);
+  const managedState = Object.fromEntries(
+    Object.entries(parseJsonObject(claudeStateJson, "~/.claude.json")).filter(([key]) => managedKeys.has(key)),
+  );
+  return `${JSON.stringify(redactSecretValues(managedState), null, 2)}\n`;
+};
+
+const redactServerSecrets = (server: unknown) => {
+  if (!isRecord(server)) return server;
+
+  return {
+    ...server,
+    ...(server.env !== undefined && { env: redactSecretValues(server.env) }),
+    ...(server.headers !== undefined && { headers: redactSecretValues(server.headers) }),
+  };
+};
+
+const countTopLevelEntries = (directory: string, filePaths: string[]) => {
+  const entries = new Set<string>();
+  for (const filePath of filePaths) {
+    if (!isInsideDirectory(directory, filePath)) continue;
+
+    const relativePath = path.relative(directory, filePath);
+    const separatorIndex = relativePath.indexOf(path.sep);
+    entries.add(separatorIndex === -1 ? relativePath : relativePath.slice(0, separatorIndex));
+  }
+
+  return entries.size;
+};
 
 export const dumpConfig = async (
   context: Context,
   config: {
-    settings: Record<string, unknown>;
+    virtualFileSystem: VirtualFileSystemOptions;
     systemPrompt: string;
-    userPrompt: string;
-    commands: Map<string, string>;
-    agents: Map<string, string>;
     mcps: Record<string, unknown>;
-    skills?: SkillBundle[];
-    rules?: Map<string, string>;
-    outputStyles?: Map<string, string>;
-    workflows?: Map<string, string>;
   },
 ) => {
   const timestamp = new Date().toISOString();
-  const dumpDir = path.join(process.cwd(), ".config-dump", timestamp);
-
-  setupVirtualFileSystem({
-    settings: config.settings,
-    userPrompt: config.userPrompt,
-    commands: config.commands,
-    agents: config.agents,
-    skills: config.skills,
-    rules: config.rules,
-    outputStyles: config.outputStyles,
-    workflows: config.workflows,
-    workingDirectory: context.workingDirectory,
-    disableParentClaudeMds: context.project.projectConfig?.disableParentClaudeMds,
-  });
+  const dumpRoot = path.join(process.cwd(), ".config-dump");
+  const dumpDir = path.join(dumpRoot, timestamp);
 
   // vfs paths
-  const settingsJsonPath = path.join(os.homedir(), ".claude", "settings.json");
-  const claudeMdPath = path.join(os.homedir(), ".claude", "CLAUDE.md");
-  const commandsPath = path.normalize(path.resolve(os.homedir(), ".claude", "commands"));
-  const agentsPath = path.normalize(path.resolve(os.homedir(), ".claude", "agents"));
-  const skillsPath = path.normalize(path.resolve(os.homedir(), ".claude", "skills"));
-  const rulesPath = path.normalize(path.resolve(os.homedir(), ".claude", "rules"));
-  const outputStylesPath = path.normalize(path.resolve(os.homedir(), ".claude", "output-styles"));
-  const workflowsPath = path.normalize(path.resolve(os.homedir(), ".claude", "workflows"));
+  const paths = resolveVirtualFileSystemPaths();
+  const prepared = prepareVirtualFileSystem(config.virtualFileSystem);
+
+  const dumpPathsByVirtualFile = new Map([
+    [paths.claudeMdPath, path.join(dumpDir, "user.md")],
+    [paths.settingsJsonPath, path.join(dumpDir, "settings.json")],
+    [paths.claudeStatePath, path.join(dumpDir, "claude.json")],
+  ]);
+  const dumpDirectoriesByVirtualRoot = new Map([
+    [paths.commandsPath, path.join(dumpDir, "commands")],
+    [paths.agentsPath, path.join(dumpDir, "agents")],
+    [paths.skillsPath, path.join(dumpDir, "skills")],
+    [paths.rulesPath, path.join(dumpDir, "rules")],
+    [paths.outputStylesPath, path.join(dumpDir, "output-styles")],
+    [paths.workflowsPath, path.join(dumpDir, "workflows")],
+  ]);
+
+  const resolveDumpPath = (virtualPath: string) => {
+    const dumpPath = dumpPathsByVirtualFile.get(virtualPath);
+    if (dumpPath) return dumpPath;
+
+    for (const [virtualRoot, dumpDirectory] of dumpDirectoriesByVirtualRoot) {
+      if (isInsideDirectory(virtualRoot, virtualPath)) {
+        return path.join(dumpDirectory, path.relative(virtualRoot, virtualPath));
+      }
+    }
+
+    throw new Error(`--dump-config has no dump location for virtual file ${virtualPath}`);
+  };
+
+  const claudeStateOverrides = config.virtualFileSystem.settings.claudeState;
+  const claudeStateKeys = isRecord(claudeStateOverrides) ? Object.keys(claudeStateOverrides) : [];
+
+  const redactDumpContent = (virtualPath: string, content: string) => {
+    if (virtualPath === paths.settingsJsonPath) return redactSettingsJson(content);
+    if (virtualPath === paths.claudeStatePath) return selectManagedClaudeState(content, claudeStateKeys);
+
+    return content;
+  };
+
+  const dumpFiles = prepared.files.map((file) => ({
+    dumpPath: resolveDumpPath(file.path),
+    content: redactDumpContent(file.path, file.content),
+  }));
 
   // create dump directory
-  await fs.mkdir(dumpDir, { recursive: true });
-  await fs.mkdir(path.join(dumpDir, "commands"), { recursive: true });
-  await fs.mkdir(path.join(dumpDir, "agents"), { recursive: true });
-  await fs.mkdir(path.join(dumpDir, "skills"), { recursive: true });
-  await fs.mkdir(path.join(dumpDir, "rules"), { recursive: true });
-  await fs.mkdir(path.join(dumpDir, "output-styles"), { recursive: true });
-  await fs.mkdir(path.join(dumpDir, "workflows"), { recursive: true });
+  for (const dumpDirectory of dumpDirectoriesByVirtualRoot.values()) {
+    await fs.mkdir(dumpDirectory, { recursive: true });
+  }
+
+  await fs.writeFile(path.join(dumpRoot, ".gitignore"), "*\n", "utf8");
 
   await fs.writeFile(path.join(dumpDir, "system.md"), config.systemPrompt, "utf8");
 
-  // dump CLAUDE.md
-  const userContent = fsSync.readFileSync(claudeMdPath, "utf8");
-  await fs.writeFile(path.join(dumpDir, "user.md"), userContent, "utf8");
-
-  // dump settings.json
-  const settingsContent = fsSync.readFileSync(settingsJsonPath, "utf8");
-  await fs.writeFile(path.join(dumpDir, "settings.json"), settingsContent, "utf8");
-
-  // dump commands
-  if (fsSync.existsSync(commandsPath)) {
-    const commandFiles = fsSync.readdirSync(commandsPath);
-    for (const filename of commandFiles) {
-      const filePath = path.join(commandsPath, filename);
-      const content = fsSync.readFileSync(filePath, "utf8");
-      await fs.writeFile(path.join(dumpDir, "commands", filename), content, "utf8");
-    }
-  }
-
-  // dump agents
-  if (fsSync.existsSync(agentsPath)) {
-    const agentFiles = fsSync.readdirSync(agentsPath);
-    for (const filename of agentFiles) {
-      const filePath = path.join(agentsPath, filename);
-      const content = fsSync.readFileSync(filePath, "utf8");
-      await fs.writeFile(path.join(dumpDir, "agents", filename), content, "utf8");
-    }
-  }
-
-  const copyDirRecursive = (srcDir: string, destDir: string) => {
-    if (!fsSync.existsSync(srcDir)) return;
-    fsSync.mkdirSync(destDir, { recursive: true });
-    const entries = fsSync.readdirSync(srcDir, { withFileTypes: true });
-    for (const entry of entries) {
-      const srcPath = path.join(srcDir, entry.name);
-      const destPath = path.join(destDir, entry.name);
-      if (entry.isDirectory()) {
-        copyDirRecursive(srcPath, destPath);
-      } else if (entry.isFile()) {
-        const content = fsSync.readFileSync(srcPath);
-        fsSync.writeFileSync(destPath, content);
-      }
-    }
-  };
-
-  // dump skills
-  if (fsSync.existsSync(skillsPath)) {
-    copyDirRecursive(skillsPath, path.join(dumpDir, "skills"));
-  }
-
-  // dump rules (may include subdirectories)
-  if (fsSync.existsSync(rulesPath)) {
-    copyDirRecursive(rulesPath, path.join(dumpDir, "rules"));
-  }
-
-  // dump output styles (flat .md)
-  if (fsSync.existsSync(outputStylesPath)) {
-    const outputStyleFiles = fsSync.readdirSync(outputStylesPath);
-    for (const filename of outputStyleFiles) {
-      const filePath = path.join(outputStylesPath, filename);
-      const content = fsSync.readFileSync(filePath, "utf8");
-      await fs.writeFile(path.join(dumpDir, "output-styles", filename), content, "utf8");
-    }
-  }
-
-  // dump workflows (flat .js)
-  if (fsSync.existsSync(workflowsPath)) {
-    const workflowFiles = fsSync.readdirSync(workflowsPath);
-    for (const filename of workflowFiles) {
-      const filePath = path.join(workflowsPath, filename);
-      const content = fsSync.readFileSync(filePath, "utf8");
-      await fs.writeFile(path.join(dumpDir, "workflows", filename), content, "utf8");
-    }
+  for (const file of dumpFiles) {
+    await fs.mkdir(path.dirname(file.dumpPath), { recursive: true });
+    await fs.writeFile(file.dumpPath, file.content, "utf8");
   }
 
   // dump mcps
-  await fs.writeFile(path.join(dumpDir, "mcps.json"), JSON.stringify(config.mcps, null, 2), "utf8");
+  const redactedMcps = Object.fromEntries(
+    Object.entries(config.mcps).map(([name, server]) => [name, redactServerSecrets(server)]),
+  );
+  await fs.writeFile(path.join(dumpDir, "mcps.json"), JSON.stringify(redactedMcps, null, 2), "utf8");
 
   // write metadata
+  const virtualFilePaths = prepared.files.map((file) => file.path);
+  const options = config.virtualFileSystem;
   await fs.writeFile(
     path.join(dumpDir, "metadata.json"),
     JSON.stringify(
@@ -146,14 +166,15 @@ export const dumpConfig = async (
         instanceId: context.instanceId,
         configDirectory: context.configDirectory,
         paths: {
-          settingsJsonPath,
-          claudeMdPath,
-          commandsPath,
-          agentsPath,
-          skillsPath,
-          rulesPath,
-          outputStylesPath,
-          workflowsPath,
+          claudeStatePath: paths.claudeStatePath,
+          settingsJsonPath: paths.settingsJsonPath,
+          claudeMdPath: paths.claudeMdPath,
+          commandsPath: paths.commandsPath,
+          agentsPath: paths.agentsPath,
+          skillsPath: paths.skillsPath,
+          rulesPath: paths.rulesPath,
+          outputStylesPath: paths.outputStylesPath,
+          workflowsPath: paths.workflowsPath,
         },
         project: {
           rootDirectory: context.project.rootDirectory,
@@ -162,19 +183,18 @@ export const dumpConfig = async (
           projectConfig: context.project.projectConfig,
         },
         fileCounts: {
-          configCommands: config.commands?.size || 0,
-          configAgents: config.agents?.size || 0,
-          configSkills: config.skills?.length || 0,
-          configRules: config.rules?.size || 0,
-          configOutputStyles: config.outputStyles?.size || 0,
-          configWorkflows: config.workflows?.size || 0,
-          vfsCommands: fsSync.existsSync(commandsPath) ? fsSync.readdirSync(commandsPath).length : 0,
-          vfsAgents: fsSync.existsSync(agentsPath) ? fsSync.readdirSync(agentsPath).length : 0,
-          vfsSkills: fsSync.existsSync(skillsPath) ? fsSync.readdirSync(skillsPath).length : 0,
-          vfsRules: fsSync.existsSync(rulesPath) ? fsSync.readdirSync(rulesPath).length : 0,
-          vfsOutputStyles:
-            fsSync.existsSync(outputStylesPath) ? fsSync.readdirSync(outputStylesPath).length : 0,
-          vfsWorkflows: fsSync.existsSync(workflowsPath) ? fsSync.readdirSync(workflowsPath).length : 0,
+          configCommands: options.commands?.size ?? 0,
+          configAgents: options.agents?.size ?? 0,
+          configSkills: options.skills?.length ?? 0,
+          configRules: options.rules?.size ?? 0,
+          configOutputStyles: options.outputStyles?.size ?? 0,
+          configWorkflows: options.workflows?.size ?? 0,
+          vfsCommands: countTopLevelEntries(paths.commandsPath, virtualFilePaths),
+          vfsAgents: countTopLevelEntries(paths.agentsPath, virtualFilePaths),
+          vfsSkills: countTopLevelEntries(paths.skillsPath, virtualFilePaths),
+          vfsRules: countTopLevelEntries(paths.rulesPath, virtualFilePaths),
+          vfsOutputStyles: countTopLevelEntries(paths.outputStylesPath, virtualFilePaths),
+          vfsWorkflows: countTopLevelEntries(paths.workflowsPath, virtualFilePaths),
         },
       },
       null,

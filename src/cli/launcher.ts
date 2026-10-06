@@ -5,7 +5,6 @@ import * as path from "path";
 import { fileURLToPath } from "node:url";
 import p from "picocolors";
 import type { ClaudeMarketplaceConfig } from "@/config/plugins";
-import type { AgentDefinition } from "@/config/schema";
 import { prepareContextInstanceId } from "@/context/instance-id";
 import type { ResolvedCli } from "@/native/resolver";
 import type { RuntimePatch } from "@/patches/cli-patches";
@@ -448,21 +447,24 @@ const run = async () => {
     process.exit(0);
   }
 
+  const virtualFileSystemOptions = {
+    settings: settingsWithPlugins as unknown as Record<string, unknown>,
+    claudeStateJson: virtualClaudeStateJson,
+    userPrompt,
+    commands,
+    agents,
+    skills,
+    rules,
+    outputStyles,
+    workflows: workflows.files,
+    workingDirectory: context.workingDirectory,
+    disableParentClaudeMds: context.project.projectConfig?.disableParentClaudeMds,
+  };
+
   // --dump-config
   if (process.argv.includes("--dump-config")) {
     const { dumpConfig } = await import("@/config/dump-config");
-    await dumpConfig(context, {
-      settings: settingsWithPlugins as Record<string, unknown>,
-      systemPrompt,
-      userPrompt,
-      commands,
-      agents,
-      skills,
-      rules,
-      outputStyles,
-      workflows: workflows.files,
-      mcps,
-    });
+    await dumpConfig(context, { virtualFileSystem: virtualFileSystemOptions, systemPrompt, mcps });
     process.exit(0);
   }
 
@@ -470,6 +472,15 @@ const run = async () => {
   if (process.argv.includes("--timing")) {
     startup.printTiming();
     process.exit(0);
+  }
+
+  const settingsCli = settings.cli ?? {};
+
+  // propagate settings.cli.debug to env if not already set (env > argv > settings)
+  const shouldExportSettingsDebug =
+    !process.env.DEBUG && (typeof settingsCli.debug === "string" || settingsCli.debug === true);
+  if (shouldExportSettingsDebug) {
+    process.env.DEBUG = typeof settingsCli.debug === "string" ? settingsCli.debug : "1";
   }
 
   // init logging
@@ -588,20 +599,10 @@ const run = async () => {
 
   // setup vfs
   const virtualFileSystem = await startup.run("Mount VFS", async () => {
-    const { prepareVirtualFileSystem } = await import("@/utils/virtual-fs");
-    return prepareVirtualFileSystem({
-      settings: settingsWithPlugins as unknown as Record<string, unknown>,
-      claudeStateJson: virtualClaudeStateJson,
-      userPrompt,
-      commands,
-      agents,
-      skills,
-      rules,
-      outputStyles,
-      workflows: workflows.files,
-      workingDirectory: context.workingDirectory,
-      disableParentClaudeMds: context.project.projectConfig?.disableParentClaudeMds,
-    });
+    const { exposeVirtualCategoriesToChildren, prepareVirtualFileSystem } = await import("@/utils/virtual-fs");
+    const prepared = prepareVirtualFileSystem(virtualFileSystemOptions);
+    exposeVirtualCategoriesToChildren(virtualFileSystemOptions);
+    return prepared;
   });
 
   // build args
@@ -609,110 +610,45 @@ const run = async () => {
   args.push("--mcp-config", JSON.stringify({ mcpServers: mcps }));
   args.push("--append-system-prompt", systemPrompt);
 
-  // pass through --plugin-dir args from CLI or plugins config
-  const cliPluginDirs = process.argv
-    .map((arg, i, arr) => (arr[i - 1] === "--plugin-dir" ? arg : null))
-    .filter((dir): dir is string => dir !== null);
+  // pass through --plugin-dir args from plugins config unless given on the CLI
+  const configuredPluginDirs =
+    hasLongFlag(process.argv, "--plugin-dir") ? [] : (pluginsConfig.claude?.pluginDirs ?? []);
 
-  for (const dir of cliPluginDirs) {
+  for (const dir of configuredPluginDirs) {
     args.push("--plugin-dir", dir);
-  }
-
-  if (cliPluginDirs.length === 0 && pluginsConfig.claude?.pluginDirs) {
-    for (const dir of pluginsConfig.claude.pluginDirs) {
-      args.push("--plugin-dir", dir);
-    }
   }
 
   // pass through CLI-only flags from settings.cli (CLI args override settings)
   // see: https://code.claude.com/docs/en/cli-reference#cli-flags
-  type CliFlags = {
-    tools?: string[] | "default";
-    disallowedTools?: string[];
-    allowedTools?: string[];
-    addDir?: string[];
-    permissionMode?: "acceptEdits" | "auto" | "bypassPermissions" | "default" | "dontAsk" | "plan";
-    verbose?: boolean;
-    debug?: boolean | string;
-    chrome?: boolean;
-    ide?: boolean;
-    enableLspLogging?: boolean;
-    agent?: string;
-    agents?: Record<string, AgentDefinition>;
-    forkSession?: boolean;
-    fallbackModel?: string;
-    settingSources?: ("local" | "project" | "user")[];
-    strictMcpConfig?: boolean;
-    init?: boolean;
-    initOnly?: boolean;
-    maintenance?: boolean;
-    model?: string;
-    systemPrompt?: string;
-    systemPromptFile?: string;
-    outputFormat?: "json" | "stream-json" | "text";
-    disableSlashCommands?: boolean;
-    maxBudgetUsd?: number;
-    dangerouslySkipPermissions?: boolean;
-    sessionId?: string;
-    fromPr?: number | string;
-    teammateMode?: "auto" | "in-process" | "tmux";
-    appendSystemPrompt?: string;
-    appendSystemPromptFile?: string;
-    // append to every Task-tool subagent's system prompt (v2.1.207)
-    appendSubagentSystemPrompt?: string;
-    appendSubagentSystemPromptFile?: string;
-    betas?: string[];
-    maxTurns?: number;
-    noSessionPersistence?: boolean;
-    permissionPromptTool?: string;
-    includePartialMessages?: boolean;
-    inputFormat?: "stream-json" | "text";
-    jsonSchema?: string;
-    allowDangerouslySkipPermissions?: boolean;
-    settings?: string;
-    effort?: "high" | "low" | "max" | "medium";
-    file?: string[];
-    debugFile?: string;
-    replayUserMessages?: boolean;
-    // create a new git worktree for this session (v2.1.49)
-    worktree?: boolean | string;
-    // create a tmux session for the worktree (requires --worktree) (v2.1.49)
-    tmux?: boolean | string;
-    // thinking mode: enabled (= adaptive), adaptive, disabled (v2.1.61)
-    thinking?: "adaptive" | "disabled" | "enabled";
+  const hasCliArg = (flag: string) => hasLongFlag(process.argv, flag);
+
+  const pushVariadicFlag = (flag: string, value: string) => {
+    args.push(`${flag}=${value}`);
   };
-  const settingsCli = (settings as { cli?: CliFlags }).cli || {};
-
-  // propagate settings.cli.debug to env if not already set (env > argv > settings)
-  if (!process.env.DEBUG && settingsCli.debug !== undefined) {
-    process.env.DEBUG = typeof settingsCli.debug === "string" ? settingsCli.debug : "1";
-  }
-
-  const hasCliArg = (flag: string) => process.argv.includes(flag);
 
   // --tools (comma-separated, "default", or "" to disable)
   if (!hasCliArg("--tools") && settingsCli.tools !== undefined) {
     if (settingsCli.tools === "default") {
-      args.push("--tools", "default");
+      pushVariadicFlag("--tools", "default");
     } else if (Array.isArray(settingsCli.tools)) {
-      args.push("--tools", settingsCli.tools.length > 0 ? settingsCli.tools.join(",") : "");
+      pushVariadicFlag("--tools", settingsCli.tools.join(","));
     }
   }
 
   // --disallowedTools (comma-separated)
   if (!hasCliArg("--disallowedTools") && settingsCli.disallowedTools?.length) {
-    args.push("--disallowedTools", settingsCli.disallowedTools.join(","));
+    pushVariadicFlag("--disallowedTools", settingsCli.disallowedTools.join(","));
   }
 
   // --allowedTools (comma-separated)
   if (!hasCliArg("--allowedTools") && settingsCli.allowedTools?.length) {
-    args.push("--allowedTools", settingsCli.allowedTools.join(","));
+    pushVariadicFlag("--allowedTools", settingsCli.allowedTools.join(","));
   }
 
   // --add-dir (multiple flags, one per dir)
   if (!hasCliArg("--add-dir") && settingsCli.addDir?.length) {
     for (const dir of settingsCli.addDir) {
-      args.push("--add-dir", dir);
+      pushVariadicFlag("--add-dir", dir);
     }
   }
 
@@ -731,7 +667,7 @@ const run = async () => {
     if (typeof settingsCli.debug === "string") {
       args.push("--debug", settingsCli.debug);
     } else if (settingsCli.debug) {
-      args.push("--debug");
+      args.unshift("--debug");
     }
   }
 
@@ -875,7 +811,7 @@ const run = async () => {
 
   // --betas (comma-separated)
   if (!hasCliArg("--betas") && settingsCli.betas?.length) {
-    args.push("--betas", settingsCli.betas.join(","));
+    pushVariadicFlag("--betas", settingsCli.betas.join(","));
   }
 
   // --max-turns (number, print mode only)
@@ -926,7 +862,7 @@ const run = async () => {
   // --file (multiple flags, one per file spec)
   if (!hasCliArg("--file") && !hasCliArg("--files") && settingsCli.file?.length) {
     for (const f of settingsCli.file) {
-      args.push("--file", f);
+      pushVariadicFlag("--file", f);
     }
   }
 
@@ -945,14 +881,14 @@ const run = async () => {
     if (typeof settingsCli.worktree === "string") {
       args.push("--worktree", settingsCli.worktree);
     } else if (settingsCli.worktree) {
-      args.push("--worktree");
+      args.unshift("--worktree");
     }
   }
 
   // --tmux (requires --worktree) (v2.1.49)
   if (!hasCliArg("--tmux") && settingsCli.tmux !== undefined) {
     if (typeof settingsCli.tmux === "string") {
-      args.push("--tmux", settingsCli.tmux);
+      args.push(`--tmux=${settingsCli.tmux}`);
     } else if (settingsCli.tmux) {
       args.push("--tmux");
     }
@@ -961,6 +897,23 @@ const run = async () => {
   // --thinking (enabled, adaptive, disabled) (v2.1.61)
   if (!hasCliArg("--thinking") && settingsCli.thinking) {
     args.push("--thinking", settingsCli.thinking);
+  }
+
+  // --channels (one server per flag) (v2.1.80)
+  const channelServers = hasCliArg("--channels") ? [] : (settingsCli.channels ?? []);
+
+  for (const server of channelServers) {
+    pushVariadicFlag("--channels", server);
+  }
+
+  // --dangerously-load-development-channels (one server per flag) (v2.1.80)
+  const developmentChannelServers =
+    hasCliArg("--dangerously-load-development-channels") ? [] : (
+      settingsCli.dangerouslyLoadDevelopmentChannels ?? []
+    );
+
+  for (const server of developmentChannelServers) {
+    pushVariadicFlag("--dangerously-load-development-channels", server);
   }
 
   log.info("LAUNCHER", `Launching Claude from: ${extractedCliPath}`);

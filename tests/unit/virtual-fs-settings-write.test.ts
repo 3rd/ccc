@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { existsSync } from "fs";
-import { mkdtemp, readdir, rm } from "fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { promisify } from "util";
@@ -23,6 +23,7 @@ setupVirtualFileSystem({ settings: { model: "opusplan" }, userPrompt: "" });
 const settingsPath = join(homedir(), ".claude", "settings.json");
 ${body}
 `;
+  await mkdir(join(home, ".claude"), { recursive: true });
   const { stdout } = await execFileAsync("bun", ["--eval", script], {
     cwd: process.cwd(),
     env: { ...process.env, HOME: home, CCC_NS_VFS: "0" },

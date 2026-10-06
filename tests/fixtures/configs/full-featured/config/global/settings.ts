@@ -4,5 +4,6 @@ export default createConfigSettings({
   env: {
     TEST_GLOBAL: "true",
     FEATURE_FLAG: "enabled",
+    TEST_API_KEY: "fixture-secret",
   },
 });
