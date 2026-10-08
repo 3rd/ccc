@@ -184,6 +184,14 @@ describe("hook batching", () => {
     });
     asyncRewakeHook.asyncRewake = true;
 
+    const onFailureHook = createHook({
+      event: "PreToolUse",
+      id: "on-failure-unbatchable",
+      batchable: true,
+      handler: () => undefined,
+    });
+    onFailureHook.onFailure = "block";
+
     expect(isBatchableInternalHookCommand(plainHook)).toBe(false);
     expect(isBatchableInternalHookCommand(batchableHook)).toBe(true);
     expect(isBatchableInternalHookCommand(timeoutHook)).toBe(false);
@@ -191,6 +199,7 @@ describe("hook batching", () => {
     expect(isBatchableInternalHookCommand(statusMessageHook)).toBe(false);
     expect(isBatchableInternalHookCommand(asyncHook)).toBe(false);
     expect(isBatchableInternalHookCommand(asyncRewakeHook)).toBe(false);
+    expect(isBatchableInternalHookCommand(onFailureHook)).toBe(false);
   });
 
   test("preserves main-scope filtering and matcher behavior in the batch runner", () => {

@@ -125,7 +125,8 @@ export const isBatchableInternalHookCommand = (entry: HookEntry): entry is HookC
     entry.statusMessage == null &&
     entry.once !== true &&
     entry.async !== true &&
-    entry.asyncRewake !== true
+    entry.asyncRewake !== true &&
+    entry.onFailure == null
   );
 };
 

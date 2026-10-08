@@ -106,6 +106,8 @@ export interface HookCommand extends HookEnabledFlag {
   shell?: "bash" | "powershell";
   timeout?: number;
   once?: boolean;
+  // ignored for async hooks and on Stop, SubagentStop, TaskCompleted, TeammateIdle (v2.1.295)
+  onFailure?: "continue" | "block";
   // permission rule syntax to filter when this hook runs, e.g. "Bash(git *)" (v2.1.85)
   // only evaluated for PreToolUse, PostToolUse, PostToolUseFailure,
   // PermissionRequest, PermissionDenied; ignored (and hook skipped with a warning)
@@ -141,6 +143,8 @@ export interface HookHttp extends HookEnabledFlag {
   url: string;
   timeout?: number;
   once?: boolean;
+  // ignored for async hooks and on Stop, SubagentStop, TaskCompleted, TeammateIdle (v2.1.295)
+  onFailure?: "continue" | "block";
   // permission rule syntax to filter when this hook runs, e.g. "Bash(git *)" (v2.1.85)
   if?: string;
   // additional request headers; values support $VAR_NAME interpolation (v2.1.63)
@@ -393,6 +397,8 @@ export type NotificationType =
   | "elicitation_response"
   | "idle_prompt"
   | "permission_prompt"
+  // notification raised by a mod's $.ui.notify (v2.1.295)
+  | "plugin_notification"
   // push notification sent via PushNotification tool (v2.1.110)
   | "push_notification"
   // teammate permission prompt forwarded from a worker (v2.1.65)
