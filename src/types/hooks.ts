@@ -63,6 +63,7 @@ export type HookMatcherType =
   | "NotebookRead"
   | "OfferChromeSetup"
   | "PowerShell"
+  | "PublishPlugin"
   | "PushNotification"
   | "Read"
   | "REPL"

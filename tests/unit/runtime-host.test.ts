@@ -150,8 +150,10 @@ describe("runtime host", () => {
     expect(withoutTsxNodeOptions("--require=/tmp/register.cjs")).toBe("--require=/tmp/register.cjs");
   });
 
-  test("prepares in Bun with the host's pid, then imports the target in that Node host", async () => {
+  test("ignores workspace Bun config while preparing with the host's pid and importing the target in Node", async () => {
     const directory = makeTemporaryDirectory();
+    writeFileSync(join(directory, "bunfig.toml"), "[invalid\n");
+
     const resultPath = join(directory, "result.json");
     const runtimeLogPath = join(directory, "runtime.log");
     writeFileSync(runtimeLogPath, "");

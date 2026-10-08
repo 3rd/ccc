@@ -146,7 +146,7 @@ const readPreparationPayload = async (onSpawn: (child: ChildProcess) => void) =>
   const launcherPath = process.env[PREPARATION_LAUNCHER_PATH_ENV];
   if (!launcherPath) throw new Error(`Missing ${PREPARATION_LAUNCHER_PATH_ENV}`);
   const bunPath = process.env.CCC_BUN_EXEC_PATH?.trim() || "bun";
-  const child = spawn(bunPath, [launcherPath, ...process.argv.slice(2)], {
+  const child = spawn(bunPath, ["--config=/dev/null", launcherPath, ...process.argv.slice(2)], {
     cwd: process.cwd(),
     env: {
       ...process.env,
