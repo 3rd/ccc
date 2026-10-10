@@ -66,8 +66,9 @@ export const splitGraphText = (graph: GraphText, patched: string): string[] => {
 // In the graph they are separate ESM modules and minified names collide
 // freely (`v` in the module defining the rename helper is a different `v` in
 // the module that ends a turn), so an injected bare identifier would silently
-// call the wrong function. `linkGraphBindings` turns such references into
-// export/import pairs and returns the names to use at the injection site.
+// call the wrong function. `linkGraphBindings` exports the definition and
+// returns an expression that resolves it through the graph namespace registry
+// on first use.
 // ---------------------------------------------------------------------------
 
 interface ModuleRegion {
@@ -97,7 +98,7 @@ export interface GraphBindingRequest {
 
 export interface GraphBindingResult {
   combined: string;
-  /** name to reference at the injection site, index-aligned with the requests */
+  /** expression to reference at the injection site, index-aligned with the requests */
   locals: string[];
 }
 
@@ -135,12 +136,7 @@ export const linkGraphBindings = (
       edits.push({ at: definition.end, text: `\nexport{${request.localName} as ${alias}};\n` });
     }
 
-    const local = `__ccc_i${order}_${request.localName}`;
-    locals.push(local);
-    // alongside the module's own imports, after its header comment block
-    const headerEnd = combined.indexOf("\nimport", injection.start);
-    const at = headerEnd === -1 || headerEnd >= injection.end ? injection.start : headerEnd;
-    edits.push({ at, text: `\nimport{${alias} as ${local}}from"${definition.specifier}";` });
+    locals.push(`(0,globalThis.__cccBun.__importMetaRequire(${JSON.stringify(definition.specifier)}).${alias})`);
   }
 
   // applied back to front so each pending offset stays valid

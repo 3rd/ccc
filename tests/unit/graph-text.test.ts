@@ -86,7 +86,7 @@ describe("linkGraphBindings", () => {
     expect(linked.locals).toEqual(["helper"]);
   });
 
-  test("bridges a cross-module reference through the existing export alias", () => {
+  test("bridges a cross-module reference through the existing export alias without an import edge", () => {
     const dir = writeGraph({ "root/a.js": MODULE_A, "root/b.js": MODULE_B });
     const graph = readGraphText(dir);
     const definitionIndex = graph.combined.indexOf("function helper");
@@ -97,10 +97,12 @@ describe("linkGraphBindings", () => {
     ]);
     const parts = splitGraphText(graph, linked.combined);
 
-    expect(linked.locals).toEqual(["__ccc_i0_helper"]);
+    expect(linked.locals).toEqual([
+      `(0,globalThis.__cccBun.__importMetaRequire(${JSON.stringify(path.join(dir, "root/a.js"))}).Hx)`,
+    ]);
     // MODULE_A already exports helper as Hx, so no new export is added
     expect(parts[0]).toBe(MODULE_A);
-    expect(parts[1]).toContain(`import{Hx as __ccc_i0_helper}from"${path.join(dir, "root/a.js")}";`);
+    expect(parts[1]).toBe(MODULE_B);
   });
 
   test("adds an export when the defining module does not export the helper", () => {
@@ -115,8 +117,10 @@ describe("linkGraphBindings", () => {
     ]);
     const parts = splitGraphText(graph, linked.combined);
 
-    expect(linked.locals).toEqual(["__ccc_i0_helper"]);
+    expect(linked.locals).toEqual([
+      `(0,globalThis.__cccBun.__importMetaRequire(${JSON.stringify(path.join(dir, "root/a.js"))}).__ccc_x0_helper)`,
+    ]);
     expect(parts[0]).toContain("export{helper as __ccc_x0_helper};");
-    expect(parts[1]).toContain(`import{__ccc_x0_helper as __ccc_i0_helper}from"${path.join(dir, "root/a.js")}";`);
+    expect(parts[1]).toBe(MODULE_B);
   });
 });
