@@ -26,7 +26,7 @@ ${body}
   await mkdir(join(home, ".claude"), { recursive: true });
   const { stdout } = await execFileAsync("bun", ["--eval", script], {
     cwd: process.cwd(),
-    env: { ...process.env, HOME: home, CCC_NS_VFS: "0" },
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: undefined, CCC_NS_VFS: "0" },
     timeout: 5000,
   });
   return JSON.parse(stdout);

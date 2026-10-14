@@ -127,6 +127,19 @@ const builtinPluginHooksInMemory: RuntimePatch = {
   },
 };
 
+const devModsAfterHostBind: RuntimePatch = {
+  name: "dev-mods-after-host-bind",
+  fn: (content) => {
+    const re =
+      /(requireHost\(\)\{if\(this\.host===null\)throw Error\("ReplSessionScope: used before its screen bound a host"\);return this\.host\}connect\(\)\{if\(this\.connected\|\|this\.disposed\)return;if\(this\.connected=!0,[\w$]+\(this\.sessionBinding\),[\w$]+\.set\(this\.sessionPlugins\),)([\w$]+)\(\),/;
+    return content.replace(
+      re,
+      (_match, prefix, restore) =>
+        `${prefix}queueMicrotask(()=>{if(this.connected&&!this.disposed)${restore}()}),`,
+    );
+  },
+};
+
 // built-in string replacements
 const builtInStringPatches: RuntimePatch[] = [
   // disable unwanted features
@@ -135,6 +148,7 @@ const builtInStringPatches: RuntimePatch[] = [
   growthbookSyncFlagOverride,
   disableFindGrepShadow,
   builtinPluginHooksInMemory,
+  devModsAfterHostBind,
 ];
 
 const labelFor = (patch: RuntimePatch) =>

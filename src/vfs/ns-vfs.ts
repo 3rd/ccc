@@ -157,7 +157,7 @@ const registerWithNotifySupervisor = (roots: string[], files: NsVfsFile[]): bool
 
   try {
     const senderRuntime = process.env.CCC_BUN_EXEC_PATH ?? process.execPath;
-    execFileSync(senderRuntime, ["-e", sender, socketName], {
+    execFileSync(senderRuntime, ["--config=/dev/null", "-e", sender, socketName], {
       input: payload,
       stdio: ["pipe", "ignore", "pipe"],
       // a supervisor that accepts and then stalls would otherwise block startup forever; the real

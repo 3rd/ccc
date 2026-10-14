@@ -59,7 +59,7 @@ export const buildSettings = async (context: Context) => {
   if (existsSync(statuslineConfigPath)) {
     statusLine = {
       type: "command",
-      command: `${statuslineEnvPrefix} bun "${statuslineScriptPath}"`,
+      command: `${statuslineEnvPrefix} bun --config=/dev/null "${statuslineScriptPath}"`,
     };
   } else if (transformedValidated.statusLine) {
     statusLine = transformedValidated.statusLine;

@@ -77,7 +77,7 @@ export const showPopup = <T = FormResultData>(
     `CCC_POPUP_FORM=${encoded}`,
     "-e",
     `CCC_POPUP_RESULT_FILE=${resultFile}`,
-    `bun ${shQuote(RENDERER_PATH)}`,
+    `bun --config=/dev/null ${shQuote(RENDERER_PATH)}`,
   ].join(" ");
 
   try {

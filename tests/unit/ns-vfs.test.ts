@@ -68,7 +68,7 @@ describe("namespace VFS gating", () => {
     writeFileSync(
       senderPath,
       `#!/usr/bin/env bash
-cat > "$3"
+cat > "$4"
 `,
     );
     chmodSync(senderPath, 0o755);

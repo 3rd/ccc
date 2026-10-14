@@ -14,6 +14,7 @@ describe("applyBuiltInPatches", () => {
       "growthbook-sync-flag-override",
       "disable-find-grep-shadow",
       "builtin-plugin-hooks-in-memory",
+      "dev-mods-after-host-bind",
     ]);
   });
 
@@ -23,6 +24,29 @@ describe("applyBuiltInPatches", () => {
 
     expect(next.applied).toContain("builtin-plugin-hooks-in-memory");
     expect(runInNewContext(next.content)).toEqual({ module: "hooks", scan: "scan", folder: undefined });
+  });
+
+  test("dev mods restore after the session host binds and stop when the session is disposed", async () => {
+    const content = `let binding;const plugins={set(){}};const register=(value)=>{binding=value};
+const restore=()=>restored.push(binding.requireHost());const subscribe=()=>{};
+class Scope{host=null;connected=false;disposed=false;sessionBinding=this;sessionPlugins={};isThinClient=true;
+bindHost(host){this.host=host}
+requireHost(){if(this.host===null)throw Error("ReplSessionScope: used before its screen bound a host");return this.host}connect(){if(this.connected||this.disposed)return;if(this.connected=!0,register(this.sessionBinding),plugins.set(this.sessionPlugins),restore(),subscribe(),!this.isThinClient)throw Error("unexpected client");}
+dispose(){this.disposed=true;this.connected=false}}
+globalThis.scope=new Scope();scope.connect();scope.connect();`;
+    const next = applyBuiltInPatches(content);
+    const restored: string[] = [];
+    runInNewContext(`${next.content}scope.bindHost("host");`, { restored, queueMicrotask });
+    await new Promise<void>(queueMicrotask);
+    expect(restored).toEqual(["host"]);
+
+    const closedRestores: string[] = [];
+    runInNewContext(`${next.content}scope.dispose();`, {
+      restored: closedRestores,
+      queueMicrotask,
+    });
+    await new Promise<void>(queueMicrotask);
+    expect(closedRestores).toEqual([]);
   });
 
   test("featureFlags win over every class-based GrowthBook reader", async () => {
@@ -54,6 +78,7 @@ const gb=new GB();Promise.all([gb.getFeatureValueWithSource("flag",0).value,gb.c
       "growthbook-sync-flag-override",
       "disable-find-grep-shadow",
       "builtin-plugin-hooks-in-memory",
+      "dev-mods-after-host-bind",
     ]);
   });
 });

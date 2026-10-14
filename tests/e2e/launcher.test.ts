@@ -16,6 +16,7 @@ import {
 } from "fs";
 import { homedir, tmpdir } from "os";
 import { join } from "path";
+import { validateRuntimeHostPayload } from "@/cli/runtime-host";
 import { buildLaunchSpec } from "@/cli/launcher-wrapper";
 import { assertExitCode, assertStderrEmpty, assertStdoutContains } from "../utils/assertions";
 import { LAUNCHER_ROOT, runCCC } from "../utils/test-runner";
@@ -58,12 +59,12 @@ const createClaudeRunDirectories = () => {
   return { root, home, configDir };
 };
 
-const readClaudeArgv = (directories: ReturnType<typeof createClaudeRunDirectories>, claudeArgs: string[]) => {
+const readRuntimePayload = (directories: ReturnType<typeof createClaudeRunDirectories>, claudeArgs: string[]) => {
   const payloadPath = join(directories.root, "payload.json");
   const payloadDescriptor = openSync(payloadPath, "w");
 
   try {
-    Bun.spawnSync(["bun", join(LAUNCHER_ROOT, "src/cli/launcher.ts"), ...claudeArgs], {
+    const result = Bun.spawnSync(["bun", join(LAUNCHER_ROOT, "src/cli/launcher.ts"), ...claudeArgs], {
       cwd: directories.root,
       env: {
         PATH: process.env.PATH ?? "",
@@ -76,12 +77,12 @@ const readClaudeArgv = (directories: ReturnType<typeof createClaudeRunDirectorie
       },
       stdio: ["ignore", "ignore", "ignore", payloadDescriptor],
     });
+    assertExitCode(result.exitCode, 0);
   } finally {
     closeSync(payloadDescriptor);
   }
 
-  const payload: { claudeArgv: string[] } = JSON.parse(readFileSync(payloadPath, "utf8"));
-  return payload.claudeArgv;
+  return validateRuntimeHostPayload(JSON.parse(readFileSync(payloadPath, "utf8")));
 };
 
 const captureMessageRequests = async (
@@ -403,6 +404,37 @@ describe("launcher", () => {
     }
   });
 
+  test("workspace trust preserves the state selected by the profile environment", () => {
+    const directories = createClaudeRunDirectories();
+    const profileConfigDir = join(directories.root, "profile-claude");
+    mkdirSync(profileConfigDir);
+    writeFileSync(join(directories.home, ".claude.json"), JSON.stringify({ theme: "light" }));
+    writeFileSync(
+      join(profileConfigDir, ".claude.json"),
+      JSON.stringify({ theme: "dark", projects: { [directories.root]: { allowedTools: ["Read"] } } }),
+    );
+    writeFileSync(
+      join(directories.configDir, "global", "settings.ts"),
+      `export default { profiles: { isolated: { env: { CLAUDE_CONFIG_DIR: ${JSON.stringify(profileConfigDir)} } } } };\n`,
+    );
+
+    try {
+      const payload = readRuntimePayload(directories, ["--profile", "isolated", "-p", "say hi"]);
+      const profileStates = payload.virtualFileSystem.files
+        .filter((file) => file.path === join(profileConfigDir, ".claude.json"))
+        .map((file) => JSON.parse(file.content));
+
+      expect(profileStates).toMatchObject([
+        {
+          theme: "dark",
+          projects: { [directories.root]: { allowedTools: ["Read"], hasTrustDialogAccepted: true } },
+        },
+      ]);
+    } finally {
+      rmSync(directories.root, { force: true, recursive: true });
+    }
+  }, 120_000);
+
   test("print mode sends the user prompt to the API without a real CLAUDE.md", async () => {
     const directories = createClaudeRunDirectories();
     writeFileSync(join(directories.configDir, "global", "prompts", "user.md"), "Print mode marker 7f3a91\n");
@@ -441,7 +473,7 @@ describe("launcher", () => {
     );
 
     try {
-      const claudeArgv = readClaudeArgv(directories, [
+      const { claudeArgv } = readRuntimePayload(directories, [
         "--channels=plugin:manual@market",
         "--dangerously-load-development-channels=server:manual-dev",
       ]);

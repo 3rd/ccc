@@ -77,7 +77,7 @@ const getRunnerCommand = (mode: "hook-batch" | "hook", ...args: string[]) => {
   const envPrefix = getHookCommandEnvPrefix();
   const prefix = envPrefix.length > 0 ? `${envPrefix} ` : "";
   const serializedArgs = args.map((arg) => shQuote(arg)).join(" ");
-  return `${prefix}bun ${shQuote(runnerPath)} ${mode}${serializedArgs.length > 0 ? ` ${serializedArgs}` : ""}`;
+  return `${prefix}bun --config=/dev/null ${shQuote(runnerPath)} ${mode}${serializedArgs.length > 0 ? ` ${serializedArgs}` : ""}`;
 };
 
 export const isSubagentLocalHookInput = (input: ClaudeHookInput) => {

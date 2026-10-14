@@ -1,6 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from "fs";
-import { homedir } from "os";
-import { join, resolve } from "path";
+import { resolve } from "path";
 
 interface ClaudeProjectState extends Record<string, unknown> {
   hasTrustDialogAccepted?: boolean;
@@ -29,10 +28,6 @@ const normalizeWorkspacePath = (workspacePath: string) => {
   }
 };
 
-const getClaudeStatePath = (homeDirectory = homedir()) => {
-  return join(homeDirectory, ".claude.json");
-};
-
 const parseClaudeStateFile = (claudeStatePath: string): ClaudeStateFile => {
   if (!existsSync(claudeStatePath)) return {};
 
@@ -47,11 +42,7 @@ const parseClaudeStateFile = (claudeStatePath: string): ClaudeStateFile => {
   };
 };
 
-export const buildTrustedClaudeState = (
-  workspacePaths: string[],
-  homeDirectory = homedir(),
-): VirtualClaudeStateResult => {
-  const claudeStatePath = getClaudeStatePath(homeDirectory);
+export const buildTrustedClaudeState = (workspacePaths: string[], claudeStatePath: string): VirtualClaudeStateResult => {
   const trustedPaths = Array.from(new Set(workspacePaths.map(normalizeWorkspacePath)));
   const claudeState = parseClaudeStateFile(claudeStatePath);
   const projects = { ...claudeState.projects };

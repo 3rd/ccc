@@ -73,6 +73,6 @@ export const popupInput = (schema: z.ZodType, options?: PopupInputOptions) => {
   };
 
   const encoded = Buffer.from(JSON.stringify(config), "utf8").toString("base64url");
-  const cmd = `bun ${shQuote(RUNNER_PATH)} popup-input ${encoded}`;
+  const cmd = `bun --config=/dev/null ${shQuote(RUNNER_PATH)} popup-input ${encoded}`;
   return `!` + `\`${cmd}\``;
 };

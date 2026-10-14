@@ -39,11 +39,22 @@ type ReadDirOptions =
   | { encoding: BufferEncoding | null; withFileTypes?: false | undefined; recursive?: boolean | undefined }
   | null;
 
-const VIRTUAL_PATHS = [
-  path.join(os.homedir(), ".claude.json"),
-  path.join(os.homedir(), ".claude", "settings.json"),
-  path.join(os.homedir(), ".claude", "CLAUDE.md"),
-];
+export const resolveVirtualFileSystemPaths = () => {
+  const configDirOverride = process.env.CLAUDE_CONFIG_DIR;
+  const configHome = path.resolve((configDirOverride || path.join(os.homedir(), ".claude")).normalize("NFC"));
+
+  return {
+    claudeStatePath: path.resolve(configDirOverride || os.homedir(), ".claude.json"),
+    settingsJsonPath: path.join(configHome, "settings.json"),
+    claudeMdPath: path.join(configHome, "CLAUDE.md"),
+    commandsPath: path.join(configHome, "commands"),
+    agentsPath: path.join(configHome, "agents"),
+    skillsPath: path.join(configHome, "skills"),
+    rulesPath: path.join(configHome, "rules"),
+    outputStylesPath: path.join(configHome, "output-styles"),
+    workflowsPath: path.join(configHome, "workflows"),
+  };
+};
 
 export type VirtualFileSystemRuntimeLogEntry =
   | { type: "shell"; command: string; args?: string[] }
@@ -68,7 +79,8 @@ const initializePathMappings = () => {
   if (mappingsInitialized) return;
 
   const origRealpathSync = fsDefault.realpathSync?.native || fsDefault.realpathSync;
-  for (const vPath of VIRTUAL_PATHS) {
+  const { claudeStatePath, settingsJsonPath, claudeMdPath } = resolveVirtualFileSystemPaths();
+  for (const vPath of [claudeStatePath, settingsJsonPath, claudeMdPath]) {
     try {
       const resolved = origRealpathSync(vPath);
       virtualToResolved.set(vPath, resolved);
@@ -88,6 +100,13 @@ const mapToVirtualPath = (filePath: string) => {
 
   return resolvedToVirtual.get(normalized);
 };
+
+const canOverlayMissingPath = (vol: Volume, filePath: PathLike, error: unknown) =>
+  error instanceof Error &&
+  "code" in error &&
+  error.code === "ENOENT" &&
+  (typeof filePath === "string" || Buffer.isBuffer(filePath)) &&
+  vol.existsSync(filePath);
 
 const monkeyPatchFS = ({
   vol,
@@ -194,10 +213,16 @@ const monkeyPatchFS = ({
         normalized === category.root ||
         normalized === category.root + path.sep ||
         category.root === normalized + path.sep;
-      if (isRoot) return { category, normalized, isRoot: true };
-      if (normalized.startsWith(category.root + path.sep)) {
-        return { category, normalized, isRoot: false };
-      }
+
+      const isInCategory = isRoot || normalized.startsWith(category.root + path.sep);
+      if (!isInCategory) continue;
+
+      return {
+        category,
+        normalized,
+        isRoot,
+        shouldReadVirtualOnly: isRoot || category.recursiveRead,
+      };
     }
     return null;
   };
@@ -483,7 +508,7 @@ const monkeyPatchFS = ({
     type ReaddirResult = Buffer[] | Dirent[] | string[];
     log.vfs(`readdirSync("${filePath}") called`);
     const virtualCategory = findVirtualCategory(filePath);
-    if (virtualCategory && (virtualCategory.isRoot || virtualCategory.category.recursiveRead)) {
+    if (virtualCategory?.shouldReadVirtualOnly) {
       log.vfs(`${virtualCategory.category.label} dir read, yielding virtual files only`);
       try {
         if (vol.existsSync(virtualCategory.normalized)) {
@@ -504,16 +529,21 @@ const monkeyPatchFS = ({
     try {
       // @ts-expect-error
       realFiles = Reflect.apply(origReaddirSync, this, [filePath, options]) as ReaddirResult;
-    } catch {}
-    let virtualFiles: ReaddirResult = [];
-    try {
-      if ((typeof filePath === "string" || Buffer.isBuffer(filePath)) && vol.existsSync(filePath)) {
-        virtualFiles = vol.readdirSync(
-          filePath,
-          options as Parameters<typeof vol.readdirSync>[1],
-        ) as ReaddirResult;
+    } catch (error) {
+      if (!canOverlayMissingPath(vol, filePath, error)) {
+        throw error;
       }
-    } catch {}
+    }
+
+    let virtualFiles: ReaddirResult = [];
+
+    if ((typeof filePath === "string" || Buffer.isBuffer(filePath)) && vol.existsSync(filePath)) {
+      virtualFiles = vol.readdirSync(
+        filePath,
+        options as Parameters<typeof vol.readdirSync>[1],
+      ) as ReaddirResult;
+    }
+
     if (virtualFiles.length === 0) return realFiles;
     if (realFiles.length === 0) return virtualFiles;
     const withFileTypes = typeof options === "object" && options?.withFileTypes;
@@ -649,13 +679,9 @@ const monkeyPatchFS = ({
   const isProtectedPath = (filePath: unknown) => {
     if (typeof filePath !== "string") return false;
     const normalized = path.normalize(path.resolve(filePath));
-    const homeDir = os.homedir();
-
-    const protectedPaths = [
-      path.join(homeDir, ".claude", "settings.json"),
-      path.join(homeDir, ".claude", "CLAUDE.md"),
-    ];
-    if (protectedPaths.includes(normalized)) {
+    const { settingsJsonPath, claudeMdPath } = resolveVirtualFileSystemPaths();
+    const isVirtualConfigFile = normalized === settingsJsonPath || normalized === claudeMdPath;
+    if (isVirtualConfigFile) {
       log.vfs(`WRITE BLOCKED: Protected file "${filePath}"`);
       return true;
     }
@@ -682,7 +708,7 @@ const monkeyPatchFS = ({
   // instead. Reads already come from that volume, so the session sees its own update; the
   // real ~/.claude/settings.json stays untouched, which is what child processes and the
   // next launch read. Absorbed writes therefore live for the session only.
-  const absorbedWritePaths = new Set([path.join(os.homedir(), ".claude", "settings.json")]);
+  const absorbedWritePaths = new Set([resolveVirtualFileSystemPaths().settingsJsonPath]);
 
   const absorbedWriteTarget = (filePath: unknown) => {
     const normalized = normalizedArg(filePath);
@@ -1192,6 +1218,18 @@ const monkeyPatchFS = ({
           for (const candidate of gatherVirtualCandidates(filePath)) {
             if (vol.existsSync(candidate)) {
               log.vfs(`fs.promises.readdir("${filePath}") => virtual (${candidate})`);
+
+              const virtualCategory = findVirtualCategory(filePath);
+              if (!virtualCategory?.shouldReadVirtualOnly) {
+                try {
+                  await origPromisesReaddir(filePath, options ?? undefined);
+                } catch (error) {
+                  if (!canOverlayMissingPath(vol, candidate, error)) {
+                    throw error;
+                  }
+                }
+              }
+
               return volPromises.readdir(candidate as any, options as any);
             }
           }
@@ -2006,18 +2044,6 @@ export const validatePreparedVirtualFileSystem = (value: unknown): PreparedVirtu
     virtualRoots: preparedStringArray(fields.virtualRoots, "virtualRoots"),
   };
 };
-
-export const resolveVirtualFileSystemPaths = () => ({
-  claudeStatePath: path.join(os.homedir(), ".claude.json"),
-  settingsJsonPath: path.join(os.homedir(), ".claude", "settings.json"),
-  claudeMdPath: path.join(os.homedir(), ".claude", "CLAUDE.md"),
-  commandsPath: path.normalize(path.resolve(os.homedir(), ".claude", "commands")),
-  agentsPath: path.normalize(path.resolve(os.homedir(), ".claude", "agents")),
-  skillsPath: path.normalize(path.resolve(os.homedir(), ".claude", "skills")),
-  rulesPath: path.normalize(path.resolve(os.homedir(), ".claude", "rules")),
-  outputStylesPath: path.normalize(path.resolve(os.homedir(), ".claude", "output-styles")),
-  workflowsPath: path.normalize(path.resolve(os.homedir(), ".claude", "workflows")),
-});
 
 export const prepareVirtualFileSystem = (args: VirtualFileSystemOptions): PreparedVirtualFileSystem => {
   const {

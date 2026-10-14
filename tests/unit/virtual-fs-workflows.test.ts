@@ -65,7 +65,7 @@ console.log(JSON.stringify({ content, outputStyleContent, openResult, syncWriteC
         // inside a CCC session (whose user namespace grants CAP_SYS_ADMIN), the child's
         // ns-mount probe would otherwise succeed and leave real tmpfs mounts over the temp
         // HOME, making the rm() cleanup below fail with EBUSY.
-        env: { ...process.env, HOME: home, CCC_NS_VFS: "0" },
+        env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: undefined, CCC_NS_VFS: "0" },
         timeout: 5000,
       });
 

@@ -1,5 +1,5 @@
 import { execFile } from "child_process";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { promisify } from "util";
@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 
 const execFileAsync = promisify(execFile);
 
-const runInVfs = async (home: string, body: string) => {
+const runInVfs = async (home: string, body: string, runtime: "bun" | "node" = "bun") => {
   const script = `
 import fs from "fs";
 import { join } from "path";
@@ -19,15 +19,144 @@ setupVirtualFileSystem({ settings: {}, userPrompt: "", skills: [{ name: "probe",
 const skillPath = join(homedir(), ".claude", "skills", "probe", "SKILL.md");
 ${body}
 `;
-  const { stdout } = await execFileAsync("bun", ["--eval", script], {
+  const runtimeArgs = runtime === "node" ? ["--import", "tsx", "--input-type=module"] : [];
+  const { stdout } = await execFileAsync(runtime, [...runtimeArgs, "--eval", script], {
     cwd: process.cwd(),
-    env: { ...process.env, HOME: home, CCC_NS_VFS: "0" },
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: undefined, CCC_NS_VFS: "0" },
     timeout: 5000,
   });
   return JSON.parse(stdout);
 };
 
 describe("patched fs statics", () => {
+  test("readdir preserves native errors through sync, named, callback, and promise APIs", async () => {
+    const home = await mkdtemp(join(tmpdir(), "ccc-vfs-readdir-home-"));
+    const claudeDirectory = join(home, ".claude");
+
+    try {
+      await mkdir(claudeDirectory);
+      await writeFile(join(home, "file"), "fixture");
+      await chmod(claudeDirectory, 0);
+
+      const result = await runInVfs(
+        home,
+        `
+import { readdirSync } from "fs";
+const paths = [join(homedir(), "missing"), join(homedir(), "file"), join(homedir(), ".claude")];
+const readError = async (read, filePath) => {
+  try {
+    return await read(filePath);
+  } catch (error) {
+    return { code: error.code, path: error.path };
+  }
+};
+const result = [];
+for (const filePath of paths) {
+  result.push(await Promise.all([
+    readError(fs.readdirSync, filePath),
+    readError(readdirSync, filePath),
+    readError(promisify(fs.readdir), filePath),
+    readError(fs.promises.readdir, filePath),
+  ]));
+}
+console.log(JSON.stringify(result));
+`,
+        "node",
+      );
+
+      expect(result).toEqual([
+        Array.from({ length: 4 }, () => ({ code: "ENOENT", path: join(home, "missing") })),
+        Array.from({ length: 4 }, () => ({ code: "ENOTDIR", path: join(home, "file") })),
+        Array.from({ length: 4 }, () => ({ code: "EACCES", path: claudeDirectory })),
+      ]);
+    } finally {
+      await chmod(claudeDirectory, 0o700);
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
+  test("readdir rejects virtual-only files as non-directories", async () => {
+    const home = await mkdtemp(join(tmpdir(), "ccc-vfs-readdir-home-"));
+
+    try {
+      const result = await runInVfs(
+        home,
+        `
+import { readdirSync } from "fs";
+const filePath = join(homedir(), ".claude", "CLAUDE.md");
+const readError = async (read) => {
+  try {
+    return await read(filePath);
+  } catch (error) {
+    return { code: error.code, path: error.path };
+  }
+};
+console.log(JSON.stringify(await Promise.all([
+  readError(fs.readdirSync),
+  readError(readdirSync),
+  readError(promisify(fs.readdir)),
+  readError(fs.promises.readdir),
+])));
+`,
+        "node",
+      );
+
+      expect(result).toEqual(
+        Array.from({ length: 4 }, () => ({ code: "ENOTDIR", path: join(home, ".claude", "CLAUDE.md") })),
+      );
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
+  test("readdir serves virtual-only directories and merges readable real directories", async () => {
+    const home = await mkdtemp(join(tmpdir(), "ccc-vfs-readdir-home-"));
+
+    try {
+      await mkdir(join(home, "empty"));
+
+      const result = await runInVfs(
+        home,
+        `
+const claudeDirectory = join(homedir(), ".claude");
+const virtualOnly = fs.readdirSync(claudeDirectory);
+const promisesVirtualOnly = await fs.promises.readdir(claudeDirectory);
+fs.mkdirSync(claudeDirectory);
+fs.writeFileSync(join(claudeDirectory, "real.txt"), "fixture");
+const merged = fs.readdirSync(claudeDirectory);
+const entries = fs.readdirSync(claudeDirectory, { withFileTypes: true });
+console.log(JSON.stringify({
+  empty: fs.readdirSync(join(homedir(), "empty")),
+  virtualOnly,
+  promisesVirtualOnly,
+  merged,
+  promisesAfterMerge: await fs.promises.readdir(claudeDirectory),
+  callbackMerged: await promisify(fs.readdir)(claudeDirectory),
+  entries: entries.map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() })),
+}));
+`,
+        "node",
+      );
+
+      expect(result).toEqual({
+        empty: [],
+        virtualOnly: ["CLAUDE.md", "settings.json", "skills"],
+        promisesVirtualOnly: ["CLAUDE.md", "settings.json", "skills"],
+        merged: ["real.txt", "CLAUDE.md", "settings.json", "skills"],
+        promisesAfterMerge: ["CLAUDE.md", "settings.json", "skills"],
+        callbackMerged: ["real.txt", "CLAUDE.md", "settings.json", "skills"],
+        entries: [
+          { name: "real.txt", isDirectory: false },
+          { name: "CLAUDE.md", isDirectory: false },
+          { name: "settings.json", isDirectory: false },
+          { name: "skills", isDirectory: true },
+        ],
+      });
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
   test("realpath.native and the custom promisify of exists survive the wrapper", async () => {
     const home = await mkdtemp(join(tmpdir(), "ccc-vfs-fs-statics-home-"));
     try {

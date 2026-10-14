@@ -26,7 +26,7 @@ const buildInlineMCPCommand = (name: string, context: Context): ClaudeMCPConfig 
   return {
     type: "stdio",
     command: "bun",
-    args: [runnerPath, "mcp", name],
+    args: ["--config=/dev/null", runnerPath, "mcp", name],
     env: buildRunnerEnv(context),
   };
 };
@@ -44,7 +44,7 @@ const processExternalMCP = (
     const result: ClaudeMCPConfig = {
       type: "stdio" as const,
       command: "bun",
-      args: [runnerPath, "mcp", name],
+      args: ["--config=/dev/null", runnerPath, "mcp", name],
       env,
     };
 

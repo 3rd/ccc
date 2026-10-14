@@ -137,22 +137,6 @@ const run = async () => {
   const context = new Context(process.cwd());
   await context.init();
 
-  let virtualClaudeStateJson: string | undefined;
-  try {
-    const { buildTrustedClaudeState } = await import("@/utils/workspace-trust");
-    const trustOverride = buildTrustedClaudeState([context.project.rootDirectory, context.workingDirectory]);
-    virtualClaudeStateJson = trustOverride.claudeStateJson;
-    log.info("LAUNCHER", `Prepared virtual Claude workspace trust from ${trustOverride.claudeStatePath}`);
-    for (const trustedPath of trustOverride.trustedPaths) {
-      log.debug("LAUNCHER", `  - ${trustedPath}`);
-    }
-  } catch (error) {
-    log.warn(
-      "LAUNCHER",
-      `Failed to prepare virtual Claude workspace trust: ${error instanceof Error ? error.message : error}`,
-    );
-  }
-
   (await import("@/hooks/hook-generator")).setInstanceId(context.instanceId, context.configDirectory);
   process.env.CCC_INSTANCE_ID = context.instanceId;
 
@@ -242,6 +226,28 @@ const run = async () => {
   if (settings._profileName) {
     (await import("@/config/builders/resolve-profile")).exportProfileEnv(
       settings._availableProfiles?.[settings._profileName],
+    );
+  }
+
+  let virtualClaudeStateJson: string | undefined;
+
+  try {
+    const { buildTrustedClaudeState } = await import("@/utils/workspace-trust");
+    const { resolveVirtualFileSystemPaths } = await import("@/utils/virtual-fs");
+    const trustOverride = buildTrustedClaudeState(
+      [context.project.rootDirectory, context.workingDirectory],
+      resolveVirtualFileSystemPaths().claudeStatePath,
+    );
+    virtualClaudeStateJson = trustOverride.claudeStateJson;
+    log.info("LAUNCHER", `Prepared virtual Claude workspace trust from ${trustOverride.claudeStatePath}`);
+
+    for (const trustedPath of trustOverride.trustedPaths) {
+      log.debug("LAUNCHER", `  - ${trustedPath}`);
+    }
+  } catch (error) {
+    log.warn(
+      "LAUNCHER",
+      `Failed to prepare virtual Claude workspace trust: ${error instanceof Error ? error.message : error}`,
     );
   }
 

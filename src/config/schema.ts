@@ -9,6 +9,8 @@ export const agentDefinitionSchema = z.object({
   skills: z.array(z.string()).optional(),
   mcpServers: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])).optional(),
   maxTurns: z.number().int().positive().optional(),
+  // token count at which this agent compacts as a subagent; only lowers the inherited window (v2.1.296)
+  autoCompactWindow: z.number().int().min(100_000).max(1_000_000).optional(),
   // auto-submitted as the first user turn when this agent is the main thread agent (v2.1.83)
   initialPrompt: z.string().optional(),
   // run this agent as a background task (non-blocking, fire-and-forget) when invoked (v2.1.89)
