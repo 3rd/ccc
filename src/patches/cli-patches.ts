@@ -11,80 +11,51 @@ export type RuntimePatch =
   | { find: string; replace: string }
   | { fn: PatchFn; name: string; keyMaterial?: string };
 
-// short-circuit the growthbook flag readers so featureFlags set via
-// globalThis.__cccFeatureFlags always win. injection must happen at each
-// reader's entry: the readers have settings-layer pre-checks that
-// short-circuit before reaching the in-memory cache, so any layer carrying the
-// flag would otherwise win against __cccFF.
-//
-// minified identifiers rotate every build; three bundle generations are handled:
-//   - 2.1.227+: the readers moved into a class with unminified method names —
-//     `getFeatureValueWithSource(e,t)` (sync, source-aware), the async value reader
-//     `getFeatureValueBlocking(e,t)`, plus the async boolean gates
-//     `checkGateCachedOrBlocking(e)` / `checkSecurityRestrictionGate(e)`,
-//     each opening with `let X=this.getEnvironmentOverrides();if(X&&FLAG in X)...`.
-//     method names survive minification, so they anchor directly.
-//   - 2.1.203–2.1.226: a source-aware sync reader whose body starts with
-//     `let X=Y();if(X&&FLAG in X)return{value:X[FLAG],source:"override"};`,
-//     plus two async boolean readers with the prologue
-//     `let X=Y();if(X&&FLAG in X)return Boolean(X[FLAG]);` that read the cache
-//     directly (they no longer delegate to the sync reader).
-//   - <=2.1.202 (reachable via CLAUDE_PATH): a single raw-value sync reader
-//     starting with `let X=Y();if(X&&FLAG in X)return X[FLAG];`; async
-//     wrappers only delegate, so one injection suffices.
-// every anchor also requires the `cachedGrowthBookFeatures` literal within
-// ~800 chars — it only appears in reader bodies, never in delegating wrappers.
+const GROWTHBOOK_OVERRIDE_METHODS = [
+  { head: "getEnvironmentOverrides(){", nativeName: "__cccNativeEnvironmentOverrides" },
+  { head: "getAllFeatures(){", nativeName: "__cccNativeAllFeatures" },
+];
+const GROWTHBOOK_SOURCE_READER_RE = /getFeatureValueWithSource\(([\w$]+),[\w$]+\)\{/g;
+
+const logFeatureFlagOverride = (key: string, value: string) =>
+  `if(process.env.CCC_DEBUG_FEATURE_FLAGS)console.error("[ccc] featureFlag "+String(${key})+" -> "+JSON.stringify(${value}));`;
+
 const growthbookSyncFlagOverride: RuntimePatch = {
   name: "growthbook-sync-flag-override",
+  keyMaterial: [
+    JSON.stringify(GROWTHBOOK_OVERRIDE_METHODS),
+    GROWTHBOOK_SOURCE_READER_RE.toString(),
+    logFeatureFlagOverride.toString(),
+  ].join("\0"),
   fn: (content) => {
     if (content.includes("__cccFeatureFlags")) return content;
 
-    // opens an `if(...){` block; each caller closes it with its return statement
-    const guard = (flag: string) =>
-      `let __cccFF=globalThis.__cccFeatureFlags;` +
-      `if(__cccFF&&Object.prototype.hasOwnProperty.call(__cccFF,${flag})){` +
-      `if(process.env.CCC_DEBUG_FEATURE_FLAGS)console.error("[ccc] featureFlag "+${flag}+" -> "+JSON.stringify(__cccFF[${flag}]));`;
+    const hasUniqueMethods =
+      [...content.matchAll(GROWTHBOOK_SOURCE_READER_RE)].length === 1 &&
+      GROWTHBOOK_OVERRIDE_METHODS.every(({ head }) => content.split(head).length === 2);
+    if (!hasUniqueMethods) return content;
 
-    // 2.1.227+: class-based readers with unminified method names. names are
-    // unique in the bundle, so the prologue lookaheads alone guard against
-    // shape drift — no `cachedGrowthBookFeatures` proximity check needed.
-    const classSyncRe =
-      /getFeatureValueWithSource\(([\w$]+),[\w$]+\)\{(?=let [\w$]+=this\.getEnvironmentOverrides\(\);if\([\w$]+&&\1 in [\w$]+\)return\{value:[\w$]+\[\1\],source:"override"\};)/;
-    const classAsyncBoolRe =
-      /async (?:checkGateCachedOrBlocking|checkSecurityRestrictionGate)\(([\w$]+)\)\{(?=let [\w$]+=this\.getEnvironmentOverrides\(\);if\([\w$]+&&\1 in [\w$]+\)return Boolean\([\w$]+\[\1\]\);)/g;
-    const classAsyncValueRe =
-      /async getFeatureValueBlocking\(([\w$]+),[\w$]+\)\{(?=let [\w$]+=this\.getEnvironmentOverrides\(\);if\([\w$]+&&\1 in [\w$]+\)return [\w$]+\[\1\];)/;
-
-    const withClassSync = content.replace(
-      classSyncRe,
-      (match, flag) => `${match}${guard(flag)}return{value:__cccFF[${flag}],source:"override"};}`,
+    let patched = content.replace(
+      GROWTHBOOK_SOURCE_READER_RE,
+      (match, key) =>
+        `${match}let __cccFF=globalThis.__cccFeatureFlags;` +
+        `if(__cccFF&&Object.prototype.hasOwnProperty.call(__cccFF,${key})){${logFeatureFlagOverride(key, `__cccFF[${key}]`)}` +
+        `return{value:__cccFF[${key}],source:"payload"}}`,
     );
-    if (withClassSync !== content)
-      return withClassSync
-        .replace(classAsyncBoolRe, (match, flag) => `${match}${guard(flag)}return Boolean(__cccFF[${flag}]);}`)
-        .replace(classAsyncValueRe, (match, flag) => `${match}${guard(flag)}return __cccFF[${flag}];}`);
 
-    const sourceAwareSyncRe =
-      /function ([\w$]+)\(([\w$]+),([\w$]+)\){(?=let [\w$]+=[\w$]+\(\);if\([\w$]+&&\2 in [\w$]+\)return\{value:[\w$]+\[\2\],source:"override"\};)(?=[^]{0,800}?cachedGrowthBookFeatures)/;
-    const asyncBoolRe =
-      /async function ([\w$]+)\(([\w$]+)\){(?=let [\w$]+=[\w$]+\(\);if\([\w$]+&&\2 in [\w$]+\)return Boolean\([\w$]+\[\2\]\);)(?=[^]{0,800}?cachedGrowthBookFeatures)/g;
-    const legacySyncRe =
-      /function ([\w$]+)\(([\w$]+),([\w$]+)\){(?=let [\w$]+=[\w$]+\(\);if\([\w$]+&&\2 in [\w$]+\)return [\w$]+\[\2];)(?=[^]{0,800}?cachedGrowthBookFeatures)/;
-
-    const withSync = content.replace(
-      sourceAwareSyncRe,
-      (match, _fn, flag) => `${match}${guard(flag)}return{value:__cccFF[${flag}],source:"override"};}`,
-    );
-    if (withSync !== content)
-      return withSync.replace(
-        asyncBoolRe,
-        (match, _fn, flag) => `${match}${guard(flag)}return Boolean(__cccFF[${flag}]);}`,
+    for (const { head, nativeName } of GROWTHBOOK_OVERRIDE_METHODS) {
+      patched = patched.replace(
+        head,
+        () =>
+          `${head}let __cccFF=globalThis.__cccFeatureFlags,__cccNative=this.${nativeName}();if(!__cccFF)return __cccNative;` +
+          `let __cccMerged={...__cccNative,...__cccFF};` +
+          `return process.env.CCC_DEBUG_FEATURE_FLAGS?new Proxy(__cccMerged,{get:(target,key)=>{` +
+          `if(Object.prototype.hasOwnProperty.call(__cccFF,key)){${logFeatureFlagOverride("key", "target[key]")}}` +
+          `return target[key]}}):__cccMerged}${nativeName}(){`,
       );
+    }
 
-    return content.replace(
-      legacySyncRe,
-      (match, _fn, flag) => `${match}${guard(flag)}return __cccFF[${flag}];}`,
-    );
+    return patched;
   },
 };
 

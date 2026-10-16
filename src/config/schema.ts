@@ -328,6 +328,8 @@ const baseSettingsSchema = z.object({
         effortLevel: z.enum(["low", "medium", "high", "xhigh"]).optional(),
         // replaces top-level maxEffortLevel for this model within one settings file ("max" exempts it); lowest across files wins; key also matches dated, [1m], Bedrock and Vertex spellings (v2.1.269)
         maxEffortLevel: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+        // "auto" uses the window tuned for the model; replaces top-level autoCompactWindow for this model within one settings file; key also matches dated, [1m], Bedrock and Vertex spellings (v2.1.288)
+        autoCompactWindow: z.union([z.literal("auto"), z.number().int().min(100_000).max(1_000_000)]).optional(),
       }),
     )
     .optional(),

@@ -49,22 +49,27 @@ globalThis.scope=new Scope();scope.connect();scope.connect();`;
     expect(closedRestores).toEqual([]);
   });
 
-  test("featureFlags win over every class-based GrowthBook reader", async () => {
-    const content = `class GB{getEnvironmentOverrides(){return null}
-getFeatureValueWithSource(e,n){let r=this.getEnvironmentOverrides();if(r&&e in r)return{value:r[e],source:"override"};return{value:n,source:"default"}}
+  test("featureFlags win as server values over every class-based GrowthBook reader and the cache exemptions", async () => {
+    const content = `const yl=(o,k)=>Object.hasOwn(o,k),exempt=new Set(["exempt"]);
+class GB{remote=new Map([["flag",1]]);getEnvironmentOverrides(){return null}
+getAllFeatures(){return Object.fromEntries(this.remote)}
+getFeatureValueWithSource(e,n){let r=this.getEnvironmentOverrides();if(r&&yl(r,e))return{value:r[e],source:"override"};if(this.remote.has(e))return{value:this.remote.get(e),source:"payload"};if(exempt.has(e))return{value:n,source:"fallback"};return{value:n,source:"default"}}
 async checkGateCachedOrBlocking(e){let r=this.getEnvironmentOverrides();if(r&&e in r)return Boolean(r[e]);return!1}
-async getFeatureValueBlocking(e,n){let r=this.getEnvironmentOverrides();if(r&&e in r)return r[e];return n}}
-const gb=new GB();Promise.all([gb.getFeatureValueWithSource("flag",0).value,gb.checkGateCachedOrBlocking("gate"),gb.getFeatureValueBlocking("flag",0)])`;
+async getFeatureValueBlocking(e,n){let r=this.getEnvironmentOverrides();if(r&&e in r)return r[e];return this.remote.get(e)??n}}
+const gb=new GB();Promise.all([gb.getFeatureValueWithSource("flag",0),gb.getFeatureValueWithSource("exempt",0).value,gb.checkGateCachedOrBlocking("gate"),gb.getFeatureValueBlocking("flag",0),gb.getAllFeatures()])`;
     const next = applyBuiltInPatches(content);
 
     const values = await runInNewContext(next.content, {
-      globalThis: { __cccFeatureFlags: { flag: 7, gate: true } },
+      globalThis: { __cccFeatureFlags: { flag: 7, exempt: 3, gate: true } },
       process: { env: {} },
       Promise,
+      Map,
+      Set,
+      Object,
     });
 
     expect(next.applied).toContain("growthbook-sync-flag-override");
-    expect(values).toEqual([7, true, 7]);
+    expect(values).toEqual([{ value: 7, source: "payload" }, 3, true, 7, { flag: 7, exempt: 3, gate: true }]);
   });
 
   test("reports misses when built-in replacements do not match", () => {
