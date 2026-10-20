@@ -72,6 +72,7 @@ export type HookMatcherType =
   | "SendMessage"
   | "Skill"
   | "startup"
+  | "SubscribePR"
   | "Task"
   | "TaskCreate"
   | "TaskGet"

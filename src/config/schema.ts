@@ -480,6 +480,10 @@ const baseSettingsSchema = z.object({
       sessionUrl: z.boolean().optional(),
     })
     .optional(),
+  // claude.ai Project UUID or claude_proj_ ID for org usage reports; "" names none; CLAUDE_CODE_ATTRIBUTION_PROJECT wins (v2.1.305)
+  attributionProject: z.string().optional(),
+  // organization default for attributionProject; honored only from managed settings (v2.1.305)
+  attributionProjectPolicy: z.object({ default: z.string().optional() }).optional(),
   // deprecated: use attribution instead
   includeCoAuthoredBy: z.boolean().optional(),
   model: z.union([z.enum(["auto", "default", "opus", "opusplan", "sonnet", "haiku", "fable"]), z.string()]).optional(),
@@ -998,6 +1002,9 @@ const baseSettingsSchema = z.object({
       // project settings ignored (v2.1.61, source restriction documented v2.1.232)
       ripgrep: z.object({ command: z.string(), args: z.array(z.string()).optional() }).optional(),
       enableWeakerNestedSandbox: z.boolean().optional(),
+      // Linux/WSL only: let sandboxed commands create their own user namespaces, removing
+      // code-execution isolation; true from project settings is ignored (v2.1.305)
+      allowNestedUserNamespaces: z.boolean().optional(),
       // weaker network isolation for sandbox (v2.1.64)
       enableWeakerNetworkIsolation: z.boolean().optional(),
       // macOS only: allow sandboxed commands to send Apple Events (open, osascript, browser auth);
