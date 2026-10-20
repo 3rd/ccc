@@ -10,6 +10,7 @@ import { parseModuleGraph } from "./module-graph";
 import { PREAMBLE_VERSION } from "./preamble";
 
 export interface ResolvedCli {
+  version: string;
   /** the materialized entry module inside graphDir */
   extractedCliPath: string;
   modulePackageJsonPath: string;
@@ -59,6 +60,7 @@ const extractCli = (info: NativeInfo): ResolvedCli => {
   if (cachedGraph) {
     log.info("NATIVE", `using cached module graph for ${info.version}: ${cachedGraph.graphDir}`);
     return {
+      version: info.version,
       extractedCliPath: cachedGraph.entryPath,
       modulePackageJsonPath,
       graphDir: cachedGraph.graphDir,
@@ -83,6 +85,7 @@ const extractCli = (info: NativeInfo): ResolvedCli => {
   const written = writeCachedGraphAtomic(info.version, files, manifest, info.binaryPath, PREAMBLE_VERSION);
   log.info("NATIVE", `cached module graph at ${written.graphDir}`);
   return {
+    version: info.version,
     extractedCliPath: written.entryPath,
     modulePackageJsonPath,
     graphDir: written.graphDir,

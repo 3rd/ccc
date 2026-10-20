@@ -1,5 +1,6 @@
 import { spawnSync } from "child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "fs";
+import { createServer, type Socket } from "net";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, test } from "bun:test";
@@ -10,7 +11,7 @@ const prefix = namespacePrefix({ [NS_KILL_SWITCH_ENV]: process.env[NS_KILL_SWITC
 const canRun = prefix !== null;
 
 describe.if(canRun)("namespace VFS", () => {
-  test("mounts tmpfs, writes content, children see it, outside does not", () => {
+  test("mounts tmpfs, writes content, children see it but cannot change it, outside does not", () => {
     const virtualRoot = mkdtempSync(join(tmpdir(), "ccc-ns-vfs-test-"));
     const innerScript = `
 delete process.env.${NOTIFY_SOCKET_ENV};
@@ -18,14 +19,23 @@ delete process.env.${NOTIFY_TOKEN_ENV};
 const { setupNamespaceVfs } = await import("${join(projectRoot, "src", "vfs", "ns-vfs.ts")}");
 const { spawnSync } = await import("child_process");
 const root = ${JSON.stringify(virtualRoot)};
-const ok = setupNamespaceVfs([root], [
+const ok = await setupNamespaceVfs([root], [
   { nativePath: root + "/demo/SKILL.md", content: "# ns demo\\n" },
   { nativePath: root + "/demo/references/notes.md", content: "ns notes\\n" },
 ]);
 const cat = spawnSync("cat", [root + "/demo/references/notes.md"], { encoding: "utf8" });
 const ls = spawnSync("ls", [root + "/demo"], { encoding: "utf8" });
 const nested = spawnSync("bash", ["-c", "cat " + root + "/demo/SKILL.md"], { encoding: "utf8" });
-console.log(JSON.stringify({ ok, cat: cat.stdout, ls: ls.stdout, nested: nested.stdout }));
+const overwrite = spawnSync("bash", ["-c", "echo changed > " + root + "/demo/SKILL.md"], { encoding: "utf8" });
+const afterOverwrite = spawnSync("cat", [root + "/demo/SKILL.md"], { encoding: "utf8" });
+console.log(JSON.stringify({
+  ok,
+  cat: cat.stdout,
+  ls: ls.stdout,
+  nested: nested.stdout,
+  overwriteStatus: overwrite.status,
+  afterOverwrite: afterOverwrite.stdout,
+}));
 `;
 
     try {
@@ -45,11 +55,16 @@ console.log(JSON.stringify({ ok, cat: cat.stdout, ls: ls.stdout, nested: nested.
         cat: string;
         ls: string;
         nested: string;
+        overwriteStatus: number | null;
+        afterOverwrite: string;
       };
       expect(parsed.ok).toBe(true);
       expect(parsed.cat).toBe("ns notes\n");
       expect(parsed.ls.split("\n").filter(Boolean).sort()).toEqual(["SKILL.md", "references"]);
       expect(parsed.nested).toBe("# ns demo\n");
+
+      expect(parsed.overwriteStatus).not.toBe(0);
+      expect(parsed.afterOverwrite).toBe("# ns demo\n");
 
       // outside the namespace only the empty mountpoint dir may exist
       expect(readdirSync(virtualRoot)).toEqual([]);
@@ -59,39 +74,64 @@ console.log(JSON.stringify({ ok, cat: cat.stdout, ls: ls.stdout, nested: nested.
   });
 });
 
+const restoreEnvironment = (saved: Record<string, string | undefined>) => {
+  for (const [key, value] of Object.entries(saved)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+};
+
+const listenOnAbstractSocket = async (socketName: string, onConnection: (connection: Socket) => void) => {
+  const server = createServer(onConnection);
+  await new Promise<void>((resolveListen) => server.listen(`\0${socketName}`, resolveListen));
+
+  return server;
+};
+
+const startAcknowledgingSupervisor = async (socketName: string, byteCount: number) => {
+  const chunks: Buffer[] = [];
+  const server = await listenOnAbstractSocket(socketName, (connection) => {
+    connection.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+      if (Buffer.concat(chunks).length < byteCount) return;
+
+      connection.write(Buffer.from([0]));
+    });
+  });
+
+  return { received: () => Buffer.concat(chunks), close: () => server.close() };
+};
+
 describe("namespace VFS gating", () => {
   test("registers every virtual entry in one supervisor batch", async () => {
     const { setupNamespaceVfs } = await import("@/vfs/ns-vfs");
-    const directory = mkdtempSync(join(tmpdir(), "ccc-vfs-batch-test-"));
-    const capturePath = join(directory, "payload.bin");
-    const senderPath = join(directory, "sender.mjs");
-    writeFileSync(
-      senderPath,
-      `#!/usr/bin/env bash
-cat > "$4"
-`,
-    );
-    chmodSync(senderPath, 0o755);
+    const socketName = `ccc-vfs-batch-test-${process.pid}`;
+    const token = "a".repeat(64);
+
+    const headerLength = 64 + 1 + 4;
+    const rootEntryLength = 1 + 4 + "/virtual/root".length;
+    const fileEntryLength = 1 + 4 + 8 + "/virtual/root/file.txt".length + "contents".length;
+    const supervisor = await startAcknowledgingSupervisor(socketName, headerLength + rootEntryLength + fileEntryLength);
 
     const originalEnvironment = {
       AGENTS_VFS_NOTIFY_SOCKET: process.env.AGENTS_VFS_NOTIFY_SOCKET,
       AGENTS_VFS_NOTIFY_TOKEN: process.env.AGENTS_VFS_NOTIFY_TOKEN,
-      CCC_BUN_EXEC_PATH: process.env.CCC_BUN_EXEC_PATH,
     };
-    const token = "a".repeat(64);
-    process.env.AGENTS_VFS_NOTIFY_SOCKET = capturePath;
+    process.env.AGENTS_VFS_NOTIFY_SOCKET = socketName;
     process.env.AGENTS_VFS_NOTIFY_TOKEN = token;
-    process.env.CCC_BUN_EXEC_PATH = senderPath;
 
     try {
-      expect(namespacePrefix({ [NOTIFY_SOCKET_ENV]: capturePath, [NOTIFY_TOKEN_ENV]: token })).toBeNull();
+      expect(namespacePrefix({ [NOTIFY_SOCKET_ENV]: socketName, [NOTIFY_TOKEN_ENV]: token })).toBeNull();
       expect(
-        setupNamespaceVfs(["/virtual/root"], [
+        await setupNamespaceVfs(["/virtual/root"], [
           { nativePath: "/virtual/root/file.txt", content: "contents" },
         ]),
       ).toBe(true);
 
-      const payload = readFileSync(capturePath);
+      const payload = supervisor.received();
       expect(payload.subarray(0, 64).toString("ascii")).toBe(token);
       expect(payload.subarray(64, 65).toString("ascii")).toBe("B");
       expect(payload.readUInt32LE(65)).toBe(2);
@@ -118,35 +158,49 @@ cat > "$4"
       offset += contentLength;
       expect(offset).toBe(payload.length);
     } finally {
-      for (const [key, value] of Object.entries(originalEnvironment)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-      rmSync(directory, { force: true, recursive: true });
+      restoreEnvironment(originalEnvironment);
+      supervisor.close();
+    }
+  });
+
+  test("treats a supervisor that closes without acknowledging as a failed registration", async () => {
+    const { setupNamespaceVfs } = await import("@/vfs/ns-vfs");
+    const socketName = `ccc-vfs-unanswered-test-${process.pid}`;
+    const server = await listenOnAbstractSocket(socketName, (connection) => connection.end());
+
+    const originalEnvironment = {
+      AGENTS_VFS_NOTIFY_SOCKET: process.env.AGENTS_VFS_NOTIFY_SOCKET,
+      AGENTS_VFS_NOTIFY_TOKEN: process.env.AGENTS_VFS_NOTIFY_TOKEN,
+      [NS_ACTIVE_ENV]: process.env[NS_ACTIVE_ENV],
+    };
+    process.env.AGENTS_VFS_NOTIFY_SOCKET = socketName;
+    process.env.AGENTS_VFS_NOTIFY_TOKEN = "a".repeat(64);
+    delete process.env[NS_ACTIVE_ENV];
+
+    try {
+      expect(
+        await setupNamespaceVfs(["/virtual/root"], [{ nativePath: "/virtual/root/file.txt", content: "contents" }]),
+      ).toBe(false);
+    } finally {
+      restoreEnvironment(originalEnvironment);
+      server.close();
     }
   });
 
   test("accepts an empty virtual tree without opening a supervisor connection", async () => {
     const { setupNamespaceVfs } = await import("@/vfs/ns-vfs");
-    const directory = mkdtempSync(join(tmpdir(), "ccc-vfs-empty-batch-test-"));
 
     const originalEnvironment = {
       AGENTS_VFS_NOTIFY_SOCKET: process.env.AGENTS_VFS_NOTIFY_SOCKET,
       AGENTS_VFS_NOTIFY_TOKEN: process.env.AGENTS_VFS_NOTIFY_TOKEN,
-      CCC_BUN_EXEC_PATH: process.env.CCC_BUN_EXEC_PATH,
     };
     process.env.AGENTS_VFS_NOTIFY_SOCKET = "unused-empty-batch-socket";
     process.env.AGENTS_VFS_NOTIFY_TOKEN = "a".repeat(64);
-    process.env.CCC_BUN_EXEC_PATH = join(directory, "missing-sender");
 
     try {
-      expect(setupNamespaceVfs([], [])).toBe(true);
+      expect(await setupNamespaceVfs([], [])).toBe(true);
     } finally {
-      for (const [key, value] of Object.entries(originalEnvironment)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-      rmSync(directory, { force: true, recursive: true });
+      restoreEnvironment(originalEnvironment);
     }
   });
 
@@ -161,7 +215,7 @@ cat > "$4"
     for (const key of cleared) delete process.env[key];
     const root = join(tmpdir(), `ccc-ns-inert-${process.pid}`);
     try {
-      expect(setupNamespaceVfs([root], [])).toBe(false);
+      expect(await setupNamespaceVfs([root], [])).toBe(false);
       expect(existsSync(root)).toBe(false);
     } finally {
       for (const [key, value] of Object.entries(prior)) {

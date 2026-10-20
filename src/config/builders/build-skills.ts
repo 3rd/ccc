@@ -4,9 +4,9 @@ import { join, relative } from "path";
 import type { ConfigModule } from "@/config/layers";
 import type { Context } from "@/context/Context";
 import type {
-  SkillBundle,
+  LinkedSkillBundle,
+  SkillBundleFile,
   SkillDefinition,
-  SkillFile,
   SkillLayerMode,
   SkillLayerTrace,
 } from "@/types/skills";
@@ -234,8 +234,8 @@ const normalizeRelativePath = (value: string) => {
   return normalized;
 };
 
-const readSkillFiles = (skillDir: string, exclude: Set<string> = new Set()): SkillFile[] => {
-  const files: SkillFile[] = [];
+const readSkillFiles = (skillDir: string, exclude: Set<string> = new Set()): SkillBundleFile[] => {
+  const files: SkillBundleFile[] = [];
 
   const visit = (dirPath: string) => {
     const entries = readdirSync(dirPath, { withFileTypes: true });
@@ -246,10 +246,10 @@ const readSkillFiles = (skillDir: string, exclude: Set<string> = new Set()): Ski
         continue;
       }
       if (!entry.isFile()) continue;
-      const content = readFileSync(entryPath, "utf8");
       const relativePath = toPosixPath(relative(skillDir, entryPath));
       if (exclude.has(relativePath)) continue;
-      files.push({ relativePath, content });
+
+      files.push({ relativePath, sourcePath: entryPath });
     }
   };
 
@@ -269,7 +269,14 @@ const normalizeSkillMode = (
   return null;
 };
 
-const toFileMap = (files: SkillFile[]) => new Map(files.map((file) => [file.relativePath, file.content]));
+const toFileMap = (files: SkillBundleFile[]) => new Map(files.map((file) => [file.relativePath, file]));
+
+const readSkillMarkdown = (files: SkillBundleFile[]) => {
+  const skillMarkdown = files.find((file) => file.relativePath === SKILL_MD);
+  if (!skillMarkdown) return undefined;
+
+  return "content" in skillMarkdown ? skillMarkdown.content : readFileSync(skillMarkdown.sourcePath, "utf8");
+};
 
 const createSkillTrace = (
   layer: ConfigLayer,
@@ -279,25 +286,23 @@ const createSkillTrace = (
   return layerName ? { layer, name: layerName, mode } : { layer, mode };
 };
 
-const appendSkillBundle = (base: SkillBundle, append: SkillBundle): SkillBundle => {
+const appendSkillBundle = (base: LinkedSkillBundle, append: LinkedSkillBundle): LinkedSkillBundle => {
   const fileMap = toFileMap(base.files);
-  const baseSkill = fileMap.get(SKILL_MD);
-  const appendSkill = append.files.find((file) => file.relativePath === SKILL_MD)?.content;
+  const baseSkill = readSkillMarkdown(base.files);
+  const appendSkill = readSkillMarkdown(append.files);
 
   if (baseSkill && appendSkill) {
     const appendBody = stripFrontmatter(appendSkill);
     const skill = appendFrontmatterDescription(baseSkill, appendSkill);
-    fileMap.set(SKILL_MD, appendBody ? `${skill.trimEnd()}\n\n${appendBody}\n` : skill);
+    fileMap.set(SKILL_MD, { relativePath: SKILL_MD, content: appendBody ? `${skill.trimEnd()}\n\n${appendBody}\n` : skill });
   }
 
   for (const file of append.files) {
     if (file.relativePath === SKILL_MD) continue;
-    fileMap.set(file.relativePath, file.content);
+    fileMap.set(file.relativePath, file);
   }
 
-  const files = Array.from(fileMap.entries()).map(([relativePath, content]) => {
-    return { relativePath, content };
-  });
+  const files = Array.from(fileMap.values());
 
   return {
     name: base.name,
@@ -411,17 +416,17 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
 const buildSkillFiles = (
   normalized: NonNullable<ReturnType<typeof normalizeSkillDefinition>>,
   skillDir: string,
-  diskFiles: SkillFile[] = [],
+  diskFiles: SkillBundleFile[] = [],
 ) => {
-  const fileMap = new Map<string, string>();
-  fileMap.set(SKILL_MD, normalized.content);
+  const fileMap = new Map<string, SkillBundleFile>();
+  fileMap.set(SKILL_MD, { relativePath: SKILL_MD, content: normalized.content });
 
   for (const file of diskFiles) {
     if (fileMap.has(file.relativePath)) {
       log.warn("SKILLS", `Duplicate skill file ${file.relativePath} in ${skillDir}`);
       continue;
     }
-    fileMap.set(file.relativePath, file.content);
+    fileMap.set(file.relativePath, file);
   }
 
   for (const file of normalized.files) {
@@ -437,12 +442,10 @@ const buildSkillFiles = (
     if (fileMap.has(normalizedPath)) {
       log.warn("SKILLS", `Overriding skill file ${normalizedPath} from ${skillDir}`);
     }
-    fileMap.set(normalizedPath, file.content);
+    fileMap.set(normalizedPath, { ...file, relativePath: normalizedPath });
   }
 
-  return Array.from(fileMap.entries()).map(([relativePath, content]) => {
-    return { relativePath, content };
-  });
+  return Array.from(fileMap.values());
 };
 
 const loadSkillFromTs = async (
@@ -451,7 +454,7 @@ const loadSkillFromTs = async (
   skillName: string,
   layer: ConfigLayer,
   layerName?: string,
-): Promise<SkillBundle | null> => {
+): Promise<LinkedSkillBundle | null> => {
   const skillTsPath = join(skillDir, SKILL_TS);
 
   try {
@@ -491,7 +494,7 @@ const loadSkillFromDir = async (
   skillName: string,
   layer: ConfigLayer,
   layerName?: string,
-): Promise<SkillBundle | null> => {
+): Promise<LinkedSkillBundle | null> => {
   const skillTsPath = join(skillDir, SKILL_TS);
   const skillMdPath = join(skillDir, SKILL_MD);
 
@@ -521,8 +524,8 @@ const loadSkillsFromPath = async (
   dirPath: string | undefined,
   layer: ConfigLayer,
   layerName?: string,
-): Promise<Map<string, SkillBundle>> => {
-  const skills = new Map<string, SkillBundle>();
+): Promise<Map<string, LinkedSkillBundle>> => {
+  const skills = new Map<string, LinkedSkillBundle>();
   if (!dirPath || !existsSync(dirPath)) return skills;
 
   const entries = readdirSync(dirPath, { withFileTypes: true });
@@ -546,12 +549,12 @@ const loadSkillsFromPath = async (
   return skills;
 };
 
-export const buildSkills = async (context: Context): Promise<SkillBundle[]> => {
+export const buildLinkedSkills = async (context: Context) => {
   const configBase = resolveConfigDirectoryPath(context.launcherDirectory, context.configDirectory);
 
-  const skills = new Map<string, SkillBundle>();
+  const skills = new Map<string, LinkedSkillBundle>();
 
-  const applyLayer = (layerName: string, layerSkills: Map<string, SkillBundle>) => {
+  const applyLayer = (layerName: string, layerSkills: Map<string, LinkedSkillBundle>) => {
     for (const [name, bundle] of layerSkills) {
       const existing = skills.get(name);
       if (existing && bundle.mode === "append") {
@@ -568,10 +571,15 @@ export const buildSkills = async (context: Context): Promise<SkillBundle[]> => {
         continue;
       }
 
-      const skillMd = bundle.files.find((file) => file.relativePath === SKILL_MD)?.content;
-      if (bundle.mode === "append" && !(skillMd && readDescriptionFromFrontmatter(skillMd))) {
-        throw new Error(`layer skill ${name}: a description is required when no same-named base skill exists`);
+      if (bundle.mode === "append") {
+        const skillMd = readSkillMarkdown(bundle.files);
+
+        const hasDescription = Boolean(skillMd && readDescriptionFromFrontmatter(skillMd));
+        if (!hasDescription) {
+          throw new Error(`layer skill ${name}: a description is required when no same-named base skill exists`);
+        }
       }
+
       skills.set(name, bundle);
     }
   };
@@ -609,7 +617,7 @@ export const buildSkills = async (context: Context): Promise<SkillBundle[]> => {
       continue;
     }
 
-    const bundle: SkillBundle = {
+    const bundle: LinkedSkillBundle = {
       name,
       files: buildSkillFiles(normalized, plugin.root),
       mode: normalized.mode,
@@ -619,4 +627,15 @@ export const buildSkills = async (context: Context): Promise<SkillBundle[]> => {
   }
 
   return Array.from(skills.values()).sort((a, b) => a.name.localeCompare(b.name));
+};
+
+export const buildSkills = async (context: Context) => {
+  const bundles = await buildLinkedSkills(context);
+
+  return bundles.map((bundle) => ({
+    ...bundle,
+    files: bundle.files.map((file) =>
+      "content" in file ? file : { relativePath: file.relativePath, content: readFileSync(file.sourcePath, "utf8") },
+    ),
+  }));
 };

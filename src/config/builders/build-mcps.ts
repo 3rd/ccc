@@ -1,11 +1,12 @@
 import { join } from "path";
 import type { Context } from "@/context/Context";
-import type { ClaudeMCPConfig, MCPServers } from "@/types/mcps";
+import type { ClaudeMCPConfig, MCPLayerData, MCPServers } from "@/types/mcps";
 import { loadConfigFromLayers, mergeMCPs } from "@/config/layers";
 import { setInstanceId } from "@/mcps/mcp-generator";
 import { getPluginMCPs } from "@/plugins/registry";
 import { isMCPLayerDisabled } from "@/types/mcps";
 import { resolveConfigDirectoryPath } from "@/utils/config-directory";
+import { isMcpEnabledForSession, readSessionToolPolicy } from "@/config/session-tool-policy";
 
 const buildRunnerEnv = (context: Context, extraEnv?: Record<string, string>): Record<string, string> => {
   const env: Record<string, string> = {
@@ -59,42 +60,53 @@ const processExternalMCP = (
   return configWithoutBuildTimeFields;
 };
 
-export const buildMCPs = async (context: Context): Promise<Record<string, ClaudeMCPConfig>> => {
+type McpCatalogEntry = {
+  id: string;
+  isEnabledByDefault: boolean;
+  config: ClaudeMCPConfig | null;
+};
+
+type BuildMcpOptions = {
+  onCatalog?: (catalog: McpCatalogEntry[]) => void;
+};
+
+const buildMcpConnectionConfig = (layer: MCPLayerData, name: string, context: Context) => {
+  if (layer.type === "inline") {
+    return buildInlineMCPCommand(name, context);
+  }
+
+  return processExternalMCP(layer.config, name, context);
+};
+
+export const buildMCPs = async (context: Context, options: BuildMcpOptions = {}): Promise<Record<string, ClaudeMCPConfig>> => {
   setInstanceId(context.instanceId, context.configDirectory);
 
   const layers = await loadConfigFromLayers<MCPServers>(context, "mcps.ts");
   const merged = mergeMCPs(layers.global, ...layers.presets, layers.project);
+  // add plugin MCPs
+  const pluginMCPs = getPluginMCPs(context.loadedPlugins);
+  const toolPolicy = readSessionToolPolicy();
 
   const processed: Record<string, ClaudeMCPConfig> = {};
 
-  for (const [name, layerData] of Object.entries(merged)) {
-    if (isMCPLayerDisabled(layerData)) continue;
+  for (const [name, layerData] of [...Object.entries(merged), ...Object.entries(pluginMCPs)]) {
+    const isEnabled = isMcpEnabledForSession(toolPolicy, name, !isMCPLayerDisabled(layerData));
+    if (!isEnabled) continue;
 
-    if (layerData.type === "inline") {
-      processed[name] = buildInlineMCPCommand(name, context);
-    } else if (layerData.type === "http" || layerData.type === "sse" || layerData.type === "traditional") {
-      const config = layerData.config;
-      const result = processExternalMCP(config, name, context);
-      if (result) {
-        processed[name] = result;
-      }
-    }
+    const config = buildMcpConnectionConfig(layerData, name, context);
+    if (config === null) continue;
+
+    processed[name] = config;
   }
 
-  // add plugin MCPs
-  const pluginMCPs = getPluginMCPs(context.loadedPlugins);
-  for (const [name, layerData] of Object.entries(pluginMCPs)) {
-    if (isMCPLayerDisabled(layerData)) continue;
-
-    if (layerData.type === "inline") {
-      processed[name] = buildInlineMCPCommand(name, context);
-    } else if (layerData.type === "http" || layerData.type === "sse" || layerData.type === "traditional") {
-      const config = layerData.config;
-      const result = processExternalMCP(config, name, context);
-      if (result) {
-        processed[name] = result;
-      }
-    }
+  if (options.onCatalog !== undefined) {
+    const availableServers = { ...merged, ...pluginMCPs };
+    const catalog = Object.entries(availableServers).sort(([left], [right]) => left.localeCompare(right)).map(([id, layer]) => ({
+      id,
+      isEnabledByDefault: processed[id] !== undefined,
+      config: processed[id] ?? buildMcpConnectionConfig(layer, id, context),
+    }));
+    options.onCatalog(catalog);
   }
 
   return processed;

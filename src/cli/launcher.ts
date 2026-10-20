@@ -12,6 +12,13 @@ import { log } from "@/utils/log";
 import { createStartupLogger } from "@/utils/startup";
 import type { RuntimeHostPayload } from "./runtime-host";
 import { PREPARATION_LAUNCHER_PATH_ENV, RUNTIME_HOST_PAYLOAD_FD_ENV, RUNTIME_HOST_PID_ENV } from "./runtime-host-process";
+import {
+  createSessionToolEnvironment,
+  isSessionToolCatalogMode,
+  isSessionToolControlRequested,
+  resolveSessionNativeToolSelection,
+  SESSION_TOOL_POLICY_PATCH_NAME,
+} from "@/config/session-tool-policy";
 
 type ResolveResult = ResolvedCli & { source: string };
 
@@ -174,8 +181,11 @@ const run = async () => {
   }
 
   // build MCPs first so context.hasMCP() is available during prompt building
+  let mcpCatalogJson: string | undefined;
   const mcps = await startup.run("Build MCPs", async () =>
-    (await import("@/config/builders/build-mcps")).buildMCPs(context),
+    (await import("@/config/builders/build-mcps")).buildMCPs(context, {
+      ...(isSessionToolCatalogMode() ? { onCatalog: (catalog) => { mcpCatalogJson = JSON.stringify(catalog); } } : {}),
+    }),
   );
   context.mcpServers = mcps;
 
@@ -197,7 +207,7 @@ const run = async () => {
     (await import("@/config/builders/build-agents")).buildAgents(context),
   );
   const skillsPromise = startup.run("Build skills", async () =>
-    (await import("@/config/builders/build-skills")).buildSkills(context),
+    (await import("@/config/builders/build-skills")).buildLinkedSkills(context),
   );
   const rulesPromise = startup.run("Build rules", async () =>
     (await import("@/config/builders/build-rules")).buildRules(context),
@@ -558,12 +568,16 @@ const run = async () => {
   // resolve claude cli path first (needed for runtime patches in VFS)
   const resolveTask = startup.start("Resolve Claude CLI");
   let extractedCliPath: string;
+  let providerVersion: string;
   let graphDir: string | undefined;
   try {
     const resolved = await resolveClaudeCli(context.launcherDirectory);
     extractedCliPath = resolved.extractedCliPath;
+    providerVersion = resolved.version;
     graphDir = resolved.graphDir;
+
     log.info("LAUNCHER", `Found extracted Claude CLI: ${extractedCliPath}`);
+
     if (process.env.USE_BUILTIN_RIPGREP === undefined) {
       process.env.USE_BUILTIN_RIPGREP = "0";
       log.debug("LAUNCHER", "Native mode: set USE_BUILTIN_RIPGREP=0 (using system ripgrep)");
@@ -606,9 +620,8 @@ const run = async () => {
   // setup vfs
   const virtualFileSystem = await startup.run("Mount VFS", async () => {
     const { exposeVirtualCategoriesToChildren, prepareVirtualFileSystem } = await import("@/utils/virtual-fs");
-    const prepared = prepareVirtualFileSystem(virtualFileSystemOptions);
-    exposeVirtualCategoriesToChildren(virtualFileSystemOptions);
-    return prepared;
+    const areCategoriesServed = await exposeVirtualCategoriesToChildren(virtualFileSystemOptions);
+    return prepareVirtualFileSystem(virtualFileSystemOptions, areCategoriesServed ? "filesystem" : "volume");
   });
 
   // build args
@@ -632,18 +645,23 @@ const run = async () => {
     args.push(`${flag}=${value}`);
   };
 
+  const toolSelection = resolveSessionNativeToolSelection(settingsCli);
+
   // --tools (comma-separated, "default", or "" to disable)
-  if (!hasCliArg("--tools") && settingsCli.tools !== undefined) {
-    if (settingsCli.tools === "default") {
+  const shouldAddToolSelection = !hasCliArg("--tools") && toolSelection.tools !== undefined;
+  if (shouldAddToolSelection) {
+    if (toolSelection.tools === "default") {
       pushVariadicFlag("--tools", "default");
-    } else if (Array.isArray(settingsCli.tools)) {
-      pushVariadicFlag("--tools", settingsCli.tools.join(","));
+    } else if (Array.isArray(toolSelection.tools)) {
+      pushVariadicFlag("--tools", toolSelection.tools.join(","));
     }
   }
 
   // --disallowedTools (comma-separated)
-  if (!hasCliArg("--disallowedTools") && settingsCli.disallowedTools?.length) {
-    pushVariadicFlag("--disallowedTools", settingsCli.disallowedTools.join(","));
+  const disallowedTools = toolSelection.disallowedTools;
+  const shouldAddDisallowedTools = !hasCliArg("--disallowedTools") && disallowedTools !== undefined && disallowedTools.length > 0;
+  if (shouldAddDisallowedTools) {
+    pushVariadicFlag("--disallowedTools", disallowedTools.join(","));
   }
 
   // --allowedTools (comma-separated)
@@ -1133,6 +1151,12 @@ const run = async () => {
       }
   }
 
+  const isSessionToolPolicyUnsupported =
+    isSessionToolControlRequested() && !allApplied.includes(SESSION_TOOL_POLICY_PATCH_NAME);
+  if (isSessionToolPolicyUnsupported) {
+    throw new Error(`This CCC configuration or provider version does not support session tool controls. Enable the ${SESSION_TOOL_POLICY_PATCH_NAME} patch or use session defaults.`);
+  }
+
   const total = allApplied.length + allMissed.length;
   if (total === 0) {
     patchTask.skip("none configured");
@@ -1157,9 +1181,10 @@ const run = async () => {
     claudeArgv: [extractedCliPath, ...args, ...cleanedUserArgs],
     importPath,
     featureFlags,
-    environment: Object.fromEntries(
-      Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
-    ),
+    environment: {
+      ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+      ...createSessionToolEnvironment({ providerVersion, mcpCatalogJson }),
+    },
     runtimeLogPath: log.getLogPath() ?? undefined,
     virtualFileSystem,
   };

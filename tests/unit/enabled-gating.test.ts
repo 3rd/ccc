@@ -4,7 +4,7 @@ import { dirname, join } from "path";
 import { describe, expect, test } from "bun:test";
 import { buildCommands } from "@/config/builders/build-commands";
 import { buildMCPs } from "@/config/builders/build-mcps";
-import { buildSkills } from "@/config/builders/build-skills";
+import { buildLinkedSkills, buildSkills } from "@/config/builders/build-skills";
 import {
   createAgent,
   createAppendCommand,
@@ -13,6 +13,7 @@ import {
 } from "@/config/helpers";
 import { mergeHooks } from "@/config/layers";
 import { loadPresets } from "@/config/presets";
+import { resolveSessionNativeToolSelection } from "@/config/session-tool-policy";
 import { Context } from "@/context/Context";
 import { clearPluginContextRegistry, getPluginContext } from "@/plugins/context";
 import { loadPlugins } from "@/plugins/loader";
@@ -20,6 +21,7 @@ import { getPluginHooks, getPluginInfo, getPluginPrompts } from "@/plugins/regis
 import { isMCPLayerDisabled } from "@/types/mcps";
 import type { DiscoveredPlugin } from "@/plugins/discovery";
 import type { HooksConfiguration } from "@/types/hooks";
+import type { LinkedSkillBundle } from "@/types/skills";
 import { getFixturePath } from "../utils/test-runner";
 
 type TempConfigTest = (paths: { configDir: string }) => Promise<void>;
@@ -151,9 +153,101 @@ export default createSkill({
         expect(md).toContain("preset body");
       });
     });
+
+    test("links every file of an uncomposed disk skill, including SKILL.md, to its source", async () => {
+      await withTempConfig(async ({ configDir }) => {
+        const skillMarkdown = "---\nname: linked\ndescription: Demonstrates linked skill files.\n---\n\nbody\n";
+        await writeConfigFile(configDir, "global/skills/linked/SKILL.md", skillMarkdown);
+        await writeConfigFile(configDir, "global/skills/linked/references/guide.md", "guide text\n");
+
+        const context = await createContext(configDir);
+        const guidePath = join(configDir, "global/skills/linked/references/guide.md");
+        const skillMarkdownPath = join(configDir, "global/skills/linked/SKILL.md");
+
+        const filesOf = (skills: LinkedSkillBundle[]) =>
+          skills.find((skill) => skill.name === "linked")?.files.toSorted((a, b) => a.relativePath.localeCompare(b.relativePath));
+
+        expect(filesOf(await buildLinkedSkills(context))).toEqual([
+          { relativePath: "references/guide.md", sourcePath: guidePath },
+          { relativePath: "SKILL.md", sourcePath: skillMarkdownPath },
+        ]);
+        expect(filesOf(await buildSkills(context))).toEqual([
+          { relativePath: "references/guide.md", content: "guide text\n" },
+          { relativePath: "SKILL.md", content: skillMarkdown },
+        ]);
+      });
+    });
+  });
+
+  describe("native tools", () => {
+    test("session choices override ordinary selection without changing action-specific denials", () => {
+      const previousEnv = process.env;
+      const selection = { tools: ["Bash"], disallowedTools: ["Read", "Bash(git:*)"] };
+
+      try {
+        process.env = { ...previousEnv, AGENTS_SESSION_TOOL_POLICY: JSON.stringify({ version: 1, native: { Read: true, Bash: false } }) };
+
+        expect(resolveSessionNativeToolSelection(selection)).toEqual({ tools: ["Read"], disallowedTools: ["Bash(git:*)"] });
+
+        delete process.env.AGENTS_SESSION_TOOL_POLICY;
+
+        expect(resolveSessionNativeToolSelection(selection)).toEqual(selection);
+      } finally {
+        process.env = previousEnv;
+      }
+    });
   });
 
   describe("mcps", () => {
+    test("catalog inspection retains disabled definitions without enabling their transports", async () => {
+      const previousEnv = process.env;
+
+      try {
+        process.env = { ...previousEnv, AGENTS_SESSION_TOOL_CATALOG: "1" };
+        delete process.env.AGENTS_SESSION_TOOL_POLICY;
+        await withTempConfig(async ({ configDir }) => {
+          await writeConfigFile(configDir, "global/mcps.ts", `
+import { createConfigMCPs } from "@/config/helpers";
+export default createConfigMCPs({ active: { command: "echo" }, inactive: { command: "echo", enabled: false } });
+`);
+          const context = await createContext(configDir);
+          let catalog: unknown;
+          const servers = await buildMCPs(context, { onCatalog: (entries) => { catalog = entries; } });
+
+          expect(Object.keys(servers)).toEqual(["active"]);
+          expect(catalog).toEqual([
+            { id: "active", isEnabledByDefault: true, config: { command: "echo" } },
+            { id: "inactive", isEnabledByDefault: false, config: { command: "echo" } },
+          ]);
+        });
+      } finally {
+        process.env = previousEnv;
+      }
+    });
+
+    test("session choices survive helper gates and the final MCP merge without changing defaults", async () => {
+      const previousEnv = process.env;
+
+      try {
+        process.env = { ...previousEnv, AGENTS_SESSION_TOOL_POLICY: JSON.stringify({ version: 1, mcp: { notes: { enabled: true }, files: { enabled: false } } }) };
+        await withTempConfig(async ({ configDir }) => {
+          await writeConfigFile(configDir, "global/mcps.ts", `
+import { createConfigMCPs } from "@/config/helpers";
+export default createConfigMCPs({
+  notes: { command: "echo", enabled: false },
+  files: { command: "echo" },
+});
+`);
+          const context = await createContext(configDir);
+          expect(Object.keys(await buildMCPs(context))).toEqual(["notes"]);
+          delete process.env.AGENTS_SESSION_TOOL_POLICY;
+          expect(Object.keys(await buildMCPs(context))).not.toContain("notes");
+        });
+      } finally {
+        process.env = previousEnv;
+      }
+    });
+
     test("createConfigMCPs drops entries flagged enabled: false (inline form)", () => {
       const result = createConfigMCPs({
         keep: { command: "echo", args: ["hi"] },

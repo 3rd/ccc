@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { createHash } from "node:crypto";
+import { connect } from "net";
 import * as os from "os";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -98,10 +99,15 @@ const compileNsMount = (): string => {
   return cachePath;
 };
 
-export type NsVfsFile = {
-  nativePath: string;
-  content: string | Buffer;
-};
+export type NsVfsFile =
+  | {
+      nativePath: string;
+      content: string | Buffer;
+    }
+  | {
+      nativePath: string;
+      sourcePath: string;
+    };
 
 const notifyEntry = (op: "F" | "D", nativePath: string, content?: Buffer): Buffer => {
   const path = Buffer.from(nativePath, "utf8");
@@ -116,54 +122,76 @@ const notifyEntry = (op: "F" | "D", nativePath: string, content?: Buffer): Buffe
   ]);
 };
 
+const notifyLinkedEntry = (nativePath: string, sourcePath: string) => {
+  const path = Buffer.from(nativePath, "utf8");
+  const source = Buffer.from(sourcePath, "utf8");
+  const header = Buffer.alloc(8);
+  header.writeUInt32LE(path.byteLength, 0);
+  header.writeUInt32LE(source.byteLength, 4);
+
+  return Buffer.concat([Buffer.from("L", "ascii"), header, path, source]);
+};
+
+const notifyFileEntry = (file: NsVfsFile) => {
+  if ("sourcePath" in file) return notifyLinkedEntry(file.nativePath, file.sourcePath);
+
+  return notifyEntry("F", file.nativePath, Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content));
+};
+
+const sendNotifyBatch = (socketName: string, payload: Buffer) =>
+  new Promise<void>((resolve, reject) => {
+    const socket = connect(`\0${socketName}`);
+    let isSettled = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+
+    const settle = (error?: Error) => {
+      if (isSettled) return;
+
+      isSettled = true;
+      clearTimeout(deadline);
+      socket.destroy();
+
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+
+    // a supervisor that accepts and then stalls would otherwise block startup forever; the real
+    // batch is one unix-socket round trip, so this only fires on a stuck peer
+    deadline = setTimeout(
+      () => settle(new Error(`no reply within ${NOTIFY_REGISTER_TIMEOUT_MS}ms`)),
+      NOTIFY_REGISTER_TIMEOUT_MS,
+    );
+    socket.once("error", settle);
+    socket.once("data", (data: Buffer) =>
+      settle(data[0] === 0 ? undefined : new Error(`supervisor rejected the batch (status ${data[0]})`)),
+    );
+    // the supervisor drops the connection unanswered on a bad handshake
+    socket.once("close", () => settle(new Error("supervisor closed the connection without a reply")));
+    socket.write(payload);
+  });
+
 /**
  * Hands the virtual files to the outer launcher's notification supervisor instead of mounting them.
- * Synchronous on purpose: the caller is mid-config-build and the files must be resolvable before it
- * returns. Returns false when no supervisor is configured, which is the standalone-ccc path.
+ * Resolves only after the supervisor acknowledged the batch, so the files are resolvable once the
+ * caller's await returns. Returns false when no supervisor is configured, which is the standalone-ccc path.
  */
-const registerWithNotifySupervisor = (roots: string[], files: NsVfsFile[]): boolean => {
+const registerWithNotifySupervisor = async (roots: string[], files: NsVfsFile[]) => {
   const supervisor = getNotifySupervisor(process.env);
   if (!supervisor) return false;
   const { socketName, token } = supervisor;
 
-  const entries = [
-    ...roots.map((root) => notifyEntry("D", root)),
-    ...files.map((file) =>
-      notifyEntry("F", file.nativePath, Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content)),
-    ),
-  ];
+  const entries = [...roots.map((root) => notifyEntry("D", root)), ...files.map(notifyFileEntry)];
   if (entries.length === 0) return true;
 
   const count = Buffer.alloc(4);
   count.writeUInt32LE(entries.length, 0);
   const payload = Buffer.concat([Buffer.from(token, "ascii"), Buffer.from("B", "ascii"), count, ...entries]);
 
-  // Node has no synchronous unix-socket write, and this runs mid-config-build where the files must
-  // be resolvable by the time we return — so the batch send happens in a short-lived child we can block on.
-  const sender = `
-    const net = require('net');
-    const chunks = [];
-    process.stdin.on('data', (c) => chunks.push(c));
-    process.stdin.on('end', () => {
-      const s = net.connect('\\0' + process.argv[1]);
-      s.on('error', (error) => { console.error(error.message); process.exit(1); });
-      s.on('data', (data) => data[0] === 0 ? process.exit(0) : process.exit(1));
-      // the supervisor drops the connection unanswered on a bad handshake; without this the child
-      // exits 0 as if it had registered the batch
-      s.on('close', () => process.exit(1));
-      s.write(Buffer.concat(chunks));
-    });
-  `;
-
   try {
-    const senderRuntime = process.env.CCC_BUN_EXEC_PATH ?? process.execPath;
-    execFileSync(senderRuntime, ["--config=/dev/null", "-e", sender, socketName], {
-      input: payload,
-      stdio: ["pipe", "ignore", "pipe"],
-      // a supervisor that accepts and then stalls would otherwise block startup forever; the real
-      // batch is one unix-socket round trip, so this only fires on a stuck peer
-      timeout: NOTIFY_REGISTER_TIMEOUT_MS,
-    });
+    await sendNotifyBatch(socketName, payload);
   } catch (error) {
     log.warn("VFS", `Notify supervisor registration failed: ${error instanceof Error ? error.message : error}`);
     return false;
@@ -174,17 +202,18 @@ const registerWithNotifySupervisor = (roots: string[], files: NsVfsFile[]): bool
 };
 
 /**
- * Launcher-side (inside the namespace): mounts tmpfs over each root and
- * writes the virtual files into the mounts. Returns false (and writes
- * nothing) when mounting fails, so content is never materialized onto the
- * real filesystem.
+ * Launcher-side (inside the namespace): mounts tmpfs over each root, writes
+ * the virtual files into the mounts, then remounts them read-only. Returns
+ * false (and writes nothing) when mounting fails, so content is never
+ * materialized onto the real filesystem, and false when the read-only remount
+ * fails, so Claude keeps serving categories from its own volume.
  */
-export const setupNamespaceVfs = (roots: string[], files: NsVfsFile[]): boolean => {
+export const setupNamespaceVfs = async (roots: string[], files: NsVfsFile[]) => {
   // A seccomp user-notification supervisor, when the outer launcher started one, serves these paths
   // to child processes without a mount namespace at all — which is the point, because an
   // unprivileged user namespace maps only our own uid and makes every root-owned file look like
   // nobody, breaking ssh and therefore git. Standalone ccc has no such env and keeps the mounts.
-  if (registerWithNotifySupervisor(roots, files)) return true;
+  if (await registerWithNotifySupervisor(roots, files)) return true;
 
   // honor the kill switch here too, not just in namespacePrefix: a child process can
   // inherit CCC_NS_VFS_ACTIVE=1 from an enclosing CCC session (e.g. tests or nested
@@ -196,8 +225,10 @@ export const setupNamespaceVfs = (roots: string[], files: NsVfsFile[]): boolean 
   if (process.env[NS_ACTIVE_ENV] !== "1") return false;
   if (roots.length === 0) return false;
 
+  let helper: string;
+
   try {
-    const helper = compileNsMount();
+    helper = compileNsMount();
     execFileSync(helper, roots, { stdio: ["ignore", "pipe", "pipe"] });
   } catch (error) {
     log.warn("VFS", `Namespace VFS mount failed: ${error instanceof Error ? error.message : error}`);
@@ -206,8 +237,17 @@ export const setupNamespaceVfs = (roots: string[], files: NsVfsFile[]): boolean 
 
   for (const file of files) {
     mkdirSync(path.dirname(file.nativePath), { recursive: true });
-    writeFileSync(file.nativePath, file.content);
+    writeFileSync(file.nativePath, "sourcePath" in file ? readFileSync(file.sourcePath) : file.content);
   }
+
+  try {
+    execFileSync(helper, ["--read-only", ...roots], { stdio: ["ignore", "pipe", "pipe"] });
+  } catch (error) {
+    log.warn("VFS", `Namespace VFS read-only remount failed: ${error instanceof Error ? error.message : error}`);
+
+    return false;
+  }
+
   log.vfs(`Namespace VFS ready: ${roots.length} mount(s), ${files.length} file(s)`);
   return true;
 };

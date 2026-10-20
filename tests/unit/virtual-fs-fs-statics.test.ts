@@ -335,4 +335,51 @@ console.log(JSON.stringify({
       await rm(home, { force: true, recursive: true });
     }
   });
+
+  test("filesystem category content is read from disk while category writes stay blocked", async () => {
+    const home = await mkdtemp(join(tmpdir(), "ccc-vfs-served-categories-home-"));
+    const skillDirectory = join(home, ".claude", "skills", "probe");
+
+    try {
+      await mkdir(skillDirectory, { recursive: true });
+      await writeFile(join(skillDirectory, "SKILL.md"), "# served by the supervisor");
+
+      const script = `
+import fs from "fs";
+import { join } from "path";
+import { homedir } from "os";
+import { installVirtualFileSystem, prepareVirtualFileSystem } from "./src/utils/virtual-fs.ts";
+
+const options = { settings: {}, userPrompt: "", skills: [{ name: "probe", files: [{ relativePath: "SKILL.md", content: "# probe" }] }] };
+installVirtualFileSystem(prepareVirtualFileSystem(options, "filesystem"));
+const skillPath = join(homedir(), ".claude", "skills", "probe", "SKILL.md");
+const writeError = (() => {
+  try {
+    fs.writeFileSync(skillPath, "overwritten");
+    return "written";
+  } catch (error) {
+    return error.code;
+  }
+})();
+console.log(JSON.stringify({
+  content: fs.readFileSync(skillPath, "utf8"),
+  listing: fs.readdirSync(join(homedir(), ".claude", "skills")),
+  writeError,
+}));
+`;
+      const { stdout } = await execFileAsync("bun", ["--eval", script], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: undefined, CCC_NS_VFS: "0" },
+        timeout: 5000,
+      });
+
+      expect(JSON.parse(stdout)).toEqual({
+        content: "# served by the supervisor",
+        listing: ["probe"],
+        writeError: "EACCES",
+      });
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
 });

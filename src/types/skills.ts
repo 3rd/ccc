@@ -6,6 +6,13 @@ export interface SkillFile {
   content: string;
 }
 
+export interface LinkedSkillFile {
+  relativePath: string;
+  sourcePath: string;
+}
+
+export type SkillBundleFile = SkillFile | LinkedSkillFile;
+
 export type SkillLayerMode = "append" | "override";
 
 export interface SkillLayerTrace {
@@ -20,6 +27,8 @@ export interface SkillBundle {
   mode?: SkillLayerMode;
   trace?: SkillLayerTrace[];
 }
+
+export type LinkedSkillBundle = Omit<SkillBundle, "files"> & { files: SkillBundleFile[] };
 
 export interface SkillDefinition {
   /** Skill name (defaults to directory name if omitted). */

@@ -6,7 +6,7 @@ import type { PluginsConfig } from "@/config/plugins";
 import type { Context } from "@/context/Context";
 import type { HooksConfiguration } from "@/types/hooks";
 import type { ClaudeMCPConfig } from "@/types/mcps";
-import type { SkillBundle, SkillLayerMode } from "@/types/skills";
+import type { LinkedSkillBundle, SkillLayerMode } from "@/types/skills";
 import type { WorkflowBuildResult } from "@/types/workflows";
 import { buildPlugins } from "@/config/builders/build-plugins";
 import {
@@ -273,7 +273,7 @@ const collectLayeredProfiles = async (context: Context): Promise<ItemTraces> => 
   return items;
 };
 
-const collectBuiltSkills = (skills: SkillBundle[] | undefined): ItemTraces => {
+const collectBuiltSkills = (skills: LinkedSkillBundle[] | undefined): ItemTraces => {
   const items: ItemTraces = {};
   for (const skill of skills ?? []) {
     items[skill.name] = skill.trace ?? [];
@@ -651,7 +651,7 @@ export const runDoctor = async (
     commands: Map<string, string>;
     agents: Map<string, string>;
     mcps: Record<string, ClaudeMCPConfig>;
-    skills?: SkillBundle[];
+    skills?: LinkedSkillBundle[];
     rules?: Map<string, string>;
     outputStyles?: Map<string, string>;
     workflows?: WorkflowBuildResult;

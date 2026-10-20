@@ -14,12 +14,21 @@ type TempConfigTest = (paths: { configDir: string; tempDir: string }) => Promise
 
 const withTempConfig = async (fn: TempConfigTest) => {
   const tempDir = await mkdtemp(join(tmpdir(), "ccc-workflows-"));
+  const originalCacheHome = process.env.XDG_CACHE_HOME;
+  process.env.XDG_CACHE_HOME = join(tempDir, "cache");
+
   try {
     await cp(join(process.cwd(), "tsconfig.json"), join(tempDir, "tsconfig.json"));
     await symlink(join(process.cwd(), "src"), join(tempDir, "src"), "junction");
     await symlink(join(process.cwd(), "node_modules"), join(tempDir, "node_modules"), "junction");
     await fn({ configDir: join(tempDir, "config"), tempDir });
   } finally {
+    if (originalCacheHome === undefined) {
+      delete process.env.XDG_CACHE_HOME;
+    } else {
+      process.env.XDG_CACHE_HOME = originalCacheHome;
+    }
+
     await rm(tempDir, { force: true, recursive: true });
   }
 };
@@ -269,6 +278,40 @@ export default createWorkflow({
       expect(content).toContain("__cccWorkflowBundle");
       expect(content).toContain("return (0, __cccWorkflowBundle.__cccWorkflowDefinition.handler)");
       expectWorkflowBodyParses(content);
+    });
+  });
+
+  test("rebuilds a cached workflow when its source or an imported module changes", async () => {
+    await withTempConfig(async ({ configDir }) => {
+      const workflowSource = (description: string) => `
+import { createWorkflow } from "@/config/helpers";
+import { greeting } from "./lib/greeting";
+
+export default createWorkflow({
+  name: "cached",
+  description: "${description}",
+  handler: async () => greeting,
+});
+`;
+
+      await writeConfigFile(configDir, "global/workflows/lib/greeting.ts", 'export const greeting = "first greeting";\n');
+      await writeConfigFile(configDir, "global/workflows/cached.ts", workflowSource("before edit"));
+
+      const buildCached = async () => (await buildWorkflows(await createContext(configDir))).files.get("cached.js") ?? "";
+
+      const first = await buildCached();
+      expect(first).toContain("first greeting");
+      expect(await buildCached()).toBe(first);
+
+      await writeConfigFile(configDir, "global/workflows/lib/greeting.ts", 'export const greeting = "second, longer greeting";\n');
+      const afterImportEdit = await buildCached();
+      expect(afterImportEdit).toContain("second, longer greeting");
+      expect(afterImportEdit).not.toContain("first greeting");
+
+      await writeConfigFile(configDir, "global/workflows/cached.ts", workflowSource("after edit"));
+      const afterSourceEdit = await buildCached();
+      expect(afterSourceEdit).toContain('"description": "after edit"');
+      expect(afterSourceEdit).toContain("second, longer greeting");
     });
   });
 

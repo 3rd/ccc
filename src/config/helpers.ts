@@ -21,6 +21,7 @@ import type {
   WorkflowDefinitionInputWithSchema,
 } from "@/types/workflows";
 import { isHttpMCP, isSseMCP } from "@/types/mcps";
+import { isMcpEnabledForSession, isSessionToolCatalogMode, readSessionToolPolicy } from "@/config/session-tool-policy";
 
 export { createMCP } from "@/mcps/mcp-generator";
 export { createProject } from "@/config/create-project";
@@ -124,9 +125,13 @@ const isMCPDisabled = (value: ClaudeMCPConfig | MCPLayerData): boolean => {
 
 export const createConfigMCPs = (mcpsConfig: Record<string, ClaudeMCPConfig | MCPLayerData>): MCPServers => {
   const result: MCPServers = {};
+  const toolPolicy = readSessionToolPolicy();
+  const isCatalogMode = isSessionToolCatalogMode();
 
   for (const [name, config] of Object.entries(mcpsConfig)) {
-    if (isMCPDisabled(config)) continue;
+    const isEnabled = isMcpEnabledForSession(toolPolicy, name, !isMCPDisabled(config));
+    const shouldOmit = !isEnabled && !isCatalogMode;
+    if (shouldOmit) continue;
 
     if (isMCPLayerData(config)) {
       result[name] = config;

@@ -24,7 +24,7 @@ import { basename } from "node:path";
 import * as os from "os";
 import * as path from "path";
 import type { FileHandle } from "fs/promises";
-import type { SkillBundle } from "@/types/skills";
+import type { LinkedSkillBundle } from "@/types/skills";
 import { type NsVfsFile, setupNamespaceVfs } from "@/vfs/ns-vfs";
 import { ensureDirectoryExists } from "./fs";
 import { log } from "./log";
@@ -122,6 +122,7 @@ const monkeyPatchFS = ({
   outputStylesPath,
   workflowsPath,
   virtualRoots,
+  categoryContent,
   volPromises,
 }: {
   vol: Volume;
@@ -137,6 +138,7 @@ const monkeyPatchFS = ({
   outputStylesPath?: string;
   workflowsPath?: string;
   virtualRoots: Set<string>;
+  categoryContent: VirtualCategoryContent;
   volPromises: typeof fsDefault.promises;
 }) => {
   const normalizedCommandsPath = commandsPath ? path.normalize(path.resolve(commandsPath)) : undefined;
@@ -205,7 +207,7 @@ const monkeyPatchFS = ({
     return path.normalize(path.resolve(normalizeArgPath(filePath)));
   };
 
-  const findVirtualCategory = (filePath: unknown) => {
+  const findCategory = (filePath: unknown) => {
     const normalized = normalizedArg(filePath);
     if (!normalized) return null;
     for (const category of virtualCategories) {
@@ -227,8 +229,10 @@ const monkeyPatchFS = ({
     return null;
   };
 
+  const findVirtualCategory = (filePath: unknown) => (categoryContent === "volume" ? findCategory(filePath) : null);
+
   const isCategoryRoot = (label: VirtualCategoryLabel, filePath: unknown) => {
-    const match = findVirtualCategory(filePath);
+    const match = findCategory(filePath);
     const result = Boolean(match && match.category.label === label && match.isRoot);
     if (result) log.vfs(`is${label}Path: "${filePath}" => true (normalized: "${match!.normalized}")`);
     return result;
@@ -685,7 +689,7 @@ const monkeyPatchFS = ({
       log.vfs(`WRITE BLOCKED: Protected file "${filePath}"`);
       return true;
     }
-    const virtualCategory = findVirtualCategory(filePath);
+    const virtualCategory = findCategory(filePath);
     if (virtualCategory?.category.writeBlock) {
       log.vfs(`WRITE BLOCKED: ${virtualCategory.category.label} directory "${filePath}"`);
       return true;
@@ -1964,7 +1968,12 @@ export interface PreparedVirtualFileSystem {
   outputStylesPath?: string;
   workflowsPath?: string;
   virtualRoots: string[];
+  categoryContent: VirtualCategoryContent;
 }
+
+export type VirtualCategoryContent = "volume" | "filesystem";
+
+const isVirtualCategoryContent = (value: unknown) => value === "volume" || value === "filesystem";
 
 export interface VirtualFileSystemOptions {
   settings: Record<string, unknown>;
@@ -1972,7 +1981,7 @@ export interface VirtualFileSystemOptions {
   userPrompt: string;
   commands?: Map<string, string>;
   agents?: Map<string, string>;
-  skills?: SkillBundle[];
+  skills?: LinkedSkillBundle[];
   rules?: Map<string, string>;
   outputStyles?: Map<string, string>;
   workflows?: Map<string, string>;
@@ -2042,10 +2051,110 @@ export const validatePreparedVirtualFileSystem = (value: unknown): PreparedVirtu
     outputStylesPath: preparedOptionalString(fields.outputStylesPath, "outputStylesPath"),
     workflowsPath: preparedOptionalString(fields.workflowsPath, "workflowsPath"),
     virtualRoots: preparedStringArray(fields.virtualRoots, "virtualRoots"),
+    categoryContent:
+      isVirtualCategoryContent(fields.categoryContent) ?
+        fields.categoryContent
+      : invalidPreparedVirtualFileSystem("categoryContent"),
   };
 };
 
-export const prepareVirtualFileSystem = (args: VirtualFileSystemOptions): PreparedVirtualFileSystem => {
+const listVirtualCategoryRoots = (args: VirtualFileSystemOptions) => {
+  const { commandsPath, agentsPath, skillsPath, rulesPath, outputStylesPath, workflowsPath } =
+    resolveVirtualFileSystemPaths();
+  const optionalRoots: [unknown, string][] = [
+    [args.skills, skillsPath],
+    [args.rules, rulesPath],
+    [args.outputStyles, outputStylesPath],
+    [args.workflows, workflowsPath],
+  ];
+
+  return [agentsPath, commandsPath, ...optionalRoots.filter(([category]) => Boolean(category)).map(([, root]) => root)];
+};
+
+const writeVirtualCategories = (vol: Volume, args: VirtualFileSystemOptions) => {
+  const { commandsPath, agentsPath, skillsPath, rulesPath, outputStylesPath, workflowsPath } =
+    resolveVirtualFileSystemPaths();
+
+  if (args.commands) {
+    vol.mkdirSync(commandsPath, { recursive: true });
+
+    for (const [filename, content] of args.commands) {
+      vol.writeFileSync(path.join(commandsPath, filename), content);
+    }
+
+    log.vfs("Commands written to virtual volume");
+    log.vfs(`Virtual directory contents: ${vol.readdirSync(commandsPath)}`);
+  }
+
+  if (args.agents) {
+    vol.mkdirSync(agentsPath, { recursive: true });
+
+    for (const [filename, content] of args.agents) {
+      vol.writeFileSync(path.join(agentsPath, filename), content);
+    }
+
+    log.vfs("Agents written to virtual volume");
+    log.vfs(`Virtual directory contents: ${vol.readdirSync(agentsPath)}`);
+  }
+
+  if (args.skills) {
+    vol.mkdirSync(skillsPath, { recursive: true });
+
+    for (const skill of args.skills) {
+      const skillRoot = path.join(skillsPath, skill.name);
+      vol.mkdirSync(skillRoot, { recursive: true });
+
+      for (const file of skill.files) {
+        const filePath = path.join(skillRoot, file.relativePath);
+        vol.mkdirSync(path.dirname(filePath), { recursive: true });
+        vol.writeFileSync(filePath, "sourcePath" in file ? fsDefault.readFileSync(file.sourcePath) : file.content);
+      }
+    }
+
+    log.vfs("Skills written to virtual volume");
+    log.vfs(`Virtual directory contents: ${vol.readdirSync(skillsPath)}`);
+  }
+
+  if (args.rules) {
+    vol.mkdirSync(rulesPath, { recursive: true });
+
+    for (const [filename, content] of args.rules) {
+      const filePath = path.join(rulesPath, filename);
+      vol.mkdirSync(path.dirname(filePath), { recursive: true });
+      vol.writeFileSync(filePath, content);
+    }
+
+    log.vfs("Rules written to virtual volume");
+    log.vfs(`Virtual directory contents: ${vol.readdirSync(rulesPath)}`);
+  }
+
+  if (args.outputStyles) {
+    vol.mkdirSync(outputStylesPath, { recursive: true });
+
+    for (const [filename, content] of args.outputStyles) {
+      vol.writeFileSync(path.join(outputStylesPath, filename), content);
+    }
+
+    log.vfs("Output styles written to virtual volume");
+    log.vfs(`Virtual directory contents: ${vol.readdirSync(outputStylesPath)}`);
+  }
+
+  if (!args.workflows) return;
+
+  vol.mkdirSync(workflowsPath, { recursive: true });
+
+  for (const [filename, content] of args.workflows) {
+    vol.writeFileSync(path.join(workflowsPath, filename), content);
+  }
+
+  log.vfs("Workflows written to virtual volume");
+  log.vfs(`Virtual directory contents: ${vol.readdirSync(workflowsPath)}`);
+};
+
+export const prepareVirtualFileSystem = (
+  args: VirtualFileSystemOptions,
+  categoryContent: VirtualCategoryContent = "volume",
+): PreparedVirtualFileSystem => {
   const {
     claudeStatePath,
     settingsJsonPath,
@@ -2226,101 +2335,9 @@ export const prepareVirtualFileSystem = (args: VirtualFileSystemOptions): Prepar
     [claudeMdPath]: args.userPrompt,
   });
 
-  const virtualRoots = new Set<string>([agentsPath, commandsPath]);
-
-  const virtualCommandFiles: string[] = [];
-  if (args.commands) {
-    vol.mkdirSync(commandsPath, { recursive: true });
-
-    for (const [filename, content] of args.commands) {
-      const filePath = path.join(commandsPath, filename);
-      vol.writeFileSync(filePath, content);
-      virtualCommandFiles.push(filename);
-    }
-
-    log.vfs("Commands written to virtual volume");
-    log.vfs(`Virtual directory contents: ${vol.readdirSync(commandsPath)}`);
-  }
-
-  const virtualAgentFiles: string[] = [];
-  if (args.agents) {
-    vol.mkdirSync(agentsPath, { recursive: true });
-
-    for (const [filename, content] of args.agents) {
-      const filePath = path.join(agentsPath, filename);
-      vol.writeFileSync(filePath, content);
-      virtualAgentFiles.push(filename);
-    }
-
-    log.vfs("Agents written to virtual volume");
-    log.vfs(`Virtual directory contents: ${vol.readdirSync(agentsPath)}`);
-  }
-
-  const virtualSkillDirs: string[] = [];
-  if (args.skills) {
-    vol.mkdirSync(skillsPath, { recursive: true });
-    virtualRoots.add(skillsPath);
-
-    for (const skill of args.skills) {
-      const skillRoot = path.join(skillsPath, skill.name);
-      vol.mkdirSync(skillRoot, { recursive: true });
-      virtualSkillDirs.push(skill.name);
-
-      for (const file of skill.files) {
-        const filePath = path.join(skillRoot, file.relativePath);
-        vol.mkdirSync(path.dirname(filePath), { recursive: true });
-        vol.writeFileSync(filePath, file.content);
-      }
-    }
-
-    log.vfs("Skills written to virtual volume");
-    log.vfs(`Virtual directory contents: ${vol.readdirSync(skillsPath)}`);
-  }
-
-  const virtualRuleFiles: string[] = [];
-  if (args.rules) {
-    vol.mkdirSync(rulesPath, { recursive: true });
-    virtualRoots.add(rulesPath);
-
-    for (const [filename, content] of args.rules) {
-      const filePath = path.join(rulesPath, filename);
-      vol.mkdirSync(path.dirname(filePath), { recursive: true });
-      vol.writeFileSync(filePath, content);
-      virtualRuleFiles.push(filename);
-    }
-
-    log.vfs("Rules written to virtual volume");
-    log.vfs(`Virtual directory contents: ${vol.readdirSync(rulesPath)}`);
-  }
-
-  const virtualOutputStyleFiles: string[] = [];
-  if (args.outputStyles) {
-    vol.mkdirSync(outputStylesPath, { recursive: true });
-    virtualRoots.add(outputStylesPath);
-
-    for (const [filename, content] of args.outputStyles) {
-      const filePath = path.join(outputStylesPath, filename);
-      vol.writeFileSync(filePath, content);
-      virtualOutputStyleFiles.push(filename);
-    }
-
-    log.vfs("Output styles written to virtual volume");
-    log.vfs(`Virtual directory contents: ${vol.readdirSync(outputStylesPath)}`);
-  }
-
-  const virtualWorkflowFiles: string[] = [];
-  if (args.workflows) {
-    vol.mkdirSync(workflowsPath, { recursive: true });
-    virtualRoots.add(workflowsPath);
-
-    for (const [filename, content] of args.workflows) {
-      const filePath = path.join(workflowsPath, filename);
-      vol.writeFileSync(filePath, content);
-      virtualWorkflowFiles.push(filename);
-    }
-
-    log.vfs("Workflows written to virtual volume");
-    log.vfs(`Virtual directory contents: ${vol.readdirSync(workflowsPath)}`);
+  const isVolumeContent = categoryContent === "volume";
+  if (isVolumeContent) {
+    writeVirtualCategories(vol, args);
   }
 
   const files = Object.entries(vol.toJSON()).flatMap(([filePath, content]) => {
@@ -2333,21 +2350,22 @@ export const prepareVirtualFileSystem = (args: VirtualFileSystemOptions): Prepar
     version: 1,
     files,
     commandsPath: args.commands ? commandsPath : undefined,
-    virtualCommands: virtualCommandFiles,
+    virtualCommands: args.commands ? Array.from(args.commands.keys()) : [],
     workingDirectory: args.workingDirectory,
     disableParentClaudeMds: args.disableParentClaudeMds,
     agentsPath: args.agents ? agentsPath : undefined,
-    virtualAgents: virtualAgentFiles,
+    virtualAgents: args.agents ? Array.from(args.agents.keys()) : [],
     skillsPath: args.skills ? skillsPath : undefined,
-    virtualSkills: virtualSkillDirs,
+    virtualSkills: args.skills ? args.skills.map((skill) => skill.name) : [],
     rulesPath: args.rules ? rulesPath : undefined,
     outputStylesPath: args.outputStyles ? outputStylesPath : undefined,
     workflowsPath: args.workflows ? workflowsPath : undefined,
-    virtualRoots: Array.from(virtualRoots),
+    virtualRoots: isVolumeContent ? listVirtualCategoryRoots(args) : [],
+    categoryContent,
   };
 };
 
-export const exposeVirtualCategoriesToChildren = (args: VirtualFileSystemOptions) => {
+export const exposeVirtualCategoriesToChildren = async (args: VirtualFileSystemOptions) => {
   const { claudeMdPath, commandsPath, agentsPath, skillsPath, rulesPath, outputStylesPath, workflowsPath } =
     resolveVirtualFileSystemPaths();
 
@@ -2359,15 +2377,12 @@ export const exposeVirtualCategoriesToChildren = (args: VirtualFileSystemOptions
   // ~/.claude.json, settings.json, and CLAUDE.md: those exist on the real fs
   // and shadowing them would change behavior of nested claude/ccc children.
   const nsFiles: NsVfsFile[] = [];
-  const nsRoots: string[] = [];
+  const nsRoots = listVirtualCategoryRoots(args);
   if (args.skills && args.skills.length > 0) {
-    nsRoots.push(skillsPath);
     for (const skill of args.skills) {
       for (const file of skill.files) {
-        nsFiles.push({
-          nativePath: path.join(skillsPath, skill.name, file.relativePath),
-          content: file.content,
-        });
+        const nativePath = path.join(skillsPath, skill.name, file.relativePath);
+        nsFiles.push("sourcePath" in file ? { nativePath, sourcePath: file.sourcePath } : { nativePath, content: file.content });
       }
     }
   }
@@ -2380,12 +2395,12 @@ export const exposeVirtualCategoriesToChildren = (args: VirtualFileSystemOptions
   ];
   for (const [entries, rootPath] of nsCategories) {
     if (!entries || entries.size === 0) continue;
-    nsRoots.push(rootPath);
+
     for (const [filename, content] of entries) {
       nsFiles.push({ nativePath: path.join(rootPath, filename), content });
     }
   }
-  setupNamespaceVfs(nsRoots, nsFiles);
+  return setupNamespaceVfs(nsRoots, nsFiles);
 };
 
 export const installVirtualFileSystem = (input: PreparedVirtualFileSystem) => {
@@ -2408,6 +2423,7 @@ export const installVirtualFileSystem = (input: PreparedVirtualFileSystem) => {
     outputStylesPath: prepared.outputStylesPath,
     workflowsPath: prepared.workflowsPath,
     virtualRoots: new Set(prepared.virtualRoots),
+    categoryContent: prepared.categoryContent,
     volPromises,
   });
 };

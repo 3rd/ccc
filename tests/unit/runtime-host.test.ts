@@ -47,6 +47,7 @@ const makePayload = (home: string, importPath: string): RuntimeHostPayload => ({
     virtualAgents: [],
     virtualSkills: [],
     virtualRoots: [],
+    categoryContent: "volume",
   },
 });
 
