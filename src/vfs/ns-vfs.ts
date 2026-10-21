@@ -1,6 +1,5 @@
 import { execFileSync, spawnSync } from "child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
-import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { connect } from "net";
 import * as os from "os";
 import * as path from "path";
@@ -8,6 +7,7 @@ import { fileURLToPath } from "url";
 // relative import: this module is reached from launcher-wrapper.ts, which
 // runs under bare bun in standalone installs where "@/" alias resolution
 // must not be assumed
+import { compileCachedCSource } from "../utils/compile-c-source";
 import { log } from "../utils/log";
 
 // mount-namespace VFS: the wrapper launches the whole session inside an
@@ -70,33 +70,6 @@ export const namespacePrefix = (env: NodeJS.ProcessEnv): string[] | null => {
     return null;
   }
   return ["unshare", ...unshareFlags(), "--"];
-};
-
-const compileNsMount = (): string => {
-  const compiler = process.env.CC ?? "cc";
-  const source = readFileSync(NS_MOUNT_SOURCE);
-  const hash = createHash("sha256")
-    .update(COMPILE_FLAGS.join("\0"))
-    .update("\0")
-    .update(compiler)
-    .update("\0")
-    .update(source)
-    .digest("hex");
-  const cachePath = path.join(CACHE_DIR, `ns-mount-${hash.slice(0, 32)}`);
-  if (existsSync(cachePath)) return cachePath;
-
-  mkdirSync(CACHE_DIR, { recursive: true });
-  const tempPath = `${cachePath}.${process.pid}.tmp`;
-  try {
-    execFileSync(compiler, [...COMPILE_FLAGS, "-o", tempPath, NS_MOUNT_SOURCE], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    renameSync(tempPath, cachePath);
-  } catch (error) {
-    rmSync(tempPath, { force: true });
-    throw error;
-  }
-  return cachePath;
 };
 
 export type NsVfsFile =
@@ -228,7 +201,12 @@ export const setupNamespaceVfs = async (roots: string[], files: NsVfsFile[]) => 
   let helper: string;
 
   try {
-    helper = compileNsMount();
+    helper = compileCachedCSource({
+      sourcePath: NS_MOUNT_SOURCE,
+      flags: COMPILE_FLAGS,
+      cacheDirectory: CACHE_DIR,
+      outputPrefix: "ns-mount",
+    });
     execFileSync(helper, roots, { stdio: ["ignore", "pipe", "pipe"] });
   } catch (error) {
     log.warn("VFS", `Namespace VFS mount failed: ${error instanceof Error ? error.message : error}`);

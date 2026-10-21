@@ -1,5 +1,6 @@
 import { parse } from "acorn";
 import { createHash } from "crypto";
+import { BUN_ANT_ADDON_ENV } from "./bun-ant";
 import { CELL_SEGMENTER_SHIM } from "./cell-segmenter-shim";
 import { NATIVE_BUNFS_ROOT_PREFIX } from "./constants";
 
@@ -622,19 +623,12 @@ export const GRAPH_NODE_FETCH_SHIM_NAME = "__ccc_node_fetch.mjs";
 // `__cccBun` and `__require` are in scope from the PREAMBLE body above it.
 const GRAPH_PREAMBLE_EXTRAS = [
   "",
-  "// bun.ant is an anthropic-custom native extension (peer credentials, memory",
-  "// pressure, prctl). every bundle call site catches and falls back, so a",
-  "// throwing stub selects those fallbacks under node. posixFsAt,",
-  "// windowsFolderSecurity and windowsProcessList are deliberately absent: their",
-  "// call sites test for the member first, and a stub would get called. ttyName,",
-  "// loginTty and windowsProcessCreationTime are absent too; their callers catch.",
-  "const __cccAntUnavailable = () => { throw new Error(\"ccc bun shim: Bun.ant is unavailable under node\"); };",
-  "__cccBun.ant = {",
-  "  getPeerUid: __cccAntUnavailable,",
-  "  getPeerPid: __cccAntUnavailable,",
-  "  memoryPressureLevel: __cccAntUnavailable,",
-  "  setDumpable: __cccAntUnavailable,",
-  "};",
+  "// bun.ant is an anthropic-custom native extension. on linux the launcher builds",
+  "// ccc's add-on for the members claude code calls there and passes its path.",
+  "// members it cannot provide stay absent rather than stubbed: some call sites",
+  "// test for a member and advertise the feature it backs, and the rest catch.",
+  `const __cccBunAntAddonPath = process.env.${BUN_ANT_ADDON_ENV};`,
+  "__cccBun.ant = __cccBunAntAddonPath ? { ...__baseRequire(__cccBunAntAddonPath) } : {};",
   "// the 2.1.274 ink renderer throws at startup without ant.CellSegmenter",
   CELL_SEGMENTER_SHIM,
   "__cccBun.TOML = {",

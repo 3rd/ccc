@@ -595,6 +595,13 @@ const run = async () => {
       "LAUNCHER",
       `Native mode: CCC_CLAUDE_WRAPPER_PKG_JSON=${process.env.CCC_CLAUDE_WRAPPER_PKG_JSON}`,
     );
+
+    const { applyBunAntAddonEnv, BUN_ANT_ADDON_ENV } = await import("@/native/bun-ant");
+    const bunAntAddonPath = applyBunAntAddonEnv();
+    if (bunAntAddonPath) {
+      log.debug("LAUNCHER", `Native mode: ${BUN_ANT_ADDON_ENV}=${bunAntAddonPath}`);
+    }
+
     resolveTask.done(resolved.source);
   } catch (error) {
     resolveTask.fail("Claude CLI not found");
