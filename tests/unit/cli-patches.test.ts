@@ -110,4 +110,21 @@ describe("applyUserPatches", () => {
     expect(next.applied).toEqual([]);
     expect(next.missed).toEqual(['"missing" => "omega"', "noop"]);
   });
+
+  test("lists a function patch as stale when it reports a missed part, keeping the parts it applied", () => {
+    const next = applyUserPatches("alpha beta", [
+      {
+        fn: (content, reportMissedPart) => {
+          reportMissedPart?.("gamma-site");
+
+          return content.replace("alpha", "omega");
+        },
+        name: "two sites",
+      },
+    ]);
+
+    expect(next.content).toBe("omega beta");
+    expect(next.applied).toEqual([]);
+    expect(next.missed).toEqual(["two sites (missed gamma-site)"]);
+  });
 });

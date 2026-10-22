@@ -2,7 +2,7 @@
 
 import { createHash } from "crypto";
 
-export type PatchFn = (content: string) => string;
+export type PatchFn = (content: string, reportMissedPart?: (part: string) => void) => string;
 
 // keyMaterial declares anything a patch bakes into its output that fn.toString() cannot show —
 // typically a preamble a factory precomputed from config before creating fn. Patch caching keys
@@ -142,8 +142,19 @@ export const patchSetDigest = (patches: readonly RuntimePatch[]) => {
 export const BUILTIN_PATCHES_VERSION = patchSetDigest(builtInStringPatches);
 
 const applyOne = (content: string, patch: RuntimePatch) => {
-  const result = "fn" in patch ? patch.fn(content) : content.replaceAll(patch.find, patch.replace);
-  return { content: result, matched: result !== content };
+  if (!("fn" in patch)) {
+    const replaced = content.replaceAll(patch.find, patch.replace);
+
+    return { content: replaced, isComplete: replaced !== content, label: labelFor(patch) };
+  }
+
+  const missedParts: string[] = [];
+  const result = patch.fn(content, (part) => {
+    missedParts.push(part);
+  });
+  const isComplete = result !== content && missedParts.length === 0;
+  const label = missedParts.length === 0 ? patch.name : `${patch.name} (missed ${missedParts.join(", ")})`;
+  return { content: result, isComplete, label };
 };
 
 const applyAll = (content: string, patches: RuntimePatch[]) => {
@@ -151,9 +162,9 @@ const applyAll = (content: string, patches: RuntimePatch[]) => {
   const missed: string[] = [];
   let result = content;
   for (const patch of patches) {
-    const { content: next, matched } = applyOne(result, patch);
+    const { content: next, isComplete, label } = applyOne(result, patch);
     result = next;
-    (matched ? applied : missed).push(labelFor(patch));
+    (isComplete ? applied : missed).push(label);
   }
   return { content: result, applied, missed };
 };

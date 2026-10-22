@@ -621,6 +621,18 @@ const baseSettingsSchema = z.object({
       }),
     )
     .optional(),
+  // claude desktop only; the cli accepts any value and desktop reads it from user and managed settings (v2.1.307)
+  sshHostCommands: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        command: z.string(),
+        sshIdentityFile: z.string().optional(),
+        startDirectory: z.string().optional(),
+      }),
+    )
+    .optional(),
   // managed settings only; the cli rejects anything but http/sse servers with an https url (v2.1.259)
   managedMcpServers: z
     .record(
