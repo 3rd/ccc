@@ -190,6 +190,10 @@ class Logger {
     return path.dirname(this.logPath);
   }
 
+  isActive() {
+    return this.isEnabled;
+  }
+
   debug(category: string, message: string, data?: unknown) {
     this.log("debug", category, message, data);
   }

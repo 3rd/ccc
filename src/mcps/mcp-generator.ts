@@ -1,5 +1,4 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
-import { FastMCP } from "fastmcp";
 import type { JsonSchema, MCPInitializeResponse } from "@/types/mcp-protocol";
 import type { ClaudeMCPConfig, FastMCPFactory, MCPLayerData, MCPToolFilter } from "@/types/mcps";
 import { log } from "@/utils/log";
@@ -59,6 +58,9 @@ export const createMCPProxy = (originalConfig: ClaudeMCPConfig, filter: MCPToolF
     const versionMatch = /(\d+)\.(\d+)\.(\d+)/.exec(version);
     const formattedVersion =
       versionMatch ? `${versionMatch[1]}.${versionMatch[2]}.${versionMatch[3]}` : "1.0.0";
+    // Loaded on demand: config helpers re-export this module, so a static FastMCP import puts the
+    // MCP SDK into every launcher preparation and hook process that loads the config.
+    const { FastMCP } = await import("fastmcp");
     const server = new FastMCP({
       name: initResponse.serverInfo.name || "ccc-mcp-proxy",
       version: formattedVersion as `${number}.${number}.${number}`,

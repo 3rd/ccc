@@ -506,11 +506,16 @@ const run = async () => {
   log.debug("PROJECT", `  Instance ID: ${context.instanceId}`);
   log.debug("PROJECT", `  Launcher directory: ${context.launcherDirectory}`);
   log.debug("PROJECT", `  Root directory: ${context.project.rootDirectory}`);
-  log.debug("PROJECT", `  Is Git repo: ${context.isGitRepo()}`);
-  log.debug(
-    "PROJECT",
-    `  Git branch: ${context.isGitRepo() ? context.getGitBranch() : "Not inside a git repository"}`,
-  );
+
+  // each git lookup spawns a shell, and log.debug discards its message when logging is off
+  if (log.isActive()) {
+    log.debug("PROJECT", `  Is Git repo: ${context.isGitRepo()}`);
+    log.debug(
+      "PROJECT",
+      `  Git branch: ${context.isGitRepo() ? context.getGitBranch() : "Not inside a git repository"}`,
+    );
+  }
+
   log.debug("PROJECT", `  Platform: ${context.getPlatform()}`);
   log.debug("PROJECT", `  OS Version: ${context.getOsVersion()}`);
   if (context.project.tags && context.project.tags.length > 0) {
