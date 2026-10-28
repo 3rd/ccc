@@ -233,11 +233,10 @@ const run = async () => {
 
   // oauth credentials are resolved from real process env before settings.json env is
   // applied, so a profile's token override must be promoted to process env pre-boot
-  if (settings._profileName) {
-    (await import("@/config/builders/resolve-profile")).exportProfileEnv(
-      settings._availableProfiles?.[settings._profileName],
-    );
-  }
+  const { exportProfileEnv, removeInheritedApiCredentials } = await import("@/config/builders/resolve-profile");
+  const selectedProfile = settings._profileName ? settings._availableProfiles?.[settings._profileName] : undefined;
+  exportProfileEnv(selectedProfile);
+  removeInheritedApiCredentials(selectedProfile);
 
   let virtualClaudeStateJson: string | undefined;
 

@@ -73,6 +73,29 @@ export const exportProfileEnv = (profile: Record<string, unknown> | undefined): 
   }
 };
 
+const API_CREDENTIAL_ENV_NAMES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"] as const;
+
+const readProfileEnvNames = (profile: Record<string, unknown> | undefined) => {
+  const env = profile?.env;
+  const isEnvObject = typeof env === "object" && env !== null && !Array.isArray(env);
+  if (!isEnvObject) return new Set<string>();
+
+  return new Set(Object.keys(env));
+};
+
+export const removeInheritedApiCredentials = (profile: Record<string, unknown> | undefined) => {
+  const hasSubscriptionToken = Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
+  if (!hasSubscriptionToken) return;
+
+  const profileEnvNames = readProfileEnvNames(profile);
+
+  for (const name of API_CREDENTIAL_ENV_NAMES) {
+    if (profileEnvNames.has(name)) continue;
+
+    delete process.env[name];
+  }
+};
+
 /** returns a new argv with --profile and its value removed */
 export const stripProfileFromArgv = (argv: string[]) => {
   const result: string[] = [];

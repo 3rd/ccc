@@ -149,6 +149,8 @@ const marketplaceEntrySchema = z.object({
   source: marketplaceSourceSchema,
   installLocation: z.string().optional(),
   autoUpdate: z.boolean().optional(),
+  // managed settings only: plugin name → "sha256-<base64>" release-folder digests its hooks module must match to load (v2.1.311)
+  pluginDigests: z.record(z.string(), z.array(z.string())).optional(),
 });
 
 const runtimePatchSchema = z.union([
