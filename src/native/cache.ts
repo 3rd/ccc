@@ -2,10 +2,10 @@ import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { resolveCccCacheRoot } from "@/utils/cache-directory";
 import { log } from "@/utils/log";
 import { NATIVE_BUNFS_ROOT_PREFIX } from "./constants";
 
-const CACHE_SUBPATH = path.join("ccc", "claude-cli");
 const GRAPH_DIR_NAME = "graph";
 const GRAPH_META_FILE_NAME = "graph.meta.json";
 export const GRAPH_MANIFEST_FILE_NAME = "__ccc_manifest.json";
@@ -16,8 +16,7 @@ const MAX_CACHED_VERSIONS = 3;
 // grace (the read paths refresh dir mtime) survive the count caps
 export const GRAPH_PRUNE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
-const xdgCacheHome = () => process.env.XDG_CACHE_HOME?.trim() || path.join(os.homedir(), ".cache");
-export const getCacheRoot = () => path.join(xdgCacheHome(), CACHE_SUBPATH);
+export const getCacheRoot = () => path.join(resolveCccCacheRoot(), "claude-cli");
 export const getVersionCacheDir = (version: string) => path.join(getCacheRoot(), version);
 
 interface CacheMeta {

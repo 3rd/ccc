@@ -1,14 +1,13 @@
 import { createHash } from "crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { createRequire } from "module";
-import { homedir } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { version as esbuildVersion } from "esbuild";
+import { resolveCccCacheRoot } from "@/utils/cache-directory";
 import { log } from "@/utils/log";
 import type { CompiledWorkflow } from "./workflow-compiler";
 
-const CACHE_SUBPATH = join("ccc", "workflow-builds");
 const CACHE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const RESOLUTION_CONFIG_FILES = ["package.json", "tsconfig.json", "jsconfig.json"];
 const OUTPUT_DECIDING_SOURCES = [
@@ -17,7 +16,7 @@ const OUTPUT_DECIDING_SOURCES = [
   fileURLToPath(new URL("../../types/workflows.ts", import.meta.url)),
 ];
 
-type InputStamp = { path: string; size: number; mtimeMs: number };
+type InputStamp = { path: string; size: number; mtimeMs: number; sha256: string };
 type CacheEntry = { inputs: InputStamp[]; result: CompiledWorkflow };
 
 export type WorkflowCacheKeyParts = {
@@ -37,7 +36,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isInputStamp = (value: unknown): value is InputStamp =>
-  isRecord(value) && typeof value.path === "string" && typeof value.size === "number" && typeof value.mtimeMs === "number";
+  isRecord(value) &&
+  typeof value.path === "string" &&
+  typeof value.size === "number" &&
+  typeof value.mtimeMs === "number" &&
+  typeof value.sha256 === "string";
 
 const isCompiledWorkflow = (value: unknown): value is CompiledWorkflow => {
   if (!isRecord(value)) return false;
@@ -51,20 +54,31 @@ const isCompiledWorkflow = (value: unknown): value is CompiledWorkflow => {
 const isCacheEntry = (value: unknown): value is CacheEntry =>
   isRecord(value) && Array.isArray(value.inputs) && value.inputs.every(isInputStamp) && isCompiledWorkflow(value.result);
 
+const hashFile = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+
 const stampInput = (path: string) => {
   try {
     const stats = statSync(path);
 
-    return { path, size: stats.size, mtimeMs: stats.mtimeMs };
+    return { path, size: stats.size, mtimeMs: stats.mtimeMs, sha256: hashFile(path) };
   } catch {
     return undefined;
   }
 };
 
+// Rebuilding the generated config tree rewrites every file it holds, so a workflow source or import
+// can carry a new mtime with unchanged content; comparing contents keeps that rebuild from forcing
+// every workflow to be bundled again.
 const isStampCurrent = (stamp: InputStamp) => {
-  const current = stampInput(stamp.path);
+  try {
+    const stats = statSync(stamp.path);
+    if (stats.size !== stamp.size) return false;
+    if (stats.mtimeMs === stamp.mtimeMs) return true;
 
-  return current?.size === stamp.size && current.mtimeMs === stamp.mtimeMs;
+    return hashFile(stamp.path) === stamp.sha256;
+  } catch {
+    return false;
+  }
 };
 
 const listResolutionConfigFilesAbove = (sourcePath: string) => {
@@ -97,8 +111,7 @@ const readCompilerIdentity = () => {
   return hash.digest("hex");
 };
 
-const resolveCacheDirectory = () =>
-  join(process.env.XDG_CACHE_HOME?.trim() || join(homedir(), ".cache"), CACHE_SUBPATH);
+const resolveCacheDirectory = () => join(resolveCccCacheRoot(), "workflow-builds");
 
 const readEntry = (cacheDirectory: string, key: string) => {
   try {
@@ -113,8 +126,8 @@ const readEntry = (cacheDirectory: string, key: string) => {
 const pruneExpiredEntries = (cacheDirectory: string, now: number) => {
   for (const name of readdirSync(cacheDirectory)) {
     const entryPath = join(cacheDirectory, name);
-    const stamp = stampInput(entryPath);
-    const isExpired = stamp !== undefined && now - stamp.mtimeMs > CACHE_RETENTION_MS;
+    const stats = statSync(entryPath, { throwIfNoEntry: false });
+    const isExpired = stats !== undefined && now - stats.mtimeMs > CACHE_RETENTION_MS;
     if (!isExpired) continue;
 
     rmSync(entryPath, { force: true });

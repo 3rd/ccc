@@ -31,7 +31,10 @@ type SourceEdit = {
   replacement: string;
 };
 
-const CREATE_WORKFLOW_MODULE = "@/config/helpers";
+// Authored config imports the helpers through the public `@ccc` alias and the launcher's own sources use
+// `@/`, so both must be stripped. esbuild keeps an unused import in a JavaScript source, and an import left
+// in place pulls the config helpers and their server dependencies into the bundle, which then fails to build.
+const CREATE_WORKFLOW_MODULES: ReadonlySet<string> = new Set(["@ccc/config/helpers", "@/config/helpers"]);
 const CREATE_WORKFLOW_NAME = "createWorkflow";
 const BUNDLED_WORKFLOW_GLOBAL = "__cccWorkflowBundle";
 const BUNDLED_SCHEMA_GLOBAL = "__cccWorkflowSchemaBundle";
@@ -151,7 +154,7 @@ const literalValueFromExpression = (rawExpression: ts.Expression): unknown => {
 const isCreateWorkflowImport = (statement: ts.Statement) => {
   if (!ts.isImportDeclaration(statement)) return false;
   if (!ts.isStringLiteral(statement.moduleSpecifier)) return false;
-  if (statement.moduleSpecifier.text !== CREATE_WORKFLOW_MODULE) return false;
+  if (!CREATE_WORKFLOW_MODULES.has(statement.moduleSpecifier.text)) return false;
 
   const importClause = statement.importClause;
   if (!importClause || importClause.name || importClause.namedBindings === undefined) return false;

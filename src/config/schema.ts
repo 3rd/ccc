@@ -388,6 +388,8 @@ const baseSettingsSchema = z.object({
     .optional(),
   // @internal session recap when returning after 5+ min; absent or true = enabled (v2.1.105)
   awaySummaryEnabled: z.boolean().optional(),
+  // @internal false stops showing two answers to one message and asking which is better (v2.1.314)
+  responseComparisonEnabled: z.boolean().optional(),
   // @internal opt-in break reminder; dismissible nudge after sustained continuous use (v2.1.150)
   breakReminder: z
     .object({
@@ -831,6 +833,15 @@ const baseSettingsSchema = z.object({
       // refuse file-tool reads (Read, Grep, Glob, LSP) outside the working directories in every
       // permission mode; true in any settings source wins (v2.1.257)
       blockReadsOutsideWorkingDirectories: z.boolean().optional(),
+      // absolute folders or files that blockReadsOutsideWorkingDirectories lets through; read only
+      // from --settings (CCC's cli.settings) and host-sent settings, ignored in settings files.
+      // Ignores entries that are not absolute local paths, start with ~, have a ".." segment,
+      // have white space at either end, or name a filesystem root, as written or normalized (v2.1.315)
+      blockReadsExemptPaths: z.array(z.string()).optional(),
+      // refuse file-tool writes (Write, Edit, NotebookEdit) outside the working directories, and to
+      // Claude Code settings files anywhere, in every permission mode; true in any settings source
+      // wins (v2.1.314)
+      blockWritesOutsideWorkingDirectories: z.boolean().optional(),
     })
     .optional(),
 

@@ -434,6 +434,36 @@ console.log("ok");
     }
   });
 
+  test("answers event-logging requests through Bun.FetchSession with an empty success under Node", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-fetch-session-"));
+
+    try {
+      const scriptPath = join(directory, "preamble.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+let n=typeof Bun>"u"?void 0:__cccBun.FetchSession;if(!n)throw Error("this runtime has no __cccBun.FetchSession");
+let s=new n({}),{response:x,text:P}=await s.fetch("https://api.anthropic.com/api/event_logging/v2/batch",{method:"POST",headers:{},body:"{}",signal:AbortSignal.timeout(1000),redirect:"manual"}).then(async(F)=>({response:F,text:await F.text()}));
+s.close();
+console.log(JSON.stringify({ok:x.ok,text:P}));
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ ok: true, text: "" });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("reports the entry script as Bun.main so the source-checkout probe stays off", () => {
     const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-main-"));
 

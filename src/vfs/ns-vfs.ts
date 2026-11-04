@@ -174,6 +174,75 @@ const registerWithNotifySupervisor = async (roots: string[], files: NsVfsFile[])
   return true;
 };
 
+const requestNotifySupervisor = (socketName: string, payload: Buffer) => {
+  return new Promise<Buffer>((resolve, reject) => {
+    const socket = connect(`\0${socketName}`);
+    const chunks: Buffer[] = [];
+    const deadline = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`no reply within ${NOTIFY_REGISTER_TIMEOUT_MS}ms`));
+    }, NOTIFY_REGISTER_TIMEOUT_MS);
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    socket.once("error", (error) => {
+      clearTimeout(deadline);
+      reject(error);
+    });
+    socket.once("close", () => {
+      clearTimeout(deadline);
+      resolve(Buffer.concat(chunks));
+    });
+    socket.write(payload);
+  });
+};
+
+/**
+ * Asks the notify supervisor to record every path this process looks up from now on, and resolves once
+ * recording has started. Returns false when no supervisor is configured or it did not acknowledge.
+ */
+export const startLookupRecord = async () => {
+  const supervisor = getNotifySupervisor(process.env);
+  if (!supervisor) return false;
+
+  try {
+    const reply = await requestNotifySupervisor(
+      supervisor.socketName,
+      Buffer.from(`${supervisor.token}R`, "ascii"),
+    );
+
+    return reply.length === 1 && reply[0] === 0;
+  } catch (error) {
+    log.warn("VFS", `Lookup recording did not start: ${error instanceof Error ? error.message : error}`);
+
+    return false;
+  }
+};
+
+const parseLookup = (entry: string) => ({ isListing: entry.startsWith("L"), path: entry.slice(1) });
+
+export const finishLookupRecord = async () => {
+  const supervisor = getNotifySupervisor(process.env);
+  if (!supervisor) return { isComplete: false, lookups: [] };
+
+  try {
+    const reply = await requestNotifySupervisor(
+      supervisor.socketName,
+      Buffer.from(`${supervisor.token}P`, "ascii"),
+    );
+    if (reply.length < 9) return { isComplete: false, lookups: [] };
+
+    const size = Number(reply.readBigUInt64LE(1));
+    if (reply.length !== 9 + size) return { isComplete: false, lookups: [] };
+
+    const entries = reply.subarray(9).toString("utf8").split("\0").filter((entry) => entry !== "");
+
+    return { isComplete: reply[0] === 1, lookups: entries.map(parseLookup) };
+  } catch (error) {
+    log.warn("VFS", `Lookup record could not be read: ${error instanceof Error ? error.message : error}`);
+
+    return { isComplete: false, lookups: [] };
+  }
+};
+
 /**
  * Launcher-side (inside the namespace): mounts tmpfs over each root, writes
  * the virtual files into the mounts, then remounts them read-only. Returns

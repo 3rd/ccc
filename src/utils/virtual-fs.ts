@@ -2151,6 +2151,60 @@ const writeVirtualCategories = (vol: Volume, args: VirtualFileSystemOptions) => 
   log.vfs(`Virtual directory contents: ${vol.readdirSync(workflowsPath)}`);
 };
 
+// merge featureFlags (into cachedGrowthBookFeatures) and claudeState (top-level
+// keys, e.g. leftArrowOpensAgents) into the virtual ~/.claude.json. claudeState
+// wins over the real state file's values (config-as-code beats drifted local
+// state); the featureFlags merge is applied after it, so cachedGrowthBookFeatures
+// stays launcher-managed even if claudeState carries that key.
+export const mergeVirtualClaudeState = (
+  claudeStateJson: string | undefined,
+  rawFeatureFlags: unknown,
+  rawClaudeState: unknown,
+) => {
+  const featureFlags =
+    rawFeatureFlags && typeof rawFeatureFlags === "object" && !Array.isArray(rawFeatureFlags) ?
+      (rawFeatureFlags as Record<string, unknown>)
+    : undefined;
+  const claudeStateOverrides =
+    rawClaudeState && typeof rawClaudeState === "object" && !Array.isArray(rawClaudeState) ?
+      (rawClaudeState as Record<string, unknown>)
+    : undefined;
+  let effectiveClaudeStateJson = claudeStateJson;
+  const hasFeatureFlags = featureFlags !== undefined && Object.keys(featureFlags).length > 0;
+  const hasClaudeStateOverrides =
+    claudeStateOverrides !== undefined && Object.keys(claudeStateOverrides).length > 0;
+  if (hasFeatureFlags || hasClaudeStateOverrides) {
+    if (hasFeatureFlags) {
+      log.vfs(`Injecting featureFlags into cachedGrowthBookFeatures: ${Object.keys(featureFlags).join(", ")}`);
+    }
+
+    if (hasClaudeStateOverrides) {
+      log.vfs(`Injecting claudeState keys into .claude.json: ${Object.keys(claudeStateOverrides).join(", ")}`);
+    }
+
+    try {
+      const parsed = effectiveClaudeStateJson ? JSON.parse(effectiveClaudeStateJson) : {};
+      const base = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+      const existing =
+        base.cachedGrowthBookFeatures && typeof base.cachedGrowthBookFeatures === "object" ?
+          base.cachedGrowthBookFeatures
+        : {};
+      const merged = {
+        ...base,
+        ...(hasClaudeStateOverrides ? claudeStateOverrides : {}),
+        ...(hasFeatureFlags ? { cachedGrowthBookFeatures: { ...existing, ...featureFlags } } : {}),
+      };
+      effectiveClaudeStateJson = `${JSON.stringify(merged, null, 2)}\n`;
+    } catch (error) {
+      log.vfs(
+        `Failed to merge featureFlags/claudeState into .claude.json: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  return effectiveClaudeStateJson;
+};
+
 export const prepareVirtualFileSystem = (
   args: VirtualFileSystemOptions,
   categoryContent: VirtualCategoryContent = "volume",
@@ -2275,47 +2329,8 @@ export const prepareVirtualFileSystem = (
   void _profileName; // eslint: diagnostic-only field
   void _availableProfiles; // eslint: diagnostic-only field
 
-  // merge featureFlags (into cachedGrowthBookFeatures) and claudeState (top-level
-  // keys, e.g. leftArrowOpensAgents) into the virtual ~/.claude.json. claudeState
-  // wins over the real state file's values (config-as-code beats drifted local
-  // state); the featureFlags merge is applied after it, so cachedGrowthBookFeatures
-  // stays launcher-managed even if claudeState carries that key.
-  const featureFlags =
-    rawFeatureFlags && typeof rawFeatureFlags === "object" && !Array.isArray(rawFeatureFlags) ?
-      (rawFeatureFlags as Record<string, unknown>)
-    : undefined;
-  const claudeStateOverrides =
-    rawClaudeState && typeof rawClaudeState === "object" && !Array.isArray(rawClaudeState) ?
-      (rawClaudeState as Record<string, unknown>)
-    : undefined;
-  let effectiveClaudeStateJson = args.claudeStateJson;
-  const hasFeatureFlags = featureFlags !== undefined && Object.keys(featureFlags).length > 0;
-  const hasClaudeStateOverrides =
-    claudeStateOverrides !== undefined && Object.keys(claudeStateOverrides).length > 0;
-  if (hasFeatureFlags || hasClaudeStateOverrides) {
-    if (hasFeatureFlags)
-      log.vfs(`Injecting featureFlags into cachedGrowthBookFeatures: ${Object.keys(featureFlags).join(", ")}`);
-    if (hasClaudeStateOverrides)
-      log.vfs(`Injecting claudeState keys into .claude.json: ${Object.keys(claudeStateOverrides).join(", ")}`);
-    try {
-      const parsed = effectiveClaudeStateJson ? JSON.parse(effectiveClaudeStateJson) : {};
-      const base = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-      const existing =
-        base.cachedGrowthBookFeatures && typeof base.cachedGrowthBookFeatures === "object" ?
-          base.cachedGrowthBookFeatures
-        : {};
-      const merged = {
-        ...base,
-        ...(hasClaudeStateOverrides ? claudeStateOverrides : {}),
-        ...(hasFeatureFlags ? { cachedGrowthBookFeatures: { ...existing, ...featureFlags } } : {}),
-      };
-      effectiveClaudeStateJson = `${JSON.stringify(merged, null, 2)}\n`;
-    } catch (error) {
-      log.vfs(
-        `Failed to merge featureFlags/claudeState into .claude.json: ${error instanceof Error ? error.message : error}`,
-      );
-    }
-  }
+  const effectiveClaudeStateJson = mergeVirtualClaudeState(args.claudeStateJson, rawFeatureFlags, rawClaudeState);
+
   if (filteredSettings.env && typeof filteredSettings.env === "object") {
     const envRecord = filteredSettings.env as Record<string, string>;
     const filteredEnv: Record<string, string> = {};
@@ -2365,11 +2380,11 @@ export const prepareVirtualFileSystem = (
   };
 };
 
-export const exposeVirtualCategoriesToChildren = async (args: VirtualFileSystemOptions) => {
-  const { claudeMdPath, commandsPath, agentsPath, skillsPath, rulesPath, outputStylesPath, workflowsPath } =
-    resolveVirtualFileSystemPaths();
+export type VirtualCategoryEntries = { roots: string[]; files: NsVfsFile[] };
 
-  ensureDirectoryExists(path.dirname(claudeMdPath));
+export const listVirtualCategoryEntries = (args: VirtualFileSystemOptions) => {
+  const { commandsPath, agentsPath, skillsPath, rulesPath, outputStylesPath, workflowsPath } =
+    resolveVirtualFileSystemPaths();
 
   // expose the virtual content categories to child processes (shell tools,
   // subagent CLIs) by writing them into session-private tmpfs mounts (the
@@ -2400,7 +2415,14 @@ export const exposeVirtualCategoriesToChildren = async (args: VirtualFileSystemO
       nsFiles.push({ nativePath: path.join(rootPath, filename), content });
     }
   }
-  return setupNamespaceVfs(nsRoots, nsFiles);
+
+  return { roots: nsRoots, files: nsFiles };
+};
+
+export const exposeVirtualCategories = async (entries: VirtualCategoryEntries) => {
+  ensureDirectoryExists(path.dirname(resolveVirtualFileSystemPaths().claudeMdPath));
+
+  return setupNamespaceVfs(entries.roots, entries.files);
 };
 
 export const installVirtualFileSystem = (input: PreparedVirtualFileSystem) => {

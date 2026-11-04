@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import * as fs from "fs";
-import { homedir } from "os";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
+import { resolveCccCacheRoot } from "../utils/cache-directory";
 import { namespacePrefix, NS_ACTIVE_ENV } from "../vfs/ns-vfs";
 import { PREPARATION_LAUNCHER_PATH_ENV } from "./runtime-host-process";
 
@@ -72,8 +72,7 @@ const resolveCompileCacheDir = (env: NodeJS.ProcessEnv) => {
   if (env.CCC_COMPILE_CACHE?.trim() === "0") return undefined;
   if (env.NODE_COMPILE_CACHE) return env.NODE_COMPILE_CACHE;
 
-  const cacheHome = env.XDG_CACHE_HOME?.trim() || join(homedir(), ".cache");
-  const dir = join(cacheHome, "ccc", "v8-compile-cache");
+  const dir = join(resolveCccCacheRoot(env), "v8-compile-cache");
   try {
     pruneOldestCompileCacheEntries(dir);
   } catch {

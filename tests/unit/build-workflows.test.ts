@@ -117,6 +117,33 @@ export default createWorkflow({
     });
   });
 
+  test("builds a JavaScript workflow that imports createWorkflow from the documented @ccc path", async () => {
+    await withTempConfig(async ({ configDir }) => {
+      await writeConfigFile(
+        configDir,
+        "global/workflows/plain.js",
+        `
+import { createWorkflow } from "@ccc/config/helpers";
+
+export default createWorkflow({
+  name: "plain",
+  description: "javascript workflow",
+  handler: ({ args }) => {
+    return { ok: true, args };
+  },
+});
+`,
+      );
+
+      const workflows = await buildWorkflows(await createContext(configDir));
+      const content = workflows.files.get("plain.js") ?? "";
+
+      expect(content.startsWith('export const meta = {\n  "name": "plain"')).toBe(true);
+      expect(content).not.toContain("createWorkflow");
+      expectWorkflowBodyParses(content);
+    });
+  });
+
   test("serializes Zod workflow args schema into whenToUse without bundling it into the handler", async () => {
     await withTempConfig(async ({ configDir }) => {
       await writeConfigFile(

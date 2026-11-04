@@ -1,13 +1,29 @@
 /* eslint-disable @typescript-eslint/class-methods-use-this */
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { createRequire } from "node:module";
 import { platform, release } from "os";
 import { dirname, join, relative } from "path";
 import { fileURLToPath } from "url";
-import { $, cd } from "zx";
 import type { LoadedPlugin } from "@/plugins/types";
 import type { ClaudeMCPConfig } from "@/types/mcps";
 import { consumeContextInstanceId } from "./instance-id";
 import { Project } from "./Project";
+
+type Zx = typeof import("zx");
+
+const requireModule = createRequire(import.meta.url);
+let zx: Zx | undefined;
+
+// Loaded on first use: zx takes tens of milliseconds to import, and only the git and tree lookups
+// below need it, while every launcher preparation and hook process creates a Context.
+const loadZx = () => {
+  if (zx !== undefined) return zx;
+
+  const loaded: Zx = requireModule("zx");
+  zx = loaded;
+
+  return loaded;
+};
 
 interface CacheEntry<T> {
   value: T;
@@ -121,7 +137,7 @@ export class Context {
       "isGitRepo",
       () => {
         try {
-          const result = $.sync({ nothrow: true })`git rev-parse --git-dir 2>/dev/null`;
+          const result = loadZx().$.sync({ nothrow: true })`git rev-parse --git-dir 2>/dev/null`;
           return result.exitCode === 0;
         } catch {
           return false;
@@ -136,7 +152,7 @@ export class Context {
       "gitBranch",
       () => {
         try {
-          const result = $.sync({ nothrow: true })`git rev-parse --abbrev-ref HEAD 2>/dev/null`;
+          const result = loadZx().$.sync({ nothrow: true })`git rev-parse --abbrev-ref HEAD 2>/dev/null`;
           if (result.exitCode === 0) {
             return result.text().trim();
           }
@@ -154,7 +170,7 @@ export class Context {
       "gitStatus",
       () => {
         try {
-          const result = $.sync({ nothrow: true })`git status --porcelain 2>/dev/null`;
+          const result = loadZx().$.sync({ nothrow: true })`git status --porcelain 2>/dev/null`;
           if (result.exitCode === 0) {
             return result.text();
           }
@@ -172,7 +188,7 @@ export class Context {
       `gitCommits:${count}`,
       () => {
         try {
-          const result = $.sync({ nothrow: true })`git log --oneline -n ${count} 2>/dev/null`;
+          const result = loadZx().$.sync({ nothrow: true })`git log --oneline -n ${count} 2>/dev/null`;
           if (result.exitCode === 0) {
             return result.text();
           }
@@ -189,11 +205,11 @@ export class Context {
     return this.memo.get(
       "directoryTree",
       () => {
-        cd(this.workingDirectory);
+        loadZx().cd(this.workingDirectory);
         try {
           // use --gitignore if we're in a git repo
           const gitIgnoreFlag = this.isGitRepo() ? "--gitignore" : "";
-          const result = $.sync({ nothrow: true })`tree ${gitIgnoreFlag} -L 5 2>/dev/null`;
+          const result = loadZx().$.sync({ nothrow: true })`tree ${gitIgnoreFlag} -L 5 2>/dev/null`;
           if (result.exitCode === 0) {
             return result.text().trim();
           }
@@ -218,7 +234,7 @@ export class Context {
       `gitRemote:${remote}`,
       () => {
         try {
-          const result = $.sync({ nothrow: true })`git remote get-url ${remote} 2>/dev/null`;
+          const result = loadZx().$.sync({ nothrow: true })`git remote get-url ${remote} 2>/dev/null`;
           if (result.exitCode === 0) {
             return result.text().trim();
           }
@@ -239,7 +255,7 @@ export class Context {
       () => {
         try {
           const args = short ? ["rev-parse", "--short", "HEAD"] : ["rev-parse", "HEAD"];
-          const result = $.sync({ nothrow: true })`git ${args} 2>/dev/null`;
+          const result = loadZx().$.sync({ nothrow: true })`git ${args} 2>/dev/null`;
           if (result.exitCode === 0) {
             return result.text().trim();
           }

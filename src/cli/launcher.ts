@@ -9,7 +9,7 @@ import { prepareContextInstanceId } from "@/context/instance-id";
 import type { ResolvedCli } from "@/native/resolver";
 import type { RuntimePatch } from "@/patches/cli-patches";
 import { log } from "@/utils/log";
-import { createStartupLogger } from "@/utils/startup";
+import { createStartupLogger, type StartupLogger } from "@/utils/startup";
 import type { RuntimeHostPayload } from "./runtime-host";
 import { PREPARATION_LAUNCHER_PATH_ENV, RUNTIME_HOST_PAYLOAD_FD_ENV, RUNTIME_HOST_PID_ENV } from "./runtime-host-process";
 import {
@@ -21,6 +21,116 @@ import {
 } from "@/config/session-tool-policy";
 
 type ResolveResult = ResolvedCli & { source: string };
+
+// these flags print diagnostics instead of, or besides, launching: they silence the startup steps, and
+// a cached preparation would skip their output, so they always run the full preparation
+const DIAGNOSTIC_FLAGS = [
+  "--print-config",
+  "--print-system-prompt",
+  "--print-user-prompt",
+  "--dump-config",
+  "--doctor",
+  "--debug-mcp",
+  "--debug-mcp-run",
+  "--timing",
+];
+
+const readRuntimeHostPid = () => {
+  const runtimeHostPid = Number(process.env[RUNTIME_HOST_PID_ENV]);
+  const isValidRuntimeHostPid = Number.isSafeInteger(runtimeHostPid) && runtimeHostPid > 0;
+  if (!isValidRuntimeHostPid) {
+    throw new Error(`Invalid ${RUNTIME_HOST_PID_ENV}: ${process.env[RUNTIME_HOST_PID_ENV]}`);
+  }
+
+  return runtimeHostPid;
+};
+
+const writeRuntimePayload = (runtimePayload: RuntimeHostPayload) => {
+  const payloadFd = Number(process.env[RUNTIME_HOST_PAYLOAD_FD_ENV]);
+  const isValidPayloadFd = Number.isInteger(payloadFd) && payloadFd >= 0;
+  if (!isValidPayloadFd) throw new Error("Invalid CCC runtime payload descriptor");
+
+  fs.writeFileSync(payloadFd, JSON.stringify(runtimePayload));
+};
+
+type CachedPreparationOptions = {
+  key: string;
+  instanceId: string;
+  startup: StartupLogger;
+  startupMessagesEnabled: boolean;
+};
+
+/**
+ * Rebuilds this launch's payload from a cached preparation when its recorded inputs are unchanged,
+ * redoing only the work whose result belongs to this launch. Returns undefined when the full
+ * preparation has to run instead.
+ */
+const runCachedPreparation = async (options: CachedPreparationOptions) => {
+  const { key, instanceId, startup, startupMessagesEnabled } = options;
+  const reuseTask = startup.start("Reuse cached preparation");
+  const preparationCache = await import("./preparation-cache");
+  const { tracePreparationCache } = preparationCache;
+
+  const miss = (reason: string) => {
+    tracePreparationCache("miss", `reason=${reason}`);
+
+    return undefined;
+  };
+
+  const entry = preparationCache.readPreparationCache(key);
+  if (!entry) return miss("no-entry");
+
+  const changedDependency = preparationCache.findChangedDependency(entry);
+  if (changedDependency !== undefined) return miss(`changed path=${changedDependency}`);
+
+  const prepared = preparationCache.instantiatePreparation(entry, process.env, instanceId);
+  if (!prepared) return miss("fill");
+  if (!fs.existsSync(prepared.importPath)) return miss("patched-graph-missing");
+
+  if (entry.patchKey !== null) {
+    const { registerPatchedEntryUser } = await import("@/patches/patched-cache");
+    if (!registerPatchedEntryUser(entry.patchKey, readRuntimeHostPid())) return miss("patched-graph-busy");
+  }
+
+  const { exposeVirtualCategories, mergeVirtualClaudeState } = await import("@/utils/virtual-fs");
+  const areCategoriesServed = await exposeVirtualCategories(prepared.categories);
+  if (areCategoriesServed !== entry.areCategoriesServed) return miss("categories");
+
+  const { buildTrustedClaudeState } = await import("@/utils/workspace-trust");
+  const { trust } = entry;
+  const trustOverride = buildTrustedClaudeState(trust.trustedPaths, trust.claudeStatePath);
+  const claudeStateJson = mergeVirtualClaudeState(trustOverride.claudeStateJson, trust.featureFlags, trust.claudeState);
+  if (claudeStateJson === undefined) return miss("claude-state");
+
+  const files = prepared.virtualFileSystem.files.map((file) => {
+    if (file.path === trust.claudeStatePath) return { ...file, content: claudeStateJson };
+
+    return file;
+  });
+
+  log.init(process.cwd(), instanceId);
+  preparationCache.markPreparationCacheUsed(key);
+  tracePreparationCache("hit", `inputs=${entry.dependencies.length}`);
+  reuseTask.done(`${entry.dependencies.length} inputs unchanged`);
+
+  if (startupMessagesEnabled) {
+    for (const patchName of entry.missedPatches) {
+      process.stdout.write(`  ${p.yellow("!")} ${p.dim("stale:")} ${patchName}\n`);
+    }
+
+    process.stdout.write("\n");
+  }
+
+  return {
+    version: 1,
+    claudeArgv: prepared.claudeArgv,
+    importPath: prepared.importPath,
+    featureFlags: prepared.featureFlags,
+    environment: prepared.environment,
+    runtimeLogPath: log.getLogPath() ?? undefined,
+    virtualFileSystem: { ...prepared.virtualFileSystem, files },
+  } satisfies RuntimeHostPayload;
+};
 
 const hasLongFlag = (args: string[], flag: string) => {
   return args.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
@@ -118,17 +228,7 @@ const run = async () => {
   const shouldEnableLogger = (): boolean => {
     const interactive = Boolean(process.stdout.isTTY);
     const args = process.argv;
-    const quietFlags = [
-      "--print-config",
-      "--print-system-prompt",
-      "--print-user-prompt",
-      "--dump-config",
-      "--doctor",
-      "--json",
-      "--debug-mcp",
-      "--debug-mcp-run",
-      "--timing",
-    ];
+    const quietFlags = [...DIAGNOSTIC_FLAGS, "--json"];
     const hasQuiet = quietFlags.some((f) => args.includes(f));
     return interactive && !hasQuiet;
   };
@@ -137,6 +237,52 @@ const run = async () => {
   const startupMessagesEnabled = shouldEnableLogger();
   const startup = createStartupLogger({ enabled: startupMessagesEnabled });
   startup.setInstanceId(instanceId);
+
+  const preparationCache = await import("./preparation-cache");
+  const preparationMode = preparationCache.preparationCacheMode();
+  // print-mode runs are automation whose prompts rarely repeat, so their entries would only accumulate
+  const isPrintMode = process.argv.includes("-p") || hasLongFlag(process.argv, "--print");
+  const isCacheEligible =
+    preparationMode !== "off" &&
+    !process.env.DEBUG &&
+    !isPrintMode &&
+    !isSessionToolCatalogMode() &&
+    !DIAGNOSTIC_FLAGS.some((flag) => process.argv.includes(flag));
+  const incomingEnv = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+  const preparationKey =
+    isCacheEligible ?
+      preparationCache.computePreparationKey({
+        argv: process.argv.slice(2),
+        cwd: process.cwd(),
+        env: process.env,
+        launcherDirectory: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."),
+      })
+    : undefined;
+
+  const canReuseCache = preparationKey !== undefined && preparationMode === "use";
+  if (canReuseCache) {
+    let cachedPayload: RuntimeHostPayload | undefined;
+
+    // the cache only speeds up the full preparation, so any failure while reusing it falls back to that
+    try {
+      cachedPayload = await runCachedPreparation({ key: preparationKey, instanceId, startup, startupMessagesEnabled });
+    } catch (error) {
+      preparationCache.tracePreparationCache("miss", `reason=error ${error instanceof Error ? error.message : error}`);
+    }
+
+    if (cachedPayload) {
+      writeRuntimePayload(cachedPayload);
+
+      return;
+    }
+  }
+
+  const { finishLookupRecord, startLookupRecord } = await import("@/vfs/ns-vfs");
+  // file timestamps come from a coarse clock that can trail this one by a few milliseconds
+  const preparationStartedAtNs = BigInt(Date.now() - 100) * 1_000_000n;
+  const isRecordingLookups = preparationKey !== undefined && (await startLookupRecord());
 
   // init context
   const ctxTask = startup.start("Resolve project context");
@@ -239,14 +385,13 @@ const run = async () => {
   removeInheritedApiCredentials(selectedProfile);
 
   let virtualClaudeStateJson: string | undefined;
+  const { resolveVirtualFileSystemPaths } = await import("@/utils/virtual-fs");
+  const trustedPaths = [context.project.rootDirectory, context.workingDirectory];
+  const { claudeStatePath } = resolveVirtualFileSystemPaths();
 
   try {
     const { buildTrustedClaudeState } = await import("@/utils/workspace-trust");
-    const { resolveVirtualFileSystemPaths } = await import("@/utils/virtual-fs");
-    const trustOverride = buildTrustedClaudeState(
-      [context.project.rootDirectory, context.workingDirectory],
-      resolveVirtualFileSystemPaths().claudeStatePath,
-    );
+    const trustOverride = buildTrustedClaudeState(trustedPaths, claudeStatePath);
     virtualClaudeStateJson = trustOverride.claudeStateJson;
     log.info("LAUNCHER", `Prepared virtual Claude workspace trust from ${trustOverride.claudeStatePath}`);
 
@@ -629,9 +774,12 @@ const run = async () => {
   }
 
   // setup vfs
+  const { exposeVirtualCategories, listVirtualCategoryEntries, prepareVirtualFileSystem } = await import("@/utils/virtual-fs");
+  const categories = listVirtualCategoryEntries(virtualFileSystemOptions);
+  let areCategoriesServed = false;
   const virtualFileSystem = await startup.run("Mount VFS", async () => {
-    const { exposeVirtualCategoriesToChildren, prepareVirtualFileSystem } = await import("@/utils/virtual-fs");
-    const areCategoriesServed = await exposeVirtualCategoriesToChildren(virtualFileSystemOptions);
+    areCategoriesServed = await exposeVirtualCategories(categories);
+
     return prepareVirtualFileSystem(virtualFileSystemOptions, areCategoriesServed ? "filesystem" : "volume");
   });
 
@@ -1004,12 +1152,7 @@ const run = async () => {
       })
     );
 
-  const runtimeHostPid = Number(process.env[RUNTIME_HOST_PID_ENV]);
-  const isValidRuntimeHostPid = Number.isSafeInteger(runtimeHostPid) && runtimeHostPid > 0;
-  if (!isValidRuntimeHostPid) {
-    throw new Error(`Invalid ${RUNTIME_HOST_PID_ENV}: ${process.env[RUNTIME_HOST_PID_ENV]}`);
-  }
-
+  const runtimeHostPid = readRuntimeHostPid();
   const shouldBypassPatchCache = patchKey !== undefined && !registerPatchedEntryUser(patchKey, runtimeHostPid);
   if (shouldBypassPatchCache) {
     patchKey = undefined;
@@ -1209,9 +1352,59 @@ const run = async () => {
   delete runtimePayload.environment.CCC_BUN_EXEC_PATH;
   delete runtimePayload.environment.CCC_PATCH_CACHE_SALT;
 
-  const payloadFd = Number(process.env[RUNTIME_HOST_PAYLOAD_FD_ENV]);
-  if (!Number.isInteger(payloadFd) || payloadFd < 0) throw new Error("Invalid CCC runtime payload descriptor");
-  fs.writeFileSync(payloadFd, JSON.stringify(runtimePayload));
+  const shouldCachePreparation = isRecordingLookups && preparationKey !== undefined;
+  if (shouldCachePreparation) {
+    const lookupRecord = await finishLookupRecord();
+    const isCacheable =
+      lookupRecord.isComplete && virtualClaudeStateJson !== undefined && context.loadedPlugins.length === 0;
+    if (!isCacheable) {
+      preparationCache.tracePreparationCache("skip", `complete=${lookupRecord.isComplete}`);
+    } else {
+      const preparation = {
+        key: preparationKey,
+        startedAtNs: preparationStartedAtNs,
+        incomingEnv,
+        instanceId,
+        workingDirectory: context.workingDirectory,
+        lookups: lookupRecord.lookups,
+        coveredTrees: preparationCache.readCoveredTrees(incomingEnv, context.launcherDirectory),
+        excludedPaths: [...categories.roots, claudeStatePath, path.join(context.launcherDirectory, ".cache")],
+        payload: runtimePayload,
+        categories,
+        areCategoriesServed,
+        trust: {
+          claudeStatePath,
+          trustedPaths,
+          featureFlags: settingsWithPlugins.featureFlags,
+          claudeState: settingsWithPlugins.claudeState,
+        },
+        patchKey,
+        missedPatches: allMissed,
+      };
+
+      if (preparationMode === "verify") {
+        const difference = preparationCache.findPreparationDifference(preparation);
+        if (difference !== undefined) {
+          process.stderr.write(`[ccc] cached preparation differs: ${difference}\n`);
+        }
+      }
+
+      // an entry that cannot be created or written must not fail the launch it would only speed up
+      try {
+        const created = preparationCache.createPreparationCacheEntry(preparation);
+        if (created.entry) {
+          preparationCache.writePreparationCache(created.entry);
+          preparationCache.tracePreparationCache("write", `inputs=${created.entry.dependencies.length}`);
+        } else {
+          preparationCache.tracePreparationCache("skip", `reason=${created.reason}`);
+        }
+      } catch (error) {
+        preparationCache.tracePreparationCache("skip", `reason=error ${error instanceof Error ? error.message : error}`);
+      }
+    }
+  }
+
+  writeRuntimePayload(runtimePayload);
 };
 
 run();

@@ -3,10 +3,10 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { GRAPH_PRUNE_GRACE_MS, publishGraphDir, readGraphManifest, touchForPruneGrace } from "@/native/cache";
+import { resolveCccCacheRoot } from "@/utils/cache-directory";
 import { log } from "@/utils/log";
 import { BUILTIN_PATCHES_VERSION, patchSetDigest, type RuntimePatch } from "./cli-patches";
 
-const CACHE_SUBPATH = path.join("ccc", "claude-cli-patched");
 const GRAPH_DIR_NAME = "graph";
 const META_FILE_NAME = "meta.json";
 const USERS_DIR_NAME = "users";
@@ -47,8 +47,7 @@ interface PatchCacheMeta extends PatchCacheEntry {
   graphEntry?: string;
 }
 
-const xdgCacheHome = () => process.env.XDG_CACHE_HOME?.trim() || path.join(os.homedir(), ".cache");
-const cacheRoot = () => path.join(xdgCacheHome(), CACHE_SUBPATH);
+const cacheRoot = () => path.join(resolveCccCacheRoot(), "claude-cli-patched");
 const entryDir = (key: string) => path.join(cacheRoot(), key);
 const getEntryPrunersDir = (key: string) => path.join(`${cacheRoot()}-pruners`, key);
 
