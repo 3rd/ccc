@@ -48,6 +48,7 @@ export type HookMatcherType =
   | "Edit"
   | "EnterPlanMode"
   | "EnterWorktree"
+  | "Eval"
   | "ExitPlanMode"
   | "ExitWorktree"
   | "FetchInboxMessage"
@@ -66,6 +67,7 @@ export type HookMatcherType =
   | "PublishPlugin"
   | "PushNotification"
   | "Read"
+  | "ReadWidgetContext"
   | "REPL"
   | "resume"
   | "ScheduleWakeup"
@@ -83,6 +85,7 @@ export type HookMatcherType =
   | "ToolSearch"
   | "WebFetch"
   | "WebSearch"
+  | "WrapUp"
   | "Write";
 
 /**

@@ -464,6 +464,36 @@ console.log(JSON.stringify({ok:x.ok,text:P}));
     }
   });
 
+  test("gzips metrics-exporter request bodies through Bun.gzipSync under Node", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-gzip-sync-"));
+
+    try {
+      const scriptPath = join(directory, "preamble.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+let s='{"resourceMetrics":[{"scope":"claude_code"}]}';
+let y=__cccBun.gzipSync(s,{level:1,library:"libdeflate"});let body=Buffer.from(y.buffer,y.byteOffset,y.byteLength);
+const { gunzipSync } = await import("node:zlib");
+console.log(gunzipSync(body).toString());
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe('{"resourceMetrics":[{"scope":"claude_code"}]}');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("reports the entry script as Bun.main so the source-checkout probe stays off", () => {
     const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-main-"));
 

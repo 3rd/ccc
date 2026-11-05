@@ -290,6 +290,9 @@ const baseSettingsSchema = z.object({
   autoUpdatesChannel: z.enum(["stable", "latest", "rc"]).optional(),
   // disable all hooks globally
   disableAllHooks: z.boolean().optional(),
+  // turn off the Claude Tag reply check on self-hosted runners, which disableAllHooks does not
+  // cover; read only from managed settings, ignored elsewhere (v2.1.318)
+  disableReplyCheck: z.boolean().optional(),
   // disable agent view (`claude agents`, `--bg`, /background, the on-demand daemon)
   // typically set in managed settings; equivalent to CLAUDE_CODE_DISABLE_AGENT_VIEW=1
   // (renamed from disableBackgroundAgents in v2.1.139)
@@ -842,6 +845,12 @@ const baseSettingsSchema = z.object({
       // Claude Code settings files anywhere, in every permission mode; true in any settings source
       // wins (v2.1.314)
       blockWritesOutsideWorkingDirectories: z.boolean().optional(),
+      // absolute working-directory paths spelled exactly as passed, taken as written without
+      // following links; read only from --settings (CCC's cli.settings) and host-sent settings,
+      // ignored in settings files. Ignores entries that are not normalized: relative, starting
+      // with ~, with a ".." segment, a trailing separator on a non-root, or white space at either
+      // end (v2.1.317)
+      workingDirectoriesAsGiven: z.array(z.string()).optional(),
     })
     .optional(),
 
