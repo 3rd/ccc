@@ -38,6 +38,7 @@ type ReadDirOptions =
   | BufferEncoding
   | { encoding: BufferEncoding | null; withFileTypes?: false | undefined; recursive?: boolean | undefined }
   | null;
+type ReaddirResult = Buffer[] | Dirent[] | string[];
 
 export const resolveVirtualFileSystemPaths = () => {
   const configDirOverride = process.env.CLAUDE_CONFIG_DIR;
@@ -92,21 +93,106 @@ const initializePathMappings = () => {
   mappingsInitialized = true;
 };
 
+// claude code 2.1.251+ saves and reads files as `/proc/self/fd/<n>/<name>`, where <n> is a
+// directory it opened. the checks that compare a requested path with a protected file or with
+// a virtual file or folder must see the real path instead; otherwise a Write to
+// ~/.claude/CLAUDE.md or settings.json replaces the real file, and reads miss the virtual
+// content. a descriptor that cannot be read, such as a closed one, leaves the path as given for
+// the real fs to handle.
+const DESCRIPTOR_PATH_PREFIX = /^\/proc\/self\/fd\/\d+(?=\/|$)/;
+
+const readDescriptorTarget = (descriptorPath: string) => {
+  try {
+    return fsDefault.readlinkSync(descriptorPath);
+  } catch {
+    return undefined;
+  }
+};
+
+const resolveDescriptorTarget = (filePath: string, descriptorPath: string) => {
+  const targetPath = readDescriptorTarget(descriptorPath);
+  const isLiveTargetPath =
+    targetPath !== undefined && path.isAbsolute(targetPath) && !targetPath.endsWith(" (deleted)");
+  if (!isLiveTargetPath) return undefined;
+
+  return path.normalize(path.resolve(targetPath + filePath.slice(descriptorPath.length)));
+};
+
+const resolveRequestedPath = (filePath: string) => {
+  const descriptorPath = DESCRIPTOR_PATH_PREFIX.exec(filePath)?.[0];
+  const targetPath = descriptorPath === undefined ? undefined : resolveDescriptorTarget(filePath, descriptorPath);
+
+  return targetPath ?? path.normalize(path.resolve(filePath));
+};
+
+// every check below resolves a /proc/self/fd/<n> path with its own readlink, so an fs call that
+// runs several checks resolves the path once here and passes the result to each of them. other
+// paths come back unchanged: findCategory must still see a leading ~/ to expand it. a descriptor
+// that cannot be resolved gives undefined: no virtual or protected file can be reached through
+// it, so the caller skips its checks and leaves the path to the real fs instead of letting each
+// check retry the readlink.
+const resolveDescriptorPath = <T>(filePath: T) => {
+  if (typeof filePath !== "string") return filePath;
+
+  const descriptorPath = DESCRIPTOR_PATH_PREFIX.exec(filePath)?.[0];
+  if (descriptorPath === undefined) return filePath;
+
+  return resolveDescriptorTarget(filePath, descriptorPath);
+};
+
 const mapToVirtualPath = (filePath: string) => {
   initializePathMappings();
 
-  const normalized = path.normalize(path.resolve(filePath));
+  const normalized = resolveRequestedPath(filePath);
   if (virtualToResolved.has(normalized)) return normalized;
 
   return resolvedToVirtual.get(normalized);
 };
 
-const canOverlayMissingPath = (vol: Volume, filePath: PathLike, error: unknown) =>
+const canOverlayMissingPath = (vol: Volume, filePath: PathLike | undefined, error: unknown) =>
   error instanceof Error &&
   "code" in error &&
   error.code === "ENOENT" &&
   (typeof filePath === "string" || Buffer.isBuffer(filePath)) &&
   vol.existsSync(filePath);
+
+interface DirectoryListing {
+  entries: ReaddirResult;
+  root: string;
+}
+
+// a recursive Dirent carries only its basename and keeps its folder in parentPath, and the real
+// listing names that folder through the path as requested (possibly /proc/self/fd/<n>) while the
+// volume names it by its real path, so an entry is keyed by its folder relative to its own
+// listing's root; keying by name alone merges SKILL.md files from different folders into one.
+// Buffer names are keyed by their bytes, because two Buffers holding one name are different
+// objects. parentPath is a Buffer when the folder was requested as a Buffer.
+const toDirectoryEntryKey = (entry: Buffer | Dirent | string, root: string) => {
+  if (typeof entry === "string") return entry;
+  if (Buffer.isBuffer(entry)) return entry.toString("latin1");
+
+  const name: Buffer | string = entry.name;
+  const nameKey = Buffer.isBuffer(name) ? name.toString("latin1") : name;
+
+  return path.join(path.relative(root, String(entry.parentPath)), nameKey);
+};
+
+const mergeDirectoryEntries = (real: DirectoryListing, virtual: DirectoryListing) => {
+  if (virtual.entries.length === 0) return real.entries;
+  if (real.entries.length === 0) return virtual.entries;
+
+  const entriesByKey = new Map<string, Buffer | Dirent | string>();
+
+  for (const entry of real.entries) {
+    entriesByKey.set(toDirectoryEntryKey(entry, real.root), entry);
+  }
+
+  for (const entry of virtual.entries) {
+    entriesByKey.set(toDirectoryEntryKey(entry, virtual.root), entry);
+  }
+
+  return Array.from(entriesByKey.values());
+};
 
 const monkeyPatchFS = ({
   vol,
@@ -204,7 +290,7 @@ const monkeyPatchFS = ({
 
   const normalizedArg = (filePath: unknown) => {
     if (typeof filePath !== "string") return null;
-    return path.normalize(path.resolve(normalizeArgPath(filePath)));
+    return resolveRequestedPath(normalizeArgPath(filePath));
   };
 
   const findCategory = (filePath: unknown) => {
@@ -279,7 +365,7 @@ const monkeyPatchFS = ({
   };
 
   const isVirtualRoot = (filePath: string) => {
-    const normalized = path.normalize(path.resolve(filePath));
+    const normalized = resolveRequestedPath(filePath);
     for (const root of virtualRoots) {
       if (normalized === root || normalized.startsWith(root + path.sep)) return true;
     }
@@ -287,18 +373,23 @@ const monkeyPatchFS = ({
   };
 
   const resolveVirtualPath = (filePath: string) => {
-    if (findVirtualCategory(filePath)) {
-      return path.normalize(path.resolve(filePath));
+    const lookupPath = resolveDescriptorPath(filePath);
+    if (lookupPath === undefined) return undefined;
+    if (findVirtualCategory(lookupPath)) {
+      return resolveRequestedPath(lookupPath);
     }
-    const mapped = mapToVirtualPath(filePath);
+    const mapped = mapToVirtualPath(lookupPath);
     if (mapped) return mapped;
-    if (isVirtualRoot(filePath)) return path.normalize(path.resolve(filePath));
+    if (isVirtualRoot(lookupPath)) return resolveRequestedPath(lookupPath);
     return undefined;
   };
 
-  const gatherVirtualCandidates = (filePath: string) => {
+  const gatherVirtualCandidates = (filePath: string | undefined) => {
+    const lookupPath = resolveDescriptorPath(filePath);
+    if (lookupPath === undefined) return [];
+
     const candidates = new Set<string>();
-    const resolved = path.normalize(path.resolve(filePath));
+    const resolved = resolveRequestedPath(lookupPath);
     const direct = resolveVirtualPath(resolved);
     if (direct) candidates.add(direct);
     if (vol.existsSync(resolved)) candidates.add(resolved);
@@ -359,14 +450,16 @@ const monkeyPatchFS = ({
   };
 
   fsDefault.readFileSync = function (filePath: PathLike | number, options?: ReadFileSyncOptions) {
+    const lookupPath = resolveDescriptorPath(filePath);
+
     // check if this is a CLAUDE.md file read that should be intercepted
-    if (
+    const isOptedOutClaudeMdRead =
       disableParentClaudeMds &&
       workingDirectory &&
-      typeof filePath === "string" &&
-      path.basename(filePath) === "CLAUDE.md"
-    ) {
-      const resolvedPath = path.resolve(filePath);
+      typeof lookupPath === "string" &&
+      path.basename(lookupPath) === "CLAUDE.md";
+    if (isOptedOutClaudeMdRead) {
+      const resolvedPath = resolveRequestedPath(lookupPath);
       const resolvedWorkingDir = path.resolve(workingDirectory);
       const fileDir = path.dirname(resolvedPath);
 
@@ -380,8 +473,8 @@ const monkeyPatchFS = ({
       }
     }
 
-    if (typeof filePath === "string") {
-      const candidates = gatherVirtualCandidates(filePath);
+    if (typeof lookupPath === "string") {
+      const candidates = gatherVirtualCandidates(lookupPath);
       for (const candidate of candidates) {
         try {
           if (vol.existsSync(candidate)) {
@@ -407,13 +500,19 @@ const monkeyPatchFS = ({
     return Reflect.apply(origReadFileSync, this, [filePath, options]);
   } as typeof fsDefault.readFileSync;
   fsDefault.existsSync = function (filePath: PathLike): boolean {
-    const virtualCategory = findVirtualCategory(filePath);
+    const lookupPath = resolveDescriptorPath(filePath);
+
+    const virtualCategory = findVirtualCategory(lookupPath);
     if (virtualCategory) {
       const result = vol.existsSync(virtualCategory.normalized);
       log.vfs(`existsSync("${filePath}") => ${result} (virtual only)`);
       return result;
     }
-    if ((typeof filePath === "string" || Buffer.isBuffer(filePath)) && vol.existsSync(filePath)) return true;
+
+    const volumePath = typeof lookupPath === "string" ? resolveRequestedPath(lookupPath) : lookupPath;
+    const isInVolume = (typeof volumePath === "string" || Buffer.isBuffer(volumePath)) && vol.existsSync(volumePath);
+    if (isInVolume) return true;
+
     return Reflect.apply(origExistsSync, this, [filePath]) as boolean;
   };
 
@@ -429,14 +528,18 @@ const monkeyPatchFS = ({
     if (!isLookupPath) return null;
 
     const requestedPath = String(filePath);
-    const virtualPath = resolveVirtualPath(requestedPath);
+
+    const lookupPath = resolveDescriptorPath(requestedPath);
+    if (lookupPath === undefined) return null;
+
+    const virtualPath = resolveVirtualPath(lookupPath);
     if (virtualPath && vol.existsSync(virtualPath)) return virtualPath;
 
-    if (findVirtualCategory(requestedPath)) {
+    if (findVirtualCategory(lookupPath)) {
       throw createVirtualNotFoundError(syscall, requestedPath);
     }
 
-    const resolved = path.normalize(path.resolve(requestedPath));
+    const resolved = resolveRequestedPath(lookupPath);
     const isVirtualFile = vol.existsSync(resolved) && vol.statSync(resolved).isFile();
     return isVirtualFile ? resolved : null;
   };
@@ -509,9 +612,10 @@ const monkeyPatchFS = ({
   }
 
   fsDefault.readdirSync = function (filePath: PathLike, options?: ReaddirSyncOptions) {
-    type ReaddirResult = Buffer[] | Dirent[] | string[];
     log.vfs(`readdirSync("${filePath}") called`);
-    const virtualCategory = findVirtualCategory(filePath);
+    const lookupPath = resolveDescriptorPath(filePath);
+
+    const virtualCategory = findVirtualCategory(lookupPath);
     if (virtualCategory?.shouldReadVirtualOnly) {
       log.vfs(`${virtualCategory.category.label} dir read, yielding virtual files only`);
       try {
@@ -529,39 +633,33 @@ const monkeyPatchFS = ({
       log.vfs(`readdirSync("${filePath}") => [] (empty, virtual only)`);
       return [];
     }
+
+    const volumePath = typeof lookupPath === "string" ? resolveRequestedPath(lookupPath) : lookupPath;
+
     let realFiles: ReaddirResult = [];
     try {
       // @ts-expect-error
       realFiles = Reflect.apply(origReaddirSync, this, [filePath, options]) as ReaddirResult;
     } catch (error) {
-      if (!canOverlayMissingPath(vol, filePath, error)) {
+      if (!canOverlayMissingPath(vol, volumePath, error)) {
         throw error;
       }
     }
 
     let virtualFiles: ReaddirResult = [];
 
-    if ((typeof filePath === "string" || Buffer.isBuffer(filePath)) && vol.existsSync(filePath)) {
+    const isInVolume = (typeof volumePath === "string" || Buffer.isBuffer(volumePath)) && vol.existsSync(volumePath);
+    if (isInVolume) {
       virtualFiles = vol.readdirSync(
-        filePath,
+        volumePath,
         options as Parameters<typeof vol.readdirSync>[1],
       ) as ReaddirResult;
     }
 
-    if (virtualFiles.length === 0) return realFiles;
-    if (realFiles.length === 0) return virtualFiles;
-    const withFileTypes = typeof options === "object" && options?.withFileTypes;
-    if (withFileTypes) {
-      const fileMap = new Map<string, Dirent>();
-      for (const dirent of realFiles as Dirent[]) fileMap.set(dirent.name, dirent);
-      for (const dirent of virtualFiles as Dirent[]) fileMap.set(dirent.name, dirent);
-      return Array.from(fileMap.values());
-    }
-    const merged = new Set<Buffer | string>([
-      ...(realFiles as (Buffer | string)[]),
-      ...(virtualFiles as (Buffer | string)[]),
-    ]);
-    return Array.from(merged);
+    return mergeDirectoryEntries(
+      { entries: realFiles, root: String(filePath) },
+      { entries: virtualFiles, root: String(volumePath) },
+    );
   } as typeof fsDefault.readdirSync;
   fsDefault.readdir = function (
     filePath: PathLike,
@@ -682,14 +780,18 @@ const monkeyPatchFS = ({
 
   const isProtectedPath = (filePath: unknown) => {
     if (typeof filePath !== "string") return false;
-    const normalized = path.normalize(path.resolve(filePath));
+
+    const lookupPath = resolveDescriptorPath(filePath);
+    if (lookupPath === undefined) return false;
+
+    const normalized = resolveRequestedPath(lookupPath);
     const { settingsJsonPath, claudeMdPath } = resolveVirtualFileSystemPaths();
     const isVirtualConfigFile = normalized === settingsJsonPath || normalized === claudeMdPath;
     if (isVirtualConfigFile) {
       log.vfs(`WRITE BLOCKED: Protected file "${filePath}"`);
       return true;
     }
-    const virtualCategory = findCategory(filePath);
+    const virtualCategory = findCategory(lookupPath);
     if (virtualCategory?.category.writeBlock) {
       log.vfs(`WRITE BLOCKED: ${virtualCategory.category.label} directory "${filePath}"`);
       return true;
@@ -758,12 +860,14 @@ const monkeyPatchFS = ({
     data: any,
     options?: any,
   ) {
-    const absorbed = absorbedWriteTarget(filePath);
+    const lookupPath = resolveDescriptorPath(filePath);
+
+    const absorbed = absorbedWriteTarget(lookupPath);
     if (absorbed) {
       absorbWrite(absorbed, data, options);
       return;
     }
-    if (isProtectedPath(filePath)) {
+    if (isProtectedPath(lookupPath)) {
       throw createPermissionError("open", String(filePath));
     }
     return Reflect.apply(origWriteFileSync, this, [filePath, data, options]);
@@ -783,14 +887,16 @@ const monkeyPatchFS = ({
     }
     const cb = callback || (() => {});
 
-    const absorbed = absorbedWriteTarget(filePath);
+    const lookupPath = resolveDescriptorPath(filePath);
+
+    const absorbed = absorbedWriteTarget(lookupPath);
     if (absorbed) {
       absorbWrite(absorbed, data, optionsOrCallback);
       process.nextTick(() => cb(null));
       return;
     }
 
-    if (isProtectedPath(filePath)) {
+    if (isProtectedPath(lookupPath)) {
       const error = createPermissionError("open", String(filePath));
       process.nextTick(() => cb(error));
       return;
@@ -892,14 +998,20 @@ const monkeyPatchFS = ({
 
   const origRenameSync = fsDefault.renameSync;
   fsDefault.renameSync = function (this: typeof fsDefault, oldPath: PathLike, newPath: PathLike) {
-    const absorbed = absorbedWriteTarget(newPath);
-    if (absorbed && !isProtectedPath(oldPath)) {
+    const lookupOldPath = resolveDescriptorPath(oldPath);
+    const lookupNewPath = resolveDescriptorPath(newPath);
+    const absorbed = absorbedWriteTarget(lookupNewPath);
+    const isAbsorbedRename = absorbed && !isProtectedPath(lookupOldPath);
+    if (isAbsorbedRename) {
       absorbRename(String(oldPath), absorbed);
       return;
     }
-    if (isProtectedPath(oldPath) || isProtectedPath(newPath)) {
+
+    const isProtectedRename = isProtectedPath(lookupOldPath) || isProtectedPath(lookupNewPath);
+    if (isProtectedRename) {
       throw createPermissionError("rename", String(oldPath));
     }
+
     return Reflect.apply(origRenameSync, this, [oldPath, newPath]);
   } as typeof fsDefault.renameSync;
 
@@ -912,8 +1024,11 @@ const monkeyPatchFS = ({
   ) {
     const cb = callback || (() => {});
 
-    const absorbed = absorbedWriteTarget(newPath);
-    if (absorbed && !isProtectedPath(oldPath)) {
+    const lookupOldPath = resolveDescriptorPath(oldPath);
+    const lookupNewPath = resolveDescriptorPath(newPath);
+    const absorbed = absorbedWriteTarget(lookupNewPath);
+    const isAbsorbedRename = absorbed && !isProtectedPath(lookupOldPath);
+    if (isAbsorbedRename) {
       try {
         absorbRename(String(oldPath), absorbed);
       } catch (error: unknown) {
@@ -924,7 +1039,8 @@ const monkeyPatchFS = ({
       return;
     }
 
-    if (isProtectedPath(oldPath) || isProtectedPath(newPath)) {
+    const isProtectedRename = isProtectedPath(lookupOldPath) || isProtectedPath(lookupNewPath);
+    if (isProtectedRename) {
       const error = createPermissionError("rename", String(oldPath));
       process.nextTick(() => cb(error));
       return;
@@ -987,14 +1103,16 @@ const monkeyPatchFS = ({
             return handle.readFile(options);
           }
           if (typeof filePath === "string") {
-            for (const candidate of gatherVirtualCandidates(filePath)) {
+            const lookupPath = resolveDescriptorPath(filePath);
+
+            for (const candidate of gatherVirtualCandidates(lookupPath)) {
               if (vol.existsSync(candidate)) {
                 log.vfs(`fs.promises.readFile("${filePath}") => virtual (${candidate})`);
                 return readVirtualFileSync(candidate, options);
               }
             }
 
-            if (findVirtualCategory(filePath)) {
+            if (findVirtualCategory(lookupPath)) {
               const error = new Error(
                 `ENOENT: no such file or directory, open '${filePath}'`,
               ) as NodeJS.ErrnoException;
@@ -1015,12 +1133,15 @@ const monkeyPatchFS = ({
       const origPromisesOpen = fsDefault.promises.open.bind(fsDefault.promises);
       Object.defineProperty(fsDefault.promises, "open", {
         async value(filePath: PathLike, flags?: number | string, mode?: number | string) {
-          if (isWriteFlag(flags) && isProtectedPath(filePath)) {
+          const lookupPath = resolveDescriptorPath(filePath);
+
+          const isProtectedWrite = isWriteFlag(flags) && isProtectedPath(lookupPath);
+          if (isProtectedWrite) {
             throw createPermissionError("open", String(filePath));
           }
-          if (typeof filePath === "string") {
-            const virtualPath = resolveVirtualPath(filePath);
-            const mustVirtualize = Boolean(findVirtualCategory(filePath));
+          if (typeof lookupPath === "string") {
+            const virtualPath = resolveVirtualPath(lookupPath);
+            const mustVirtualize = Boolean(findVirtualCategory(lookupPath));
 
             if (virtualPath && (vol.existsSync(virtualPath) || mustVirtualize)) {
               if (mustVirtualize) {
@@ -1133,12 +1254,14 @@ const monkeyPatchFS = ({
     const origPromisesWriteFile = fsDefault.promises.writeFile;
     Object.defineProperty(fsDefault.promises, "writeFile", {
       async value(filePath: PathLike, data: any, options?: any) {
-        const absorbed = absorbedWriteTarget(filePath);
+        const lookupPath = resolveDescriptorPath(filePath);
+
+        const absorbed = absorbedWriteTarget(lookupPath);
         if (absorbed) {
           absorbWrite(absorbed, data, options);
           return;
         }
-        if (isProtectedPath(filePath)) {
+        if (isProtectedPath(lookupPath)) {
           throw createPermissionError("open", String(filePath));
         }
         return origPromisesWriteFile.call(this, filePath, data, options);
@@ -1186,14 +1309,20 @@ const monkeyPatchFS = ({
     const origPromisesRename = fsDefault.promises.rename;
     Object.defineProperty(fsDefault.promises, "rename", {
       async value(oldPath: PathLike, newPath: PathLike) {
-        const absorbed = absorbedWriteTarget(newPath);
-        if (absorbed && !isProtectedPath(oldPath)) {
+        const lookupOldPath = resolveDescriptorPath(oldPath);
+        const lookupNewPath = resolveDescriptorPath(newPath);
+        const absorbed = absorbedWriteTarget(lookupNewPath);
+        const isAbsorbedRename = absorbed && !isProtectedPath(lookupOldPath);
+        if (isAbsorbedRename) {
           absorbRename(String(oldPath), absorbed);
           return;
         }
-        if (isProtectedPath(oldPath) || isProtectedPath(newPath)) {
+
+        const isProtectedRename = isProtectedPath(lookupOldPath) || isProtectedPath(lookupNewPath);
+        if (isProtectedRename) {
           throw createPermissionError("rename", String(oldPath));
         }
+
         return origPromisesRename.call(this, oldPath, newPath);
       },
       writable: true,
@@ -1218,27 +1347,32 @@ const monkeyPatchFS = ({
         if (typeof filePath === "string" && filePath.includes(".claude")) {
           log.vfs(`fs.promises.readdir("${filePath}") called`);
         }
-        if (typeof filePath === "string") {
-          for (const candidate of gatherVirtualCandidates(filePath)) {
-            if (vol.existsSync(candidate)) {
-              log.vfs(`fs.promises.readdir("${filePath}") => virtual (${candidate})`);
 
-              const virtualCategory = findVirtualCategory(filePath);
-              if (!virtualCategory?.shouldReadVirtualOnly) {
-                try {
-                  await origPromisesReaddir(filePath, options ?? undefined);
-                } catch (error) {
-                  if (!canOverlayMissingPath(vol, candidate, error)) {
-                    throw error;
-                  }
-                }
-              }
+        const lookupPath = resolveDescriptorPath(filePath);
+        const volumePath = typeof lookupPath === "string" ? resolveRequestedPath(lookupPath) : undefined;
+        const isInVolume = volumePath !== undefined && vol.existsSync(volumePath);
+        if (!isInVolume) return origPromisesReaddir(filePath, options);
 
-              return volPromises.readdir(candidate as any, options as any);
-            }
-          }
+        log.vfs(`fs.promises.readdir("${filePath}") => virtual (${volumePath})`);
+
+        if (findVirtualCategory(lookupPath)?.shouldReadVirtualOnly) {
+          return volPromises.readdir(volumePath, options);
         }
-        return origPromisesReaddir.call(this, filePath, options as any);
+
+        let realFiles: ReaddirResult = [];
+
+        try {
+          realFiles = await origPromisesReaddir(filePath, options);
+        } catch (error) {
+          if (!canOverlayMissingPath(vol, volumePath, error)) throw error;
+        }
+
+        const virtualFiles = await volPromises.readdir(volumePath, options);
+
+        return mergeDirectoryEntries(
+          { entries: realFiles, root: String(filePath) },
+          { entries: virtualFiles, root: volumePath },
+        );
       },
       writable: true,
       configurable: true,
@@ -1404,57 +1538,68 @@ const monkeyPatchFS = ({
     (fsDefault as Record<string, unknown>)[method] = wrapped;
   }
 
-  if (fsDefault.openSync) {
-    const origOpenSync = fsDefault.openSync;
-    (fsDefault as any).openSync = function (
-      filePath: PathLike,
-      flags: number | string,
-      mode?: number | string,
-    ) {
-      if (typeof filePath === "string") {
-        log.vfs(`openSync("${filePath}", flags=${flags}) called`);
-        if (isWriteFlag(flags) && isProtectedPath(filePath)) {
-          throw createPermissionError("open", String(filePath));
-        }
+  const origOpenSync = fsDefault.openSync;
 
-        const virtualPath = resolveVirtualPath(filePath);
-        if (virtualPath && vol.existsSync(virtualPath)) {
-          try {
-            const content = vol.readFileSync(virtualPath);
-            const fd = nextVirtualFd++;
-            virtualFileDescriptors.set(fd, {
-              path: virtualPath,
-              content,
-              position: 0,
-            });
-            log.vfs(`Created virtual file descriptor ${fd} for "${filePath}" -> virtual "${virtualPath}"`);
-            log.vfs(
-              `  Virtual content size: ${Buffer.isBuffer(content) ? content.length : content.toString().length} bytes`,
-            );
-            return fd;
-          } catch (error) {
-            log.vfs(`Failed to create virtual FD for "${filePath}": ${error}`);
-          }
-        }
+  // lookupPath must be resolveDescriptorPath(filePath): the checks use it, while the native open,
+  // logs, and errors keep filePath as requested
+  const openSyncWithLookup = function (
+    this: unknown,
+    {
+      filePath,
+      lookupPath,
+      flags,
+      mode,
+    }: { filePath: PathLike; lookupPath: PathLike | undefined; flags: number | string; mode?: number | string },
+  ) {
+    if (typeof filePath === "string") {
+      log.vfs(`openSync("${filePath}", flags=${flags}) called`);
 
-        if (findVirtualCategory(filePath)) {
-          const error = new Error(
-            `ENOENT: no such file or directory, open '${filePath}'`,
-          ) as NodeJS.ErrnoException;
-          error.code = "ENOENT";
-          error.path = filePath;
-          throw error;
-        }
+      const isProtectedWrite = isWriteFlag(flags) && isProtectedPath(lookupPath);
+      if (isProtectedWrite) {
+        throw createPermissionError("open", String(filePath));
+      }
 
-        if (filePath.includes(".claude/commands")) {
-          log.vfs(`Commands dir open as file descriptor`);
+      const virtualPath = typeof lookupPath === "string" ? resolveVirtualPath(lookupPath) : undefined;
+      if (virtualPath && vol.existsSync(virtualPath)) {
+        try {
+          const content = vol.readFileSync(virtualPath);
+          const fd = nextVirtualFd++;
+          virtualFileDescriptors.set(fd, {
+            path: virtualPath,
+            content,
+            position: 0,
+          });
+          log.vfs(`Created virtual file descriptor ${fd} for "${filePath}" -> virtual "${virtualPath}"`);
+          log.vfs(
+            `  Virtual content size: ${Buffer.isBuffer(content) ? content.length : content.toString().length} bytes`,
+          );
+          return fd;
+        } catch (error) {
+          log.vfs(`Failed to create virtual FD for "${filePath}": ${error}`);
         }
       }
 
-      log.vfs(`Opening real file: "${filePath}"`);
-      return Reflect.apply(origOpenSync, this, [filePath, flags, mode]);
-    };
-  }
+      if (findVirtualCategory(lookupPath)) {
+        const error = new Error(
+          `ENOENT: no such file or directory, open '${filePath}'`,
+        ) as NodeJS.ErrnoException;
+        error.code = "ENOENT";
+        error.path = filePath;
+        throw error;
+      }
+
+      if (filePath.includes(".claude/commands")) {
+        log.vfs(`Commands dir open as file descriptor`);
+      }
+    }
+
+    log.vfs(`Opening real file: "${filePath}"`);
+    return Reflect.apply(origOpenSync, this, [filePath, flags, mode]);
+  };
+
+  (fsDefault as any).openSync = function (filePath: PathLike, flags: number | string, mode?: number | string) {
+    return openSyncWithLookup.call(this, { filePath, lookupPath: resolveDescriptorPath(filePath), flags, mode });
+  };
 
   if (fsDefault.open) {
     const origOpen = fsDefault.open;
@@ -1482,15 +1627,19 @@ const monkeyPatchFS = ({
       }
       const finalCallback = cb || (() => {});
 
-      if (isWriteFlag(flags) && isProtectedPath(filePath)) {
+      const lookupPath = resolveDescriptorPath(filePath);
+
+      const isProtectedWrite = isWriteFlag(flags) && isProtectedPath(lookupPath);
+      if (isProtectedWrite) {
         const error = createPermissionError("open", String(filePath));
         process.nextTick(() => finalCallback(error));
         return;
       }
 
-      if (typeof filePath === "string" && resolveVirtualPath(filePath)) {
+      const isVirtualOpen = typeof lookupPath === "string" && resolveVirtualPath(lookupPath) !== undefined;
+      if (isVirtualOpen) {
         try {
-          const fd = fsDefault.openSync(filePath, flags, mode);
+          const fd = openSyncWithLookup.call(fsDefault, { filePath, lookupPath, flags, mode });
           process.nextTick(() => finalCallback(null, fd));
         } catch (error) {
           process.nextTick(() => finalCallback(error as NodeJS.ErrnoException));

@@ -301,6 +301,8 @@ const baseSettingsSchema = z.object({
   disableSkillShellExecution: z.boolean().optional(),
   // remove bundled skills + workflows entirely (built-in slash commands stay typable but hidden from the model); plugins and .claude/ skills+commands unaffected; equivalent to CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1 (v2.1.170)
   disableBundledSkills: z.boolean().optional(),
+  // Windows only: keep each Bash command in one argument to bash so endpoint security tools see it whole; commands of about 7,000 chars or more may arrive cut short; honored only from managed settings (v2.1.319)
+  disableWindowsBashCommandSplit: z.boolean().optional(),
   // default shell for ! commands: bash (default) or powershell (v2.1.85)
   defaultShell: z.enum(["bash", "powershell"]).optional(),
   // show a diff of files a Bash command changed (PostToolUse Bash hooks get the changed-file list in tool_response); default on; only user/flag/policy settings can enable it outside auto and bypassPermissions (v2.1.269)
@@ -833,6 +835,11 @@ const baseSettingsSchema = z.object({
       disableBypassPermissionsMode: z.literal("disable").optional(),
       // disable auto mode (v2.1.71, managed settings)
       disableAutoMode: z.enum(["disable"]).optional(),
+      // deny a tool call that would wait on a permission prompt and continue the turn, in every
+      // session kind including subagents and teammates; read from user settings, --settings (CCC's
+      // cli.settings) and managed settings, ignored in project and local settings; true in any of
+      // those sources wins (v2.1.319)
+      denyInsteadOfPrompting: z.boolean().optional(),
       // refuse file-tool reads (Read, Grep, Glob, LSP) outside the working directories in every
       // permission mode; true in any settings source wins (v2.1.257)
       blockReadsOutsideWorkingDirectories: z.boolean().optional(),

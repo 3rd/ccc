@@ -434,6 +434,41 @@ console.log("ok");
     }
   });
 
+  test("recognizes vm context globals so workflow and mod sandboxes start under Node", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-vm-context-"));
+
+    try {
+      writeFileSync(join(directory, "preamble.mjs"), buildGraphPreambleModule([]));
+      writeFileSync(join(directory, "guard.mjs"), `import "./preamble.mjs";
+import{types as d}from"util";import{isContext as c}from"vm";function Bp(){return!0}var{isProxy:u}=d,s=c,r=typeof Bun>"u"?void 0:__cccBun.ant?.isVmContextGlobal,f=Bp(),{add:i,has:a}=WeakSet.prototype,{apply:n}=Reflect,o=new WeakSet;function eYi(t,e){if(e!==void 0&&f&&!s(e)&&r?.(e)!==!0)throw Error("Refusing to make a node:vm context: this Bun cannot recognize a context's global, so sandbox checks could be bypassed.");if(n(i,o,[t]),e!==void 0)n(i,o,[e])}function x(t){return n(a,o,[t])}function fd(t){return u(t)||x(t)||typeof t==="object"&&t!==null&&(s(t)||r?.(t)===!0)}
+export{eYi,fd};
+`);
+      const scriptPath = join(directory, "sandbox.mjs");
+      writeFileSync(scriptPath, `import "./preamble.mjs";
+import{eYi,fd}from"./guard.mjs";import*as o from"vm";var m=o.runInContext,d=EvalError;function x6(e,t){let n=o.createContext(e,t),r;try{r=m("this",n)}catch(a){if(!(a instanceof d))throw a;r=void 0}return eYi(n,r),n}
+x6({__proto__:null},{codeGeneration:{strings:!1,wasm:!1}});
+let otherGlobal=o.runInContext("this",o.createContext({}));
+console.log(JSON.stringify({otherContextGlobal:fd(otherGlobal),plainObject:fd({}),hostGlobal:fd(globalThis)}));
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ otherContextGlobal: true, plainObject: false, hostGlobal: false });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("answers event-logging requests through Bun.FetchSession with an empty success under Node", () => {
     const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-fetch-session-"));
 

@@ -143,7 +143,7 @@ console.log(JSON.stringify({
         virtualOnly: ["CLAUDE.md", "settings.json", "skills"],
         promisesVirtualOnly: ["CLAUDE.md", "settings.json", "skills"],
         merged: ["real.txt", "CLAUDE.md", "settings.json", "skills"],
-        promisesAfterMerge: ["CLAUDE.md", "settings.json", "skills"],
+        promisesAfterMerge: ["real.txt", "CLAUDE.md", "settings.json", "skills"],
         callbackMerged: ["real.txt", "CLAUDE.md", "settings.json", "skills"],
         entries: [
           { name: "real.txt", isDirectory: false },
@@ -151,6 +151,42 @@ console.log(JSON.stringify({
           { name: "settings.json", isDirectory: false },
           { name: "skills", isDirectory: true },
         ],
+      });
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
+  test("readdir keeps same-named files from different folders and lists Buffer names once", async () => {
+    const home = await mkdtemp(join(tmpdir(), "ccc-vfs-readdir-home-"));
+
+    try {
+      await mkdir(join(home, ".claude", "real"), { recursive: true });
+      await writeFile(join(home, ".claude", "real", "SKILL.md"), "fixture");
+      await writeFile(join(home, ".claude", "settings.json"), "{}");
+
+      const result = await runInVfs(
+        home,
+        `
+const claudeDirectory = join(homedir(), ".claude");
+const skillFiles = (entries) =>
+  entries
+    .filter((entry) => entry.name === "SKILL.md")
+    .map((entry) => join(entry.parentPath, entry.name).slice(claudeDirectory.length + 1))
+    .sort();
+console.log(JSON.stringify({
+  promisesRecursive: skillFiles(await fs.promises.readdir(claudeDirectory, { recursive: true, withFileTypes: true })),
+  syncRecursive: skillFiles(fs.readdirSync(claudeDirectory, { recursive: true, withFileTypes: true })),
+  bufferNames: (await fs.promises.readdir(claudeDirectory, { encoding: "buffer" })).map(String).sort(),
+}));
+`,
+        "node",
+      );
+
+      expect(result).toEqual({
+        promisesRecursive: ["real/SKILL.md", "skills/probe/SKILL.md"],
+        syncRecursive: ["real/SKILL.md", "skills/probe/SKILL.md"],
+        bufferNames: ["CLAUDE.md", "real", "settings.json", "skills"],
       });
     } finally {
       await rm(home, { force: true, recursive: true });
@@ -243,6 +279,38 @@ console.log(JSON.stringify({
       await rm(home, { force: true, recursive: true });
     }
   });
+
+  test.if(process.platform === "linux")(
+    "folders opened as descriptors list their real entries and find virtual files like their paths do",
+    async () => {
+      const home = await mkdtemp(join(tmpdir(), "ccc-vfs-fs-statics-home-"));
+
+      try {
+        await writeFile(join(home, "real.txt"), "fixture");
+        await mkdir(join(home, ".claude"));
+
+        const result = await runInVfs(
+          home,
+          `
+const throughDescriptor = (folder) => "/proc/self/fd/" + fs.openSync(folder, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+const homeDescriptor = throughDescriptor(homedir());
+const claudeDescriptor = throughDescriptor(join(homedir(), ".claude"));
+console.log(JSON.stringify({
+  homeEntries: await fs.promises.readdir(homeDescriptor),
+  claudeEntries: fs.readdirSync(claudeDescriptor).sort(),
+  claudeMdExists: fs.existsSync(claudeDescriptor + "/CLAUDE.md"),
+}));
+`,
+        );
+
+        expect(result.homeEntries).toContain("real.txt");
+        expect(result.claudeEntries).toEqual(["CLAUDE.md", "settings.json", "skills"]);
+        expect(result.claudeMdExists).toBe(true);
+      } finally {
+        await rm(home, { force: true, recursive: true });
+      }
+    },
+  );
 
   test("stat and lstat report the real parent folders of virtual files", async () => {
     const home = await mkdtemp(join(tmpdir(), "ccc-vfs-fs-statics-home-"));

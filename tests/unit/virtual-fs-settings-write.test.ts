@@ -113,4 +113,37 @@ console.log(JSON.stringify(codes));
       await rm(home, { force: true, recursive: true });
     }
   });
+
+  test.if(process.platform === "linux")(
+    "saves through an open ~/.claude folder are refused or absorbed like saves by path",
+    async () => {
+      const home = await mkdtemp(join(tmpdir(), "ccc-vfs-settings-write-home-"));
+      try {
+        const result = await runInVfs(
+          home,
+          `
+const folder = fs.openSync(join(homedir(), ".claude"), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+const throughFolder = (name) => "/proc/self/fd/" + folder + "/" + name;
+let claudeMdCode;
+
+try {
+  fs.writeFileSync(throughFolder("CLAUDE.md"), "overwritten");
+} catch (error) {
+  claudeMdCode = error.code;
+}
+
+fs.writeFileSync(throughFolder("settings.json.tmp.folder"), JSON.stringify({ step: "folder" }));
+await fs.promises.rename(throughFolder("settings.json.tmp.folder"), throughFolder("settings.json"));
+const afterRename = JSON.parse(fs.readFileSync(throughFolder("settings.json"), "utf8")).step;
+console.log(JSON.stringify({ claudeMdCode, afterRename }));
+`,
+        );
+
+        expect(result).toEqual({ claudeMdCode: "EACCES", afterRename: "folder" });
+        expect(await readdir(join(home, ".claude"))).toEqual([]);
+      } finally {
+        await rm(home, { force: true, recursive: true });
+      }
+    },
+  );
 });
