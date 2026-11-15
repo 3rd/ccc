@@ -35,6 +35,10 @@ const DIAGNOSTIC_FLAGS = [
   "--timing",
 ];
 
+// the command claude code names in its "Resume this session with:" exit hint; claude code ignores a
+// value that is not one bare command word (/^\w[\w-]*$/), so it cannot carry flags such as --profile
+const RESUME_HINT_COMMAND = "ccc";
+
 const readRuntimeHostPid = () => {
   const runtimeHostPid = Number(process.env[RUNTIME_HOST_PID_ENV]);
   const isValidRuntimeHostPid = Number.isSafeInteger(runtimeHostPid) && runtimeHostPid > 0;
@@ -279,7 +283,7 @@ const run = async () => {
     }
   }
 
-  const { finishLookupRecord, startLookupRecord } = await import("@/vfs/ns-vfs");
+  const { finishLookupRecord, NOTIFY_SUPERVISOR_HANDOFF_ENV, startLookupRecord } = await import("@/vfs/ns-vfs");
   // file timestamps come from a coarse clock that can trail this one by a few milliseconds
   const preparationStartedAtNs = BigInt(Date.now() - 100) * 1_000_000n;
   const isRecordingLookups = preparationKey !== undefined && (await startLookupRecord());
@@ -730,6 +734,11 @@ const run = async () => {
     if (process.env.USE_BUILTIN_RIPGREP === undefined) {
       process.env.USE_BUILTIN_RIPGREP = "0";
       log.debug("LAUNCHER", "Native mode: set USE_BUILTIN_RIPGREP=0 (using system ripgrep)");
+    }
+
+    if (process.env.CLAUDE_CODE_RESUME_HINT_COMMAND === undefined) {
+      process.env.CLAUDE_CODE_RESUME_HINT_COMMAND = RESUME_HINT_COMMAND;
+      log.debug("LAUNCHER", `Native mode: set CLAUDE_CODE_RESUME_HINT_COMMAND=${RESUME_HINT_COMMAND} (exit hint resumes through ccc)`);
     }
     const certEnv = (await import("@/native/cert-env")).applyNativeCertEnvDefaults();
     if (certEnv) {
@@ -1351,6 +1360,7 @@ const run = async () => {
   delete runtimePayload.environment[RUNTIME_HOST_PID_ENV];
   delete runtimePayload.environment.CCC_BUN_EXEC_PATH;
   delete runtimePayload.environment.CCC_PATCH_CACHE_SALT;
+  delete runtimePayload.environment[NOTIFY_SUPERVISOR_HANDOFF_ENV];
 
   const shouldCachePreparation = isRecordingLookups && preparationKey !== undefined;
   if (shouldCachePreparation) {

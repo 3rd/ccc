@@ -340,6 +340,7 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
     "agent",
     "allowed-tools",
     "background",
+    "compatibility",
     "context",
     "description",
     "disable-model-invocation",
@@ -391,6 +392,11 @@ const normalizeSkillDefinition = (definition: SkillDefinition, skillName: string
   if (definition.isolation) {
     frontmatter.isolation = definition.isolation;
   }
+
+  if (definition.compatibility) {
+    frontmatter.compatibility = definition.compatibility;
+  }
+
   // `false` is meaningful: fork skills run in the background by default since 2.1.218,
   // and `background: false` is the opt-out that keeps the caller waiting in-line.
   if (definition.background !== undefined) {

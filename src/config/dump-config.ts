@@ -2,6 +2,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import type { Context } from "@/context/Context";
 import {
+  FEATURE_FLAG_CACHE_KEYS,
   prepareVirtualFileSystem,
   resolveVirtualFileSystemPaths,
   type VirtualFileSystemOptions,
@@ -15,7 +16,6 @@ const isInsideDirectory = (directory: string, filePath: string) => {
 
 const REDACTED_VALUE = "[redacted]";
 const SECRET_NAME_PATTERN = /token|key|secret|password|auth|credential|cookie/i;
-const CCC_MANAGED_CLAUDE_STATE_KEYS = ["cachedGrowthBookFeatures"];
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -45,7 +45,7 @@ const redactSettingsJson = (settingsJson: string) => {
 };
 
 const selectManagedClaudeState = (claudeStateJson: string, claudeStateKeys: string[]) => {
-  const managedKeys = new Set([...CCC_MANAGED_CLAUDE_STATE_KEYS, ...claudeStateKeys]);
+  const managedKeys = new Set([...FEATURE_FLAG_CACHE_KEYS, ...claudeStateKeys]);
   const managedState = Object.fromEntries(
     Object.entries(parseJsonObject(claudeStateJson, "~/.claude.json")).filter(([key]) => managedKeys.has(key)),
   );

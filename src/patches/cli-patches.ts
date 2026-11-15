@@ -15,7 +15,7 @@ const GROWTHBOOK_OVERRIDE_METHODS = [
   { head: "getEnvironmentOverrides(){", nativeName: "__cccNativeEnvironmentOverrides" },
   { head: "getAllFeatures(){", nativeName: "__cccNativeAllFeatures" },
 ];
-const GROWTHBOOK_SOURCE_READER_RE = /getFeatureValueWithSource\(([\w$]+),[\w$]+\)\{/g;
+const GROWTHBOOK_SOURCE_READER_RE = /getFeatureValueWithSource\(([\w$]+),[\w$]+(?:,\{[^{}()]*\}=\{\})?\)\{/g;
 
 const logFeatureFlagOverride = (key: string, value: string) =>
   `if(process.env.CCC_DEBUG_FEATURE_FLAGS)console.error("[ccc] featureFlag "+String(${key})+" -> "+JSON.stringify(${value}));`;
@@ -102,7 +102,7 @@ const devModsAfterHostBind: RuntimePatch = {
   name: "dev-mods-after-host-bind",
   fn: (content) => {
     const re =
-      /(requireHost\(\)\{if\(this\.host===null\)throw Error\("ReplSessionScope: used before its screen bound a host"\);return this\.host\}connect\(\)\{if\(this\.connected\|\|this\.disposed\)return;if\(this\.connected=!0,[\w$]+\(this\.sessionBinding\),[\w$]+\.set\(this\.sessionPlugins\),)([\w$]+)\(\),/;
+      /(requireHost\(\)\{if\(this\.host===null\)throw Error\("ReplSessionScope: used before its screen bound a host"\);return this\.host\}connect\(\)\{if\(this\.connected\|\|this\.disposed\)return;if\(this\.connected=!0,(?:[\w$]+\(\),)?[\w$]+\(this\.sessionBinding\),[\w$]+\.set\(this\.sessionPlugins\),)([\w$]+)\(\),/;
     return content.replace(
       re,
       (_match, prefix, restore) =>

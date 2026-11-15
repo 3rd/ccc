@@ -510,6 +510,15 @@ const runMCP = async (mcpName: string) => {
   }
 };
 
+const getRunnerFailureExitCode = (mode: string, id: string) => {
+  if (mode === "hook") return getFailureExitCode(getHookIdEventName(id));
+  if (mode !== "hook-batch") return 2;
+
+  const [firstEntry] = decodeBatchEntries(id);
+
+  return getFailureExitCode(firstEntry && getHookIdEventName(firstEntry.hookId));
+};
+
 const main = async () => {
   const mode = process.argv[2];
   const id = process.argv[3];
@@ -552,7 +561,8 @@ const main = async () => {
     } else {
       console.error(`${mode.toUpperCase()} runner failed:`, error);
     }
-    process.exit(2);
+
+    process.exit(getRunnerFailureExitCode(mode, id));
   }
 };
 

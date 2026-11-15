@@ -26,6 +26,7 @@ const settings = JSON.parse(fs.readFileSync(join(homedir(), ".claude", "settings
 console.log(JSON.stringify({
   leftArrowOpensAgents: state.leftArrowOpensAgents,
   cachedFlag: state.cachedGrowthBookFeatures?.tengu_test_flag,
+  renamedCacheFlag: state.cachedFeatureFlags?.tengu_test_flag,
   claudeStateInSettings: "claudeState" in settings,
   featureFlagsInSettings: "featureFlags" in settings,
 }));
@@ -44,6 +45,7 @@ console.log(JSON.stringify({
       expect(JSON.parse(stdout)).toEqual({
         leftArrowOpensAgents: false,
         cachedFlag: true,
+        renamedCacheFlag: true,
         claudeStateInSettings: false,
         featureFlagsInSettings: false,
       });

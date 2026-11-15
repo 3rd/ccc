@@ -26,6 +26,7 @@ export const NS_ACTIVE_ENV = "CCC_NS_VFS_ACTIVE";
 export const NS_KILL_SWITCH_ENV = "CCC_NS_VFS";
 export const NOTIFY_SOCKET_ENV = "AGENTS_VFS_NOTIFY_SOCKET";
 export const NOTIFY_TOKEN_ENV = "AGENTS_VFS_NOTIFY_TOKEN";
+export const NOTIFY_SUPERVISOR_HANDOFF_ENV = "CCC_NOTIFY_SUPERVISOR_SOCKET";
 const NOTIFY_TOKEN_HEX_BYTES = 64;
 const NOTIFY_REGISTER_TIMEOUT_MS = 30_000;
 
@@ -35,6 +36,19 @@ const getNotifySupervisor = (env: NodeJS.ProcessEnv) => {
   if (!socketName || !token || token.length !== NOTIFY_TOKEN_HEX_BYTES) return;
 
   return { socketName, token };
+};
+
+// A socket and token alone do not make a supervisor this launch's own: inside an agent session, change
+// capture copies the session's AGENTS_VFS_* keys into the environment a Node or Bun process passes to a
+// launcher it starts, such as a test or probe, even an explicitly cleared one. Registering with that
+// supervisor would add this launch's files to the session's table, where they stay, served at their
+// paths, until the session ends.
+const getHandedOverNotifySupervisor = (env: NodeJS.ProcessEnv) => {
+  const supervisor = getNotifySupervisor(env);
+  const isHandedOver = supervisor !== undefined && env[NOTIFY_SUPERVISOR_HANDOFF_ENV] === supervisor.socketName;
+  if (!isHandedOver) return;
+
+  return supervisor;
 };
 
 const unshareFlags = (): string[] => [
@@ -149,10 +163,11 @@ const sendNotifyBatch = (socketName: string, payload: Buffer) =>
 /**
  * Hands the virtual files to the outer launcher's notification supervisor instead of mounting them.
  * Resolves only after the supervisor acknowledged the batch, so the files are resolvable once the
- * caller's await returns. Returns false when no supervisor is configured, which is the standalone-ccc path.
+ * caller's await returns. Returns false when the outer launcher handed over no supervisor, which is the
+ * standalone-ccc path.
  */
 const registerWithNotifySupervisor = async (roots: string[], files: NsVfsFile[]) => {
-  const supervisor = getNotifySupervisor(process.env);
+  const supervisor = getHandedOverNotifySupervisor(process.env);
   if (!supervisor) return false;
   const { socketName, token } = supervisor;
 
@@ -197,10 +212,11 @@ const requestNotifySupervisor = (socketName: string, payload: Buffer) => {
 
 /**
  * Asks the notify supervisor to record every path this process looks up from now on, and resolves once
- * recording has started. Returns false when no supervisor is configured or it did not acknowledge.
+ * recording has started. Returns false when the outer launcher handed over no supervisor or it did not
+ * acknowledge.
  */
 export const startLookupRecord = async () => {
-  const supervisor = getNotifySupervisor(process.env);
+  const supervisor = getHandedOverNotifySupervisor(process.env);
   if (!supervisor) return false;
 
   try {
@@ -220,7 +236,7 @@ export const startLookupRecord = async () => {
 const parseLookup = (entry: string) => ({ isListing: entry.startsWith("L"), path: entry.slice(1) });
 
 export const finishLookupRecord = async () => {
-  const supervisor = getNotifySupervisor(process.env);
+  const supervisor = getHandedOverNotifySupervisor(process.env);
   if (!supervisor) return { isComplete: false, lookups: [] };
 
   try {

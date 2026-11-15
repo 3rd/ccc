@@ -62,6 +62,12 @@ export interface SkillDefinition {
   background?: boolean;
   /** Override effort level when this skill is invoked (v2.1.80). */
   effort?: "high" | "low" | "max" | "medium";
+  /**
+   * What the skill needs from the environment, such as a local tool, VPN, or server. Claude Code shows
+   * it to the model when the skill loads, only while the `tengu_expressive_island` flag is on, and
+   * ignores a value over its length limit.
+   */
+  compatibility?: string;
   /** Hook definitions scoped to this skill. */
   hooks?: HooksConfiguration;
   /**

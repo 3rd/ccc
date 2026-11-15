@@ -434,6 +434,38 @@ console.log("ok");
     }
   });
 
+  test("reports Bun.Archive as unsupported to the Projects document copy under Node", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-archive-"));
+
+    try {
+      const scriptPath = join(directory, "preamble.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+let message;async function fill(){let O={"docs/notes.md":"text"};let ce=await new __cccBun.Archive(O,{compress:"gzip"}).bytes();return ce.length}
+let outcome=await fill().catch((M)=>(message=M.message,"container_failed"));
+console.log(JSON.stringify({outcome,message}));
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+
+      const { outcome, message } = JSON.parse(result.stdout);
+      expect(outcome).toBe("container_failed");
+      expect(message).toStartWith("ccc bun shim: Archive is not supported");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("recognizes vm context globals so workflow and mod sandboxes start under Node", () => {
     const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-vm-context-"));
 

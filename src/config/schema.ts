@@ -384,7 +384,7 @@ const baseSettingsSchema = z.object({
   // false turns off syncing the plugins enabled on claude.ai; only false is honored, since the
   // feature is enabled server-side. Not read from project settings (v2.1.246)
   syncClaudeAiPlugins: z.boolean().optional(),
-  // custom per-subagent status line shown in the agent panel (v2.1.105)
+  // deprecated, no effect: subagent rows always use the default look (v2.1.105, deprecated v2.1.323)
   subagentStatusLine: z
     .object({
       type: z.literal("command"),
@@ -501,6 +501,9 @@ const baseSettingsSchema = z.object({
   // @internal controls the ProposeGoal tool (model-proposed session goals); 'auto' (default when absent) lets the model choose per proposal via ask_user, 'alwaysAsk' routes every proposal through the approval dialog, 'disabled' turns the tool off; typed /goal unaffected; consent-affecting, so read from trusted sources only (user/policy/flag) — workspace-resident project/local settings are ignored (v2.1.227)
   modelProposedGoals: z.enum(["auto", "alwaysAsk", "disabled"]).optional(),
   spinnerTipsEnabled: z.boolean().optional(),
+  // @internal show Clawd carrying the file on the progress line when a file goes to or from a
+  // connector; default false, and never shown in screen reader mode or with reduced motion (v2.1.323)
+  clawdFileProgressEnabled: z.boolean().optional(),
   // when false, disables the :emoji: shortcode typeahead in the prompt input (v2.1.218)
   emojiCompletionEnabled: z.boolean().optional(),
   spinnerTipsOverride: z
@@ -841,8 +844,15 @@ const baseSettingsSchema = z.object({
       // those sources wins (v2.1.319)
       denyInsteadOfPrompting: z.boolean().optional(),
       // refuse file-tool reads (Read, Grep, Glob, LSP) outside the working directories in every
-      // permission mode; true in any settings source wins (v2.1.257)
+      // permission mode; true in any settings source wins (v2.1.257). Also asks about a shell
+      // command that names a path outside them, in every mode, and the sandbox denies such reads (v2.1.323)
       blockReadsOutsideWorkingDirectories: z.boolean().optional(),
+      // @internal blockReadsOutsideWorkingDirectories without its hold on shell commands; read only
+      // from --settings (CCC's cli.settings) at launch, ignored in settings files and in settings sent
+      // to a running session. With it on, only the starting directory, --add-dir and the
+      // additionalDirectories of --settings count as working directories, for it and for
+      // blockWritesOutsideWorkingDirectories (v2.1.323)
+      blockFileToolReadsOutsideWorkingDirectories: z.boolean().optional(),
       // absolute folders or files that blockReadsOutsideWorkingDirectories lets through; read only
       // from --settings (CCC's cli.settings) and host-sent settings, ignored in settings files.
       // Ignores entries that are not absolute local paths, start with ~, have a ".." segment,
@@ -1072,7 +1082,8 @@ const baseSettingsSchema = z.object({
   // CCC-only: top-level keys merged into the virtual ~/.claude.json state file (not settings.json).
   // For CLI options that live in .claude.json rather than settings — e.g. leftArrowOpensAgents,
   // defaultToAgentsView — where the real state file is the store the CLI actually reads.
-  // Trust fields and cachedGrowthBookFeatures are managed by the launcher and win over entries here.
+  // Trust fields and the feature-flag caches (cachedGrowthBookFeatures, cachedFeatureFlags) are managed by
+  // the launcher and win over entries here.
   claudeState: z.record(z.string(), z.unknown()).optional(),
 
   // hooks are overwritten by launcher
@@ -1145,6 +1156,10 @@ const baseSettingsSchema = z.object({
   autoCompactEnabled: z.boolean().optional(), // default: true
   // @internal precompute the compaction summary in the background before it is needed; only applies when auto-compact is on (v2.1.179)
   precomputeCompactionEnabled: z.boolean().optional(),
+  // @internal token count at which the main conversation starts its background compaction summary,
+  // when sooner than it would by itself; read only from --settings (CCC's cli.settings), and an
+  // invalid value is ignored (v2.1.323)
+  precomputeArmTokens: z.number().int().positive().optional(),
   // false stops compaction of a long conversation while the session is idle; true does not turn it on (v2.1.290)
   idleCompaction: z.boolean().optional(),
   autoScrollEnabled: z.boolean().optional(), // default: true

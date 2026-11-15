@@ -376,28 +376,40 @@ console.log(JSON.stringify({
     }
   });
 
-  test("every realpath entry point returns a virtual skill path as-is", async () => {
+  test("every realpath entry point returns virtual skill and CLAUDE.md paths as-is", async () => {
     const home = await mkdtemp(join(tmpdir(), "ccc-vfs-fs-statics-home-"));
     try {
       const result = await runInVfs(
         home,
         `
+const resolveEveryWay = async (filePath) => ({
+  sync: fs.realpathSync(filePath),
+  syncNative: fs.realpathSync.native(filePath),
+  async: await promisify(fs.realpath)(filePath),
+  asyncNative: await promisify(fs.realpath.native)(filePath),
+});
+const instructionsPath = join(homedir(), ".claude", "CLAUDE.md");
 console.log(JSON.stringify({
-  sync: fs.realpathSync(skillPath),
-  syncNative: fs.realpathSync.native(skillPath),
-  async: await promisify(fs.realpath)(skillPath),
-  asyncNative: await promisify(fs.realpath.native)(skillPath),
-  expected: skillPath,
+  skill: await resolveEveryWay(skillPath),
+  instructions: await resolveEveryWay(instructionsPath),
+  skillPath,
+  instructionsPath,
 }));
 `,
       );
 
+      const buildEveryWayResults = (expected: string) => ({
+        sync: expected,
+        syncNative: expected,
+        async: expected,
+        asyncNative: expected,
+      });
+
       expect(result).toEqual({
-        sync: result.expected,
-        syncNative: result.expected,
-        async: result.expected,
-        asyncNative: result.expected,
-        expected: result.expected,
+        skill: buildEveryWayResults(result.skillPath),
+        instructions: buildEveryWayResults(result.instructionsPath),
+        skillPath: result.skillPath,
+        instructionsPath: result.instructionsPath,
       });
     } finally {
       await rm(home, { force: true, recursive: true });

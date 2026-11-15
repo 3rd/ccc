@@ -72,6 +72,11 @@ const virtualToResolved = new Map<string, string>();
 const resolvedToVirtual = new Map<string, string>();
 let mappingsInitialized = false;
 
+// captured when this module loads, before monkeyPatchFS wraps realpath: the wrapper resolves served
+// config files through mapToVirtualPath, so mapping them with the wrapper would re-enter
+// initializePathMappings until the stack overflows
+const unpatchedRealpathSync = fsDefault.realpathSync?.native ?? fsDefault.realpathSync;
+
 const virtualFileHandleSymbol = Symbol("cccVirtualFileHandle");
 type VirtualHandleMeta = { path: string };
 type MaybeVirtualFileHandle = FileHandle & { [virtualFileHandleSymbol]?: VirtualHandleMeta };
@@ -79,11 +84,10 @@ type MaybeVirtualFileHandle = FileHandle & { [virtualFileHandleSymbol]?: Virtual
 const initializePathMappings = () => {
   if (mappingsInitialized) return;
 
-  const origRealpathSync = fsDefault.realpathSync?.native || fsDefault.realpathSync;
   const { claudeStatePath, settingsJsonPath, claudeMdPath } = resolveVirtualFileSystemPaths();
   for (const vPath of [claudeStatePath, settingsJsonPath, claudeMdPath]) {
     try {
-      const resolved = origRealpathSync(vPath);
+      const resolved = unpatchedRealpathSync(vPath);
       virtualToResolved.set(vPath, resolved);
       resolvedToVirtual.set(resolved, vPath);
     } catch {
@@ -1863,6 +1867,19 @@ const monkeyPatchFS = ({
       log.vfs(`${label}("${filePath}") => returning as-is (virtual)`);
       return virtualCategory.normalized;
     }
+
+    // a served config file can have no real counterpart, as ~/.claude/CLAUDE.md usually does, and
+    // claude code's Read refuses a path whose realpath fails even though opening it would succeed
+    const virtualFilePath = mapToVirtualPath(filePath);
+    const isServedVirtualFile = virtualFilePath !== undefined && vol.existsSync(virtualFilePath);
+
+    const canonicalPath = isServedVirtualFile ? virtualToResolved.get(virtualFilePath) : undefined;
+    if (canonicalPath !== undefined) {
+      log.vfs(`${label}("${filePath}") => ${canonicalPath} (virtual file)`);
+
+      return canonicalPath;
+    }
+
     if (filePath.includes(".claude")) {
       log.vfs(`${label}("${filePath}") called`);
     }
@@ -2300,11 +2317,16 @@ const writeVirtualCategories = (vol: Volume, args: VirtualFileSystemOptions) => 
   log.vfs(`Virtual directory contents: ${vol.readdirSync(workflowsPath)}`);
 };
 
-// merge featureFlags (into cachedGrowthBookFeatures) and claudeState (top-level
+// claude code reads its feature-flag cache from cachedGrowthBookFeatures and falls back to
+// cachedFeatureFlags, the newer name for the same cache; featureFlags go into both keys so an
+// override still applies if a release starts reading the newer key first.
+export const FEATURE_FLAG_CACHE_KEYS = ["cachedGrowthBookFeatures", "cachedFeatureFlags"] as const;
+
+// merge featureFlags (into both feature-flag cache keys) and claudeState (top-level
 // keys, e.g. leftArrowOpensAgents) into the virtual ~/.claude.json. claudeState
 // wins over the real state file's values (config-as-code beats drifted local
-// state); the featureFlags merge is applied after it, so cachedGrowthBookFeatures
-// stays launcher-managed even if claudeState carries that key.
+// state); the featureFlags merge is applied after it, so the flag caches stay
+// launcher-managed even if claudeState carries those keys.
 export const mergeVirtualClaudeState = (
   claudeStateJson: string | undefined,
   rawFeatureFlags: unknown,
@@ -2324,7 +2346,7 @@ export const mergeVirtualClaudeState = (
     claudeStateOverrides !== undefined && Object.keys(claudeStateOverrides).length > 0;
   if (hasFeatureFlags || hasClaudeStateOverrides) {
     if (hasFeatureFlags) {
-      log.vfs(`Injecting featureFlags into cachedGrowthBookFeatures: ${Object.keys(featureFlags).join(", ")}`);
+      log.vfs(`Injecting featureFlags into ${FEATURE_FLAG_CACHE_KEYS.join(" and ")}: ${Object.keys(featureFlags).join(", ")}`);
     }
 
     if (hasClaudeStateOverrides) {
@@ -2334,14 +2356,19 @@ export const mergeVirtualClaudeState = (
     try {
       const parsed = effectiveClaudeStateJson ? JSON.parse(effectiveClaudeStateJson) : {};
       const base = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-      const existing =
-        base.cachedGrowthBookFeatures && typeof base.cachedGrowthBookFeatures === "object" ?
-          base.cachedGrowthBookFeatures
-        : {};
+      const flagCaches = Object.fromEntries(
+        FEATURE_FLAG_CACHE_KEYS.map((key) => {
+          const cached = base[key];
+          const isCachedObject = cached !== null && typeof cached === "object";
+          const existing = isCachedObject ? cached : {};
+
+          return [key, { ...existing, ...featureFlags }];
+        }),
+      );
       const merged = {
         ...base,
         ...(hasClaudeStateOverrides ? claudeStateOverrides : {}),
-        ...(hasFeatureFlags ? { cachedGrowthBookFeatures: { ...existing, ...featureFlags } } : {}),
+        ...(hasFeatureFlags ? flagCaches : {}),
       };
       effectiveClaudeStateJson = `${JSON.stringify(merged, null, 2)}\n`;
     } catch (error) {

@@ -85,8 +85,10 @@ export type HookMatcherType =
   | "ToolSearch"
   | "WebFetch"
   | "WebSearch"
+  | "Workflow"
   | "WrapUp"
-  | "Write";
+  | "Write"
+  | "Yield";
 
 /**
  * Build-time gate shared across hook entries and definitions. When `false`, CCC

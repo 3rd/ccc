@@ -18,6 +18,7 @@ import { homedir, tmpdir } from "os";
 import { join } from "path";
 import { validateRuntimeHostPayload } from "@/cli/runtime-host";
 import { buildLaunchSpec } from "@/cli/launcher-wrapper";
+import { NOTIFY_SOCKET_ENV, NOTIFY_SUPERVISOR_HANDOFF_ENV, NOTIFY_TOKEN_ENV } from "@/vfs/ns-vfs";
 import { assertExitCode, assertStderrEmpty, assertStdoutContains } from "../utils/assertions";
 import { LAUNCHER_ROOT, runCCC } from "../utils/test-runner";
 
@@ -59,7 +60,11 @@ const createClaudeRunDirectories = () => {
   return { root, home, configDir };
 };
 
-const readRuntimePayload = (directories: ReturnType<typeof createClaudeRunDirectories>, claudeArgs: string[]) => {
+const readRuntimePayload = (
+  directories: ReturnType<typeof createClaudeRunDirectories>,
+  claudeArgs: string[],
+  environment: Record<string, string> = {},
+) => {
   const payloadPath = join(directories.root, "payload.json");
   const payloadDescriptor = openSync(payloadPath, "w");
 
@@ -74,6 +79,7 @@ const readRuntimePayload = (directories: ReturnType<typeof createClaudeRunDirect
         CCC_NS_VFS: "0",
         CCC_RUNTIME_PAYLOAD_FD: "3",
         CCC_RUNTIME_HOST_PID: String(process.pid),
+        ...environment,
       },
       stdio: ["ignore", "ignore", "ignore", payloadDescriptor],
     });
@@ -396,7 +402,7 @@ describe("launcher", () => {
       expect(settings.env.TEST_API_KEY).toBe("[redacted]");
 
       const claudeState = JSON.parse(readFileSync(join(dumpDir, "claude.json"), "utf8"));
-      expect(Object.keys(claudeState).filter((key) => key !== "cachedGrowthBookFeatures")).toEqual([]);
+      expect(Object.keys(claudeState).filter((key) => key !== "cachedGrowthBookFeatures" && key !== "cachedFeatureFlags")).toEqual([]);
 
       expect(readFileSync(join(dumpRoot, ".gitignore"), "utf8")).toBe("*\n");
     } finally {
@@ -430,6 +436,24 @@ describe("launcher", () => {
           projects: { [directories.root]: { allowedTools: ["Read"], hasTrustDialogAccepted: true } },
         },
       ]);
+    } finally {
+      rmSync(directories.root, { force: true, recursive: true });
+    }
+  }, 120_000);
+
+  test("keeps the notify supervisor handoff out of Claude's environment", () => {
+    const directories = createClaudeRunDirectories();
+    const socketName = `ccc-payload-handoff-test-${process.pid}`;
+
+    try {
+      const { environment } = readRuntimePayload(directories, ["-p", "say hi"], {
+        [NOTIFY_SOCKET_ENV]: socketName,
+        [NOTIFY_TOKEN_ENV]: "a".repeat(64),
+        [NOTIFY_SUPERVISOR_HANDOFF_ENV]: socketName,
+      });
+
+      expect(environment[NOTIFY_SOCKET_ENV]).toBe(socketName);
+      expect(environment).not.toHaveProperty(NOTIFY_SUPERVISOR_HANDOFF_ENV);
     } finally {
       rmSync(directories.root, { force: true, recursive: true });
     }

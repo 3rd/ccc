@@ -27,11 +27,11 @@ describe("applyBuiltInPatches", () => {
   });
 
   test("dev mods restore after the session host binds and stop when the session is disposed", async () => {
-    const content = `let binding;const plugins={set(){}};const register=(value)=>{binding=value};
+    const content = `let binding;const plugins={set(){}};const register=(value)=>{binding=value};const prepare=()=>{};
 const restore=()=>restored.push(binding.requireHost());const subscribe=()=>{};
 class Scope{host=null;connected=false;disposed=false;sessionBinding=this;sessionPlugins={};isThinClient=true;
 bindHost(host){this.host=host}
-requireHost(){if(this.host===null)throw Error("ReplSessionScope: used before its screen bound a host");return this.host}connect(){if(this.connected||this.disposed)return;if(this.connected=!0,register(this.sessionBinding),plugins.set(this.sessionPlugins),restore(),subscribe(),!this.isThinClient)throw Error("unexpected client");}
+requireHost(){if(this.host===null)throw Error("ReplSessionScope: used before its screen bound a host");return this.host}connect(){if(this.connected||this.disposed)return;if(this.connected=!0,prepare(),register(this.sessionBinding),plugins.set(this.sessionPlugins),restore(),subscribe(),!this.isThinClient)throw Error("unexpected client");}
 dispose(){this.disposed=true;this.connected=false}}
 globalThis.scope=new Scope();scope.connect();scope.connect();`;
     const next = applyBuiltInPatches(content);
@@ -53,7 +53,7 @@ globalThis.scope=new Scope();scope.connect();scope.connect();`;
     const content = `const yl=(o,k)=>Object.hasOwn(o,k),exempt=new Set(["exempt"]);
 class GB{remote=new Map([["flag",1]]);getEnvironmentOverrides(){return null}
 getAllFeatures(){return Object.fromEntries(this.remote)}
-getFeatureValueWithSource(e,n){let r=this.getEnvironmentOverrides();if(r&&yl(r,e))return{value:r[e],source:"override"};if(this.remote.has(e))return{value:this.remote.get(e),source:"payload"};if(exempt.has(e))return{value:n,source:"fallback"};return{value:n,source:"default"}}
+getFeatureValueWithSource(e,n,{ownAnswerOnly:o=!1}={}){let r=this.getEnvironmentOverrides();if(r&&yl(r,e))return{value:r[e],source:"override"};if(this.remote.has(e))return{value:this.remote.get(e),source:"payload"};if(exempt.has(e))return{value:n,source:"fallback"};return{value:n,source:"default"}}
 async checkGateCachedOrBlocking(e){let r=this.getEnvironmentOverrides();if(r&&e in r)return Boolean(r[e]);return!1}
 async getFeatureValueBlocking(e,n){let r=this.getEnvironmentOverrides();if(r&&e in r)return r[e];return this.remote.get(e)??n}}
 const gb=new GB();Promise.all([gb.getFeatureValueWithSource("flag",0),gb.getFeatureValueWithSource("exempt",0).value,gb.checkGateCachedOrBlocking("gate"),gb.getFeatureValueBlocking("flag",0),gb.getAllFeatures()])`;

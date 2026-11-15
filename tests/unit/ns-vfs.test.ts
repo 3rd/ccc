@@ -4,7 +4,14 @@ import { createServer, type Socket } from "net";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, test } from "bun:test";
-import { NOTIFY_SOCKET_ENV, NOTIFY_TOKEN_ENV, NS_ACTIVE_ENV, NS_KILL_SWITCH_ENV, namespacePrefix } from "@/vfs/ns-vfs";
+import {
+  NOTIFY_SOCKET_ENV,
+  NOTIFY_SUPERVISOR_HANDOFF_ENV,
+  NOTIFY_TOKEN_ENV,
+  NS_ACTIVE_ENV,
+  NS_KILL_SWITCH_ENV,
+  namespacePrefix,
+} from "@/vfs/ns-vfs";
 
 const projectRoot = resolve(import.meta.dir, "..", "..");
 const prefix = namespacePrefix({ [NS_KILL_SWITCH_ENV]: process.env[NS_KILL_SWITCH_ENV] });
@@ -119,9 +126,11 @@ describe("namespace VFS gating", () => {
     const originalEnvironment = {
       AGENTS_VFS_NOTIFY_SOCKET: process.env.AGENTS_VFS_NOTIFY_SOCKET,
       AGENTS_VFS_NOTIFY_TOKEN: process.env.AGENTS_VFS_NOTIFY_TOKEN,
+      [NOTIFY_SUPERVISOR_HANDOFF_ENV]: process.env[NOTIFY_SUPERVISOR_HANDOFF_ENV],
     };
     process.env.AGENTS_VFS_NOTIFY_SOCKET = socketName;
     process.env.AGENTS_VFS_NOTIFY_TOKEN = token;
+    process.env[NOTIFY_SUPERVISOR_HANDOFF_ENV] = socketName;
 
     try {
       expect(namespacePrefix({ [NOTIFY_SOCKET_ENV]: socketName, [NOTIFY_TOKEN_ENV]: token })).toBeNull();
@@ -171,10 +180,12 @@ describe("namespace VFS gating", () => {
     const originalEnvironment = {
       AGENTS_VFS_NOTIFY_SOCKET: process.env.AGENTS_VFS_NOTIFY_SOCKET,
       AGENTS_VFS_NOTIFY_TOKEN: process.env.AGENTS_VFS_NOTIFY_TOKEN,
+      [NOTIFY_SUPERVISOR_HANDOFF_ENV]: process.env[NOTIFY_SUPERVISOR_HANDOFF_ENV],
       [NS_ACTIVE_ENV]: process.env[NS_ACTIVE_ENV],
     };
     process.env.AGENTS_VFS_NOTIFY_SOCKET = socketName;
     process.env.AGENTS_VFS_NOTIFY_TOKEN = "a".repeat(64);
+    process.env[NOTIFY_SUPERVISOR_HANDOFF_ENV] = socketName;
     delete process.env[NS_ACTIVE_ENV];
 
     try {
@@ -193,14 +204,47 @@ describe("namespace VFS gating", () => {
     const originalEnvironment = {
       AGENTS_VFS_NOTIFY_SOCKET: process.env.AGENTS_VFS_NOTIFY_SOCKET,
       AGENTS_VFS_NOTIFY_TOKEN: process.env.AGENTS_VFS_NOTIFY_TOKEN,
+      [NOTIFY_SUPERVISOR_HANDOFF_ENV]: process.env[NOTIFY_SUPERVISOR_HANDOFF_ENV],
     };
     process.env.AGENTS_VFS_NOTIFY_SOCKET = "unused-empty-batch-socket";
     process.env.AGENTS_VFS_NOTIFY_TOKEN = "a".repeat(64);
+    process.env[NOTIFY_SUPERVISOR_HANDOFF_ENV] = "unused-empty-batch-socket";
 
     try {
       expect(await setupNamespaceVfs([], [])).toBe(true);
     } finally {
       restoreEnvironment(originalEnvironment);
+    }
+  });
+
+  test("does not register with a supervisor the launch only inherited", async () => {
+    const { setupNamespaceVfs } = await import("@/vfs/ns-vfs");
+    const socketName = `ccc-vfs-inherited-test-${process.pid}`;
+    let connectionCount = 0;
+    const server = await listenOnAbstractSocket(socketName, (connection) => {
+      connectionCount += 1;
+      connection.end(Buffer.from([0]));
+    });
+
+    const originalEnvironment = {
+      AGENTS_VFS_NOTIFY_SOCKET: process.env.AGENTS_VFS_NOTIFY_SOCKET,
+      AGENTS_VFS_NOTIFY_TOKEN: process.env.AGENTS_VFS_NOTIFY_TOKEN,
+      [NOTIFY_SUPERVISOR_HANDOFF_ENV]: process.env[NOTIFY_SUPERVISOR_HANDOFF_ENV],
+      [NS_KILL_SWITCH_ENV]: process.env[NS_KILL_SWITCH_ENV],
+    };
+    process.env.AGENTS_VFS_NOTIFY_SOCKET = socketName;
+    process.env.AGENTS_VFS_NOTIFY_TOKEN = "a".repeat(64);
+    process.env[NS_KILL_SWITCH_ENV] = "0";
+    delete process.env[NOTIFY_SUPERVISOR_HANDOFF_ENV];
+
+    try {
+      expect(
+        await setupNamespaceVfs(["/virtual/root"], [{ nativePath: "/virtual/root/file.txt", content: "contents" }]),
+      ).toBe(false);
+      expect(connectionCount).toBe(0);
+    } finally {
+      restoreEnvironment(originalEnvironment);
+      server.close();
     }
   });
 
