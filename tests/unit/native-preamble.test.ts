@@ -1,9 +1,11 @@
+import { parse } from "acorn";
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createContext, Script } from "node:vm";
 import { z } from "zod/v4";
 import {
   buildGraphPreambleModule,
@@ -501,6 +503,45 @@ console.log(JSON.stringify({otherContextGlobal:fd(otherGlobal),plainObject:fd({}
     }
   });
 
+  test("lets Code Mode recognize a script that ran past its wall clock under Node, as under Bun", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-vm-timeout-"));
+
+    try {
+      const scriptPath = join(directory, "preamble.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+const vm = __baseRequire("vm");
+function fd(){return!1}
+function mz(r){try{let t=r;if(t===null||typeof t!=="object"&&typeof t!=="function")return!1;for(let e=0;e<64;e++){if(fd(t))return!1;let o=Reflect.getPrototypeOf(t);if(o===null)return!1;if(o===Error.prototype)return!0;t=o}return!1}catch{return!1}}
+function w(n){if(n&&typeof n==="object"&&"code"in n&&typeof n.code==="string")return n.code;return}
+const context = vm.createContext({__proto__:null},{codeGeneration:{strings:!1,wasm:!1}});
+let timeout;
+try { new vm.Script("(async () => { while (true) {} })()").runInContext(context, { timeout: 50 }); } catch (a) { timeout = { recognized: mz(a)&&w(a)==="ERR_SCRIPT_EXECUTION_TIMEOUT" }; }
+let scriptError;
+try { new vm.Script("null.missing").runInContext(context); } catch (error) { scriptError = { fromThisRealm: mz(error), name: error.name }; }
+console.log(JSON.stringify({ timeout, scriptError }));
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout.trim())).toEqual({
+        timeout: { recognized: true },
+        scriptError: { fromThisRealm: false, name: "TypeError" },
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("answers event-logging requests through Bun.FetchSession with an empty success under Node", () => {
     const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-fetch-session-"));
 
@@ -622,6 +663,153 @@ console.log(JSON.stringify({ sha256: __cccBun.SHA256.hash(e.subarray(0, e.length
     }
   });
 
+  test("matches Bun's xxHash32 and xxHash64 for strings, typed arrays, and seeds under Node", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-xxhash-"));
+    const lengths = [0, 1, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 100, 1000];
+    const text = (length: number) => Array.from({ length }, (_, index) => String.fromCharCode(32 + ((index * 7) % 95))).join("");
+    const row = Int32Array.from({ length: 160 }, (_, index) => (index * 2654435761) | 0);
+
+    try {
+      const scriptPath = join(directory, "preamble.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+const lengths = ${JSON.stringify(lengths)};
+const text = ${text.toString()};
+const row = Int32Array.from({ length: 160 }, (_, index) => (index * 2654435761) | 0);
+console.log(JSON.stringify({
+  strings32: lengths.map((length) => __cccBun.hash.xxHash32(text(length))),
+  strings64: lengths.map((length) => __cccBun.hash.xxHash64(text(length)).toString(36)),
+  unicode: [__cccBun.hash.xxHash32("ünïcödé ✓ 漢字"), __cccBun.hash.xxHash64("ünïcödé ✓ 漢字").toString(36)],
+  row: [__cccBun.hash.xxHash32(row), __cccBun.hash.xxHash64(row).toString(36)],
+  seeded: [__cccBun.hash.xxHash32(text(40), 12345), __cccBun.hash.xxHash64(text(40), 98765n).toString(36)],
+}));
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout.trim())).toEqual({
+        strings32: lengths.map((length) => Bun.hash.xxHash32(text(length))),
+        strings64: lengths.map((length) => Bun.hash.xxHash64(text(length)).toString(36)),
+        unicode: [Bun.hash.xxHash32("ünïcödé ✓ 漢字"), Bun.hash.xxHash64("ünïcödé ✓ 漢字").toString(36)],
+        row: [Bun.hash.xxHash32(row), Bun.hash.xxHash64(row).toString(36)],
+        seeded: [Bun.hash.xxHash32(text(40), 12345), Bun.hash.xxHash64(text(40), 98765n).toString(36)],
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("transpiles REPL scripts and scans imports like Bun's replMode under Node", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-repl-"));
+    const scripts = [
+      "const x = 1; let y; var z = 2; x + z",
+      "const { a, b: [c] } = { a: 1, b: [2] };\nfunction f() { return a + c + x }\nclass K { static n = 4 }\nawait f()",
+      "let q = await Promise.resolve(K.n)\nq * 2",
+      "for (const i of [1, 2]) { z += i }\nz",
+      "const s = (x, 10)\ns",
+      "y = 7, f()",
+      "if (true) { 1 }",
+      "await Promise.resolve(1)\nconst { v } = { v: 4 }\nMath.abs(v)\nlet n\n(n = v)\nn",
+      "if (true) { var w = 1 }\nfor (var i = 0; i < 2; i++) {}\nw + i",
+      "const r = 5",
+      "class C2 {}",
+      "{ a: r, b: 2 }",
+      "[typeof f, typeof K, typeof C2, x, y, z, q, s, v, n, w, i, r]",
+    ];
+    const syntaxErrorScript = "let a = ;\nfoo";
+    const importScript = 'import a from "a"; const b = require("b"); await import("c"); export * from "d"; require(e); import(g); require(`t`)';
+    const options = { loader: "js", replMode: true } as const;
+    const positionSchema = z.object({ line: z.number(), column: z.number(), lineText: z.string() });
+
+    const runReplSession = async (outputs: string[]) => {
+      const context = createContext({});
+      const completions = [];
+
+      for (const output of outputs) {
+        const completion: unknown = await new Script(output).runInContext(context);
+        completions.push(JSON.stringify(completion));
+      }
+
+      return completions;
+    };
+
+    try {
+      const scriptPath = join(directory, "preamble.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+const transpiler = new __cccBun.Transpiler(${JSON.stringify(options)});
+let syntaxError;
+try { transpiler.transformSync(${JSON.stringify(syntaxErrorScript)}); } catch (error) { syntaxError = error.position; }
+console.log(JSON.stringify({
+  outputs: ${JSON.stringify(scripts)}.map((script) => transpiler.transformSync(script)),
+  syntaxError,
+  imports: transpiler.scanImports(${JSON.stringify(importScript)}),
+}));
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+
+      const shimmed = z
+        .object({
+          outputs: z.array(z.string()),
+          syntaxError: positionSchema,
+          imports: z.array(z.object({ kind: z.string(), path: z.string() })),
+        })
+        .parse(JSON.parse(result.stdout.trim()));
+
+      for (const output of shimmed.outputs) {
+        const { body } = parse(output, { ecmaVersion: "latest", sourceType: "script" });
+        expect(body.at(-1)).toMatchObject({
+          type: "ExpressionStatement",
+          expression: {
+            type: "CallExpression",
+            arguments: [],
+            callee: { type: expect.stringMatching(/^(?:Arrow)?FunctionExpression$/), params: [], generator: false },
+          },
+        });
+
+        for (const statement of body.slice(0, -1)) {
+          expect(output.slice(statement.start, statement.end)).toMatch(/^var [\w$]+;$/);
+        }
+      }
+
+      const bun = new Bun.Transpiler(options);
+      expect(await runReplSession(shimmed.outputs)).toEqual(await runReplSession(scripts.map((script) => bun.transformSync(script))));
+      expect(shimmed.imports).toEqual(bun.scanImports(importScript));
+
+      let bunSyntaxError: unknown;
+
+      try {
+        bun.transformSync(syntaxErrorScript);
+      } catch (error) {
+        bunSyntaxError = error;
+      }
+
+      expect(shimmed.syntaxError).toEqual(positionSchema.parse(z.object({ position: z.unknown() }).parse(bunSyntaxError).position));
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("gzips request bodies for Bun's fetch compress option under Node", () => {
     const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-compress-"));
 
@@ -670,6 +858,76 @@ console.log(JSON.stringify({ compressed, plain, bodyLength: body.length }));
       expect(compressed.wireBytes).toBeLessThan(200);
       expect(compressed.text.length).toBe(bodyLength);
       expect(plain).toEqual({ encoding: null, wireBytes: bodyLength, text: compressed.text });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("routes requests through Bun's fetch proxy and unix options and the proxy variables under Node", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ccc-preamble-proxy-"));
+
+    try {
+      const scriptPath = join(directory, "preamble.mjs");
+      writeFileSync(scriptPath, `${buildGraphPreambleModule([])}
+const { createServer } = await import("node:http");
+const { connect } = await import("node:net");
+const target = createServer((request, response) => response.end(\`target \${request.url}\`));
+await new Promise((resolve) => target.listen(0, "127.0.0.1", resolve));
+const tunnels = [];
+const proxy = createServer();
+proxy.on("connect", (request, socket, head) => {
+  tunnels.push({ authority: request.url, authorization: request.headers["proxy-authorization"] ?? null });
+  const port = request.url.slice(request.url.lastIndexOf(":") + 1);
+  const upstream = connect(Number(port), "127.0.0.1", () => {
+    socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+    upstream.write(head);
+    upstream.pipe(socket);
+    socket.pipe(upstream);
+  });
+});
+await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+const socketPath = \`\${process.cwd()}/api.sock\`;
+const unixServer = createServer((request, response) => response.end(\`unix \${request.url}\`));
+await new Promise((resolve) => unixServer.listen(socketPath, resolve));
+const url = \`http://127.0.0.1:\${target.address().port}/v1/messages\`;
+const proxyUrl = \`http://127.0.0.1:\${proxy.address().port}\`;
+const viaProxy = await (await fetch(url, { proxy: proxyUrl })).text();
+const viaAuthorizedProxy = await (await fetch(url, { proxy: { url: proxyUrl, headers: { "Proxy-Authorization": "Bearer helper-token" } } })).text();
+const viaUnix = await (await fetch("http://localhost/v1/messages", { unix: socketPath })).text();
+for (const name of ["https_proxy", "http_proxy", "HTTP_PROXY", "no_proxy", "NO_PROXY"]) delete process.env[name];
+process.env.HTTPS_PROXY = proxyUrl;
+const viaEnvProxy = await (await fetch(\`http://ccc-env-proxy.invalid:\${target.address().port}/env\`)).text();
+const loopbackDirect = await (await fetch(\`http://127.0.0.1:\${target.address().port}/direct\`)).text();
+console.log(JSON.stringify({ viaProxy, viaAuthorizedProxy, viaUnix, viaEnvProxy, loopbackDirect, tunnels, targetPort: target.address().port }));
+process.exit(0);
+`);
+      const result = spawnSync("node", [scriptPath], {
+        cwd: directory,
+        env: {
+          ...process.env,
+          CCC_CLAUDE_WRAPPER_PKG_JSON: fileURLToPath(new URL("../../package.json", import.meta.url)),
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+
+      const { viaProxy, viaAuthorizedProxy, viaUnix, viaEnvProxy, loopbackDirect, tunnels, targetPort } = JSON.parse(result.stdout.trim());
+      expect({ viaProxy, viaAuthorizedProxy, viaUnix, viaEnvProxy, loopbackDirect }).toEqual({
+        viaProxy: "target /v1/messages",
+        viaAuthorizedProxy: "target /v1/messages",
+        viaUnix: "unix /v1/messages",
+        viaEnvProxy: "target /env",
+        loopbackDirect: "target /direct",
+      });
+      expect(tunnels).toEqual([
+        { authority: `127.0.0.1:${targetPort}`, authorization: null },
+        { authority: `127.0.0.1:${targetPort}`, authorization: "Bearer helper-token" },
+        { authority: `ccc-env-proxy.invalid:${targetPort}`, authorization: null },
+      ]);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

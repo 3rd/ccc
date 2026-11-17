@@ -14,6 +14,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "fs";
+import { connect, createServer, type Socket } from "net";
 import { homedir, tmpdir } from "os";
 import { join } from "path";
 import { validateRuntimeHostPayload } from "@/cli/runtime-host";
@@ -91,10 +92,15 @@ const readRuntimePayload = (
   return validateRuntimeHostPayload(JSON.parse(readFileSync(payloadPath, "utf8")));
 };
 
+interface MessageRequestCaptureOptions {
+  environment?: Record<string, string>;
+  apiHost?: string;
+}
+
 const captureMessageRequests = async (
   directories: ReturnType<typeof createClaudeRunDirectories>,
   claudeArgs: string[],
-  environment: Record<string, string> = {},
+  { environment = {}, apiHost = "127.0.0.1" }: MessageRequestCaptureOptions = {},
 ) => {
   const messageBodies: string[] = [];
   const server = Bun.serve({
@@ -123,7 +129,7 @@ const captureMessageRequests = async (
         XDG_CACHE_HOME: process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"),
         CCC_CONFIG_DIR: directories.configDir,
         CCC_NS_VFS: "0",
-        ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.port}`,
+        ANTHROPIC_BASE_URL: `http://${apiHost}:${server.port}`,
         ANTHROPIC_API_KEY: "test-key-not-real",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
         ...environment,
@@ -138,6 +144,62 @@ const captureMessageRequests = async (
   }
 
   return messageBodies;
+};
+
+// a CONNECT proxy that tunnels every request to the requested port on 127.0.0.1, so a host name that resolves
+// nowhere still reaches a local server when, and only when, the client goes through the proxy
+const startLoopbackTunnelProxy = async () => {
+  const authorities: string[] = [];
+  const sockets = new Set<Socket>();
+
+  const server = createServer((client) => {
+    sockets.add(client);
+    let head = Buffer.alloc(0);
+
+    const handleHead = (chunk: Buffer) => {
+      head = Buffer.concat([head, chunk]);
+      const headEnd = head.indexOf("\r\n\r\n");
+      if (headEnd < 0) return;
+
+      client.off("data", handleHead);
+
+      const authority = /^CONNECT (\S+) HTTP\/1\.[01]\r\n/.exec(head.toString("latin1"))?.[1];
+      if (authority === undefined) {
+        client.end("HTTP/1.1 405 Method Not Allowed\r\n\r\n");
+        return;
+      }
+
+      authorities.push(authority);
+
+      const upstream = connect(Number(authority.slice(authority.lastIndexOf(":") + 1)), "127.0.0.1", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        upstream.write(head.subarray(headEnd + 4));
+        upstream.pipe(client);
+        client.pipe(upstream);
+      });
+      sockets.add(upstream);
+      upstream.on("error", () => client.destroy());
+      client.on("error", () => upstream.destroy());
+    };
+
+    client.on("data", handleHead);
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const isTcpAddress = address !== null && typeof address !== "string";
+  if (!isTcpAddress) throw new Error("the tunnel proxy did not bind a TCP port");
+
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    authorities,
+    close: () => {
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+      server.close();
+    },
+  };
 };
 
 describe("launcher", () => {
@@ -473,6 +535,25 @@ describe("launcher", () => {
     }
   }, 180_000);
 
+  test("print mode sends model requests through the configured HTTPS proxy", async () => {
+    const directories = createClaudeRunDirectories();
+    writeFileSync(join(directories.configDir, "global", "prompts", "user.md"), "Proxied request marker 2b5e08\n");
+    const proxy = await startLoopbackTunnelProxy();
+
+    try {
+      const messageBodies = await captureMessageRequests(directories, ["-p", "say hi"], {
+        apiHost: "ccc-proxy-test.invalid",
+        environment: { HTTPS_PROXY: proxy.url },
+      });
+
+      expect(messageBodies.some((body) => body.includes("Proxied request marker 2b5e08"))).toBe(true);
+      expect(proxy.authorities.some((authority) => authority.startsWith("ccc-proxy-test.invalid:"))).toBe(true);
+    } finally {
+      proxy.close();
+      rmSync(directories.root, { force: true, recursive: true });
+    }
+  }, 180_000);
+
   test("multi-value settings flags leave a leading prompt for Claude", async () => {
     const directories = createClaudeRunDirectories();
     writeFileSync(
@@ -518,7 +599,7 @@ describe("launcher", () => {
 
     try {
       const messageBodies = await captureMessageRequests(directories, ["Leading prompt marker 9d07e5", "-p"], {
-        CCC_PRESEEDED_INSTANCE_ID: instanceId,
+        environment: { CCC_PRESEEDED_INSTANCE_ID: instanceId },
       });
 
       expect(messageBodies.some((body) => body.includes("Leading prompt marker 9d07e5"))).toBe(true);

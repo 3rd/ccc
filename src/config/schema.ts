@@ -384,7 +384,8 @@ const baseSettingsSchema = z.object({
   // false turns off syncing the plugins enabled on claude.ai; only false is honored, since the
   // feature is enabled server-side. Not read from project settings (v2.1.246)
   syncClaudeAiPlugins: z.boolean().optional(),
-  // deprecated, no effect: subagent rows always use the default look (v2.1.105, deprecated v2.1.323)
+  // deprecated in favor of mods but still run: the command gets each subagent row as JSON on stdin and decorates the
+  // agent panel; a startup notice names the setting's source (v2.1.105, deprecated v2.1.323, run again v2.1.326)
   subagentStatusLine: z
     .object({
       type: z.literal("command"),
@@ -498,7 +499,7 @@ const baseSettingsSchema = z.object({
   model: z.union([z.enum(["auto", "default", "opus", "opusplan", "sonnet", "haiku", "fable"]), z.string()]).optional(),
   // fallback models tried in order when the primary is overloaded/unavailable; "default" expands to the default model; CLI --fallback-model takes precedence (v2.1.170)
   fallbackModel: z.array(z.string()).optional(),
-  // @internal controls the ProposeGoal tool (model-proposed session goals); 'auto' (default when absent) lets the model choose per proposal via ask_user, 'alwaysAsk' routes every proposal through the approval dialog, 'disabled' turns the tool off; typed /goal unaffected; consent-affecting, so read from trusted sources only (user/policy/flag) — workspace-resident project/local settings are ignored (v2.1.227)
+  // @internal controls the session goal tools SetGoal (tool rules also accept its alias ProposeGoal), GetGoal and PauseGoal; 'auto' (default when absent) lets the model choose per proposal via ask_user, 'alwaysAsk' routes every proposal through the approval dialog, 'disabled' turns the tools off; typed /goal unaffected; consent-affecting, so read from trusted sources only (user/policy/flag) — workspace-resident project/local settings are ignored (v2.1.227)
   modelProposedGoals: z.enum(["auto", "alwaysAsk", "disabled"]).optional(),
   spinnerTipsEnabled: z.boolean().optional(),
   // @internal show Clawd carrying the file on the progress line when a file goes to or from a
@@ -1045,6 +1046,14 @@ const baseSettingsSchema = z.object({
               sigv4a: z.enum(["deny", "passthrough"]).optional(),
             })
             .optional(),
+        })
+        .optional(),
+      // native Windows sandbox settings (v2.1.326)
+      windows: z
+        .object({
+          // how sandboxed commands are confined: `sandboxuser` (default) or experimental `mxc`, which falls back to
+          // `sandboxuser` when unsupported; honored only from user/managed/CLI settings, project settings ignored
+          backend: z.enum(["sandboxuser", "mxc"]).optional(),
         })
         .optional(),
       // selectively ignore sandbox violations by process/pattern (v2.1.61)

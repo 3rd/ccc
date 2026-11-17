@@ -27,7 +27,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.325",
+    "@anthropic-ai/claude-code": "2.1.326",
     "acorn": "8.18.0",
     "dotenv": "^17.3.1",
     "esbuild": "^0.28.0",
@@ -41,6 +41,7 @@
     "sharp": "^0.34.5",
     "smol-toml": "1.8.0",
     "string-width": "^8.3.0",
+    "undici": "7.16.0",
     "yaml": "2.8.2",
     "zod": "^4.3.6",
     "zx": "^8.8.5"

@@ -18,7 +18,7 @@ interface WrapperPkg {
 const BINARY_CANDIDATES = ["claude", "claude.exe"];
 
 const findInstalledBinary = (wrapperDir: string, pkg: WrapperPkg) => {
-  const req = createRequire(path.join(wrapperDir, "package.json"));
+  const req = createRequire(path.join(fs.realpathSync(wrapperDir), "package.json"));
   const platformPkgs = Object.keys(pkg.optionalDependencies ?? {}).filter((n) =>
     n.startsWith(NATIVE_PKG_PREFIX),
   );
